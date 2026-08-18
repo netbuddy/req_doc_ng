@@ -1,0 +1,267 @@
+# 治理接口·各操作的应答载荷（2026-08-04 按工程默认起草，字段依据已冻结结构推出，待用户过目）。
+# 依据：快照标识与序号＝《共享结构裁定记录》决定点一；锚点六字段＝决定点二；
+# 任务五状态＝冻结包裁定甲-30；结论只增不改＝甲-28；版本由裁决固化＝快照与版本两层模型。
+# 各 SuccessOfX 是对应操作的成功信封（result 恒为「成功」，data 装载荷）。
+
+MaterialReceipt:
+  type: object
+  description: 材料回执——导入成功后返回。
+  required: [material_id, content_sha256, imported_at]
+  properties:
+    material_id:
+      $ref: './common.yaml#/Uuid'
+    content_sha256:
+      type: string
+      description: 文件哈希（SHA-256）——机器核验「导入即不可改写」的凭据。
+    imported_at:
+      type: string
+      format: date-time
+      description: 导入时刻。
+
+MaterialSummary:
+  type: object
+  description: 材料摘要——材料列表一行所需字段。
+  required: [material_id, name, source_kind, imported_at]
+  properties:
+    material_id:
+      $ref: './common.yaml#/Uuid'
+    name:
+      type: string
+      description: 材料名称。
+    source_kind:
+      type: string
+      enum: [文件, 粘贴]
+      description: 来源形态。
+    imported_at:
+      type: string
+      format: date-time
+
+TaskReceipt:
+  type: object
+  description: 任务回执——发起工作（含退回自动重派）成功后返回。
+  required: [task_id, status]
+  properties:
+    task_id:
+      $ref: './common.yaml#/Uuid'
+    status:
+      type: string
+      const: 已登记
+      description: 初始状态恒为「已登记」（任务五状态之首，冻结包裁定甲-30）。
+
+FailureItem:
+  type: object
+  description: 任务失败项——一条未能产出候选的输入的失败说明（运行时经任务登记入口报入，随任务状态可查）。
+  required: [reason]
+  properties:
+    reason:
+      type: string
+      description: 该失败项的原因说明。
+
+TaskStatus:
+  type: object
+  description: 任务状态——真实回执，界面所见一切状态来自内核登记的事实。
+  required: [task_id, kind, status, created_at, updated_at]
+  properties:
+    task_id:
+      $ref: './common.yaml#/Uuid'
+    kind:
+      type: string
+      enum: [提取]
+      description: 任务类别（骨架期只有提取；成文任务随条目形成环加入）。
+    status:
+      type: string
+      enum: [已登记, 进行中, 待裁决, 已完成, 失败]
+      description: 封闭五状态（冻结包裁定甲-30）——「待裁决」＝候选已全部提交、等治理者逐条裁决；「已完成」＝该批候选全部裁决完毕；「失败」＝整体失败零候选提交。
+    failure_items:
+      type: array
+      items:
+        $ref: './payloads.yaml#/FailureItem'
+      description: 失败项清单——部分候选解析失败不阻碍任务完成，失败项在此可查（甲-30 对「部分成功」的处置）。
+    created_at:
+      type: string
+      format: date-time
+    updated_at:
+      type: string
+      format: date-time
+
+CandidateSummary:
+  type: object
+  description: 候选摘要——待确认队列一行所需字段。
+  required: [asset_id, kind, title, snapshot_id, submitted_at]
+  properties:
+    asset_id:
+      $ref: './common.yaml#/Uuid'
+    kind:
+      type: string
+      enum: [需求知识, 领域概念]
+      description: 知识类别。
+    title:
+      type: string
+      description: 显示名——需求知识取其标题，领域概念取其名称。
+    snapshot_id:
+      $ref: './common.yaml#/Uuid'
+      description: 当前候选稿的快照标识。
+    task_id:
+      $ref: './common.yaml#/Uuid'
+      description: 产生它的任务标识（追溯与运行记录对上用）。
+    submitted_at:
+      type: string
+      format: date-time
+      description: 当前候选稿的提交时刻。
+
+SourceAnchorView:
+  type: object
+  description: 来源锚点视图——锚点六字段（共享结构决定点二）加界面同屏展示所需的原文语境。
+  required: [material_id, parse_result_id, start_offset, end_offset, quote, hit_count]
+  properties:
+    material_id:
+      $ref: './common.yaml#/Uuid'
+      description: 材料标识。
+    material_name:
+      type: string
+      description: 材料名称（展示用）。
+    parse_result_id:
+      $ref: './common.yaml#/Uuid'
+      description: 解析结果标识。
+    start_offset:
+      type: integer
+      minimum: 0
+      description: 起始偏移——按 Unicode 码点计数（数「字」不数字节）。
+    end_offset:
+      type: integer
+      minimum: 0
+      description: 结束偏移（码点计数）。
+    quote:
+      type: string
+      description: 引文精确子串——提交时经硬校验，必为解析文本的原文子串。
+    hit_count:
+      type: integer
+      minimum: 1
+      description: 命中数——引文在查找范围内出现的次数，常态为 1，多命中取首个定锚、命中数如实记（共享结构决定点二）。
+    context_fragment:
+      type: string
+      description: 原文语境片段——引文及其前后文，供确认界面「来源片段同屏」展示（R-036）。
+
+CandidateDetail:
+  type: object
+  description: 候选详情——单条候选视图（当前候选稿全文、快照标识、逐条锚点及来源片段）。
+  required: [asset_id, kind, snapshot_id, content, anchors, submitted_at]
+  properties:
+    asset_id:
+      $ref: './common.yaml#/Uuid'
+    kind:
+      type: string
+      enum: [需求知识, 领域概念]
+    snapshot_id:
+      $ref: './common.yaml#/Uuid'
+      description: 当前候选稿的快照标识——治理者随后写操作的 based_on 凭据。
+    content:
+      $ref: './knowledge.yaml#/KnowledgeContent'
+      description: 当前候选稿内容。
+    anchors:
+      type: array
+      items:
+        $ref: './payloads.yaml#/SourceAnchorView'
+      description: 来源锚点——知识单元与锚点一对多，逐条附原文语境。
+    author_kind:
+      type: string
+      enum: [智能体, 治理者]
+      description: 当前候选稿的作者身份（人工修订过的候选稿为「治理者」）。
+    task_id:
+      $ref: './common.yaml#/Uuid'
+    submitted_at:
+      type: string
+      format: date-time
+
+VersionReceipt:
+  type: object
+  description: 版本回执——确认成功后返回。
+  required: [asset_id, version_no, snapshot_id]
+  properties:
+    asset_id:
+      $ref: './common.yaml#/Uuid'
+    version_no:
+      type: integer
+      minimum: 1
+      description: 版本号——治理层在固化时刻授予的序号（不是第二套标识）。
+    snapshot_id:
+      $ref: './common.yaml#/Uuid'
+      description: 被固化为版本的那份快照。
+
+SnapshotReceipt:
+  type: object
+  description: 新快照回执——人工修订成功后返回。
+  required: [asset_id, snapshot_id, author_kind]
+  properties:
+    asset_id:
+      $ref: './common.yaml#/Uuid'
+    snapshot_id:
+      $ref: './common.yaml#/Uuid'
+      description: 新产生的候选稿快照标识（此后写操作以它为 based_on）。
+    author_kind:
+      type: string
+      const: 治理者
+      description: 作者身份——人工修订产生的快照恒记「治理者」。
+
+# ── 各操作的成功信封 ──
+
+SuccessOfMaterialReceipt:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/MaterialReceipt'
+SuccessOfMaterialList:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      type: array
+      items:
+        $ref: './payloads.yaml#/MaterialSummary'
+SuccessOfTaskReceipt:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/TaskReceipt'
+SuccessOfTaskStatus:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/TaskStatus'
+SuccessOfCandidateList:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      type: array
+      items:
+        $ref: './payloads.yaml#/CandidateSummary'
+SuccessOfCandidateDetail:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/CandidateDetail'
+SuccessOfVersionReceipt:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/VersionReceipt'
+SuccessOfSnapshotReceipt:
+  type: object
+  required: [result, data]
+  properties:
+    result: { type: string, const: 成功 }
+    data:
+      $ref: './payloads.yaml#/SnapshotReceipt'

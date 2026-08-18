@@ -1,0 +1,27 @@
+# 中文 Boilerplates 方案元数据（设置页 AEP-102 展示单一来源；选型文档 §1.3/§1.4）
+convention_key: boilerplate-cn
+display_name: 中文 Boilerplates
+blueprint: 槽位化样板句式（需求规约模板体系技术报告 §3.3 / §7.2 T1–T10）
+positioning: 结构化程度高：主体 / 模态词 / 动作 / 对象 / 条件 / 量化槽位齐备，适合字段化解析与质量检测。以固定槽位样板句降低歧义，便于自动检查槽位完整性。
+pattern_overview:
+  - label: 功能需求
+    pattern: 「<系统> 应〔为 <用户角色>〕<动作> <对象>〔的能力〕；条件型前置「在 <条件> 下，」」
+  - label: 质量属性
+    pattern: 「在 <条件> 下，<系统/功能> 的 <质量属性> 应满足 <量化指标>」（T7 性能样板）
+  - label: 约束
+    pattern: 「依据 <出处>，<系统/过程> 在 <作用范围> 内应/不得 <约束行为>」
+  - label: 数据需求
+    pattern: 「<系统> 应记录 <业务对象> 的 <数据项清单>〔，并满足 <量级/生存期约束>〕」（T9 数据样板）
+  - label: 接口需求
+    pattern: 「<系统> 应能够通过 <接口/协议/文件> 接收/发送 <数据对象>〔；异常时应 <异常行为>〕」（T8 接口样板）
+examples:
+  - req_type: functional
+    statement: 系统应为需求分析人员提供确认候选需求条目的能力
+  - req_type: quality
+    statement: 在项目需求条目数量不超过 500 条的情况下，需求文档生成功能应在 30 秒内生成软件需求规格说明书草稿
+  - req_type: constraint
+    statement: 依据私有化部署合同条款，系统在无公网连接环境内不得向外部服务发送需求原文
+  - req_type: data
+    statement: 系统应记录需求条目的编号、标题、描述、类型、状态、来源和更新时间
+  - req_type: interface
+    statement: 系统应能够通过标准数据交换接口接收外部 ALM 系统提供的需求条目

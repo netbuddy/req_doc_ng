@@ -1,0 +1,74 @@
+# 治理接口·共享基础结构（应答信封、业务拒绝与错误形状、基础类型）。
+# 出处：应答三分与两个形状＝《共享结构裁定记录》决定点三；快照标识＝决定点一。
+# 本文件被 api/openapi.yaml 以名称登记的方式引用，改这里即改契约。
+
+Uuid:
+  type: string
+  format: uuid
+  description: 全局唯一标识符，UUID v7 变体（共享结构决定点一）。
+
+BasedOnBody:
+  type: object
+  required: [based_on]
+  properties:
+    based_on:
+      $ref: './common.yaml#/Uuid'
+      description: 所依据的内容快照标识（规范中文名：所依据快照）——治理者审阅时所见的那份候选稿，写操作的并发校验凭据。
+
+BusinessRejection:
+  type: object
+  description: 业务拒绝形状——平台正确履职之下的否定性业务结果（四字段）。
+  required: [category, reason_code, message]
+  properties:
+    category:
+      type: string
+      const: 业务拒绝
+      description: 类别，固定值。
+    reason_code:
+      type: string
+      description: 原因码（中文短语，机器码，正本见 docs/design/业务拒绝原因码表.md）。
+      examples: [快照已过时, 存在阻断级标记, 引用未确认领域知识, 非项目成员]
+    message:
+      type: string
+      description: 文案（人可读，可改；码不可改）。
+    details:
+      type: object
+      description: 详情——随码而异的结构化参数，逐码的详情字段随码表登记。
+
+ErrorShape:
+  type: object
+  description: 错误形状——平台未能履职（四字段）。走 400 与 5xx，不进 200 信封。
+  required: [category, message, fault_id, retryable]
+  properties:
+    category:
+      type: string
+      const: 错误
+      description: 类别，固定值。
+    message:
+      type: string
+      description: 文案。
+    fault_id:
+      type: string
+      description: 故障标识——关联服务端日志的唯一标识，报障凭据。
+    retryable:
+      type: boolean
+      description: 可重试——调用方据此决定重试或放弃。
+
+BusinessRejectionEnvelope:
+  type: object
+  required: [result, rejection]
+  properties:
+    result:
+      type: string
+      const: 业务拒绝
+    rejection:
+      $ref: './common.yaml#/BusinessRejection'
+
+SuccessEmpty:
+  type: object
+  description: 无载荷的成功应答（留痕即回执）。
+  required: [result]
+  properties:
+    result:
+      type: string
+      const: 成功

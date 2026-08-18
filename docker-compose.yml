@@ -1,0 +1,92 @@
+services:
+  db:
+    # pgvector/pgvector:pg16 = 官方 postgres:16 + pgvector 二进制（plain postgres:16 不含）。
+    # 沿用现有 req_doc_pg_data 卷（同 pg16 数据目录兼容）；vector/pg_trgm 扩展在迁移里建，不需重建卷。
+    # 全局检索工作包 P0（docs/proposals/global-search-command-palette/06 §1）。
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: req_v1
+      POSTGRES_USER: req_doc
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U req_doc -d req_v1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - req_doc_pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: ./backend
+      target: worker              # 瘦镜像：不含 LibreOffice（docx 生成走 python-docx）
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 从 backend/.env 取 LLM_* 等；DATABASE_URL/REDIS_URL 用容器网络主机名覆盖（environment 优先于 env_file）。
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://req_doc@db:5432/req_v1
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_DIR: /app/var/exports  # 与 api 共享同一导出目录（worker 写 docx，api 读回转 PDF）
+    volumes:
+      - req_doc_exports:/app/var/exports
+    restart: unless-stopped
+
+  # 发布用 API 镜像（含 LibreOffice）。profile=release，默认不随 `docker compose up` 启动，
+  # 不干扰本地 `make backend`（宿主机 :8000）。发布：docker compose --profile release up -d api
+  api:
+    build:
+      context: ./backend
+      target: api                 # 含 LibreOffice + 中文字体：精确预览 docx→PDF
+    profiles: ["release"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://req_doc@db:5432/req_v1
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_DIR: /app/var/exports  # 必须与 worker 同卷，否则读不到 worker 生成的 docx
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - req_doc_exports:/app/var/exports
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@reqdoc.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-pgadmin-dev-password}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+
+volumes:
+  req_doc_pg_data:
+  pgadmin_data:
+  req_doc_exports:   # worker 生成的 docx / api 渲染的 PDF 共享落点（EXPORT_DIR）

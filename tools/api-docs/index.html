@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>需求治理平台·治理接口文档</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+<script>
+  // 两份规范并列：V2 设计契约（手写正本）与 V1 实测接口（自后端代码导出的快照）。
+  // 页面右上角下拉框切换；改完对应 yaml 刷新本页即可看到最新内容。
+  SwaggerUIBundle({
+    urls: [
+      { url: '/api/openapi.yaml', name: '重构契约（生长中，已定案接口）' },
+      { url: '/api/v1-openapi.yaml', name: 'V1 实测接口（全部存量）' },
+      { url: '/api/v2-openapi.yaml', name: 'V2 设计蓝图（存档参考）' },
+    ],
+    'urls.primaryName': '重构契约（生长中，已定案接口）',
+    dom_id: '#swagger-ui',
+    deepLinking: true,
+    defaultModelsExpandDepth: 2,
+    layout: 'StandaloneLayout',
+    presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+  });
+</script>
+</body>
+</html>

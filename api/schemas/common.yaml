@@ -1,0 +1,34 @@
+# 共享基础结构（重构契约的跨主题公用文件，2026-08-08 随材料接入信封化抽出）。
+# 收录规则同 ../openapi.yaml：只收已实现并定案的结构。
+# 业务拒绝形状与 ../v2-schemas/common.yaml 的蓝图定义同构，此处为活契约的落地版；
+# 原因码正本＝docs/v2/design/业务拒绝原因码表.md。
+
+BusinessRejection:
+  type: object
+  description: 业务拒绝形状——平台正确履职之下的否定性业务结果。
+  required: [category, reason_code, message]
+  properties:
+    category:
+      type: string
+      const: 业务拒绝
+      description: 类别，固定值。
+    reason_code:
+      type: string
+      description: 原因码（中文短语，机器码，正本见 docs/v2/design/业务拒绝原因码表.md）。
+    message:
+      type: string
+      description: 文案（人可读，可改；码不可改）。
+    details:
+      type: [object, 'null']
+      description: 详情——随码而异的结构化参数。
+
+BusinessRejectionEnvelope:
+  type: object
+  description: 业务拒绝信封——与成功同走 200，以 result 字段区分。
+  required: [result, rejection]
+  properties:
+    result:
+      type: string
+      const: 业务拒绝
+    rejection:
+      $ref: './common.yaml#/BusinessRejection'

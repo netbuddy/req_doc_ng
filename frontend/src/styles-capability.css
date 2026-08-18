@@ -1,0 +1,140 @@
+/* 模型服务能力清单与思考模式开关（T20260724-capability-probe-panel）。
+   全部走全局配色令牌，深浅色主题各自生效；尺寸一律 rem，随全站流体根字号缩放（禁 vh/px）。 */
+
+/* ---- 思考模式开关 ---- */
+
+.cap-thinking {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.375rem;
+}
+
+.cap-thinking__label {
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.cap-thinking__status {
+  margin-bottom: 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-muted);
+}
+
+/* ---- 能力清单 ---- */
+
+.cap-pending {
+  padding: 0.75rem 0.875rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+}
+
+.cap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0 0 0.75rem;
+  padding: 0.25rem 0;
+  list-style: none;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 0.5rem;
+  background: var(--color-surface);
+}
+
+.cap-row {
+  display: grid;
+  /* 图标 / 能力名 / 结论说明。能力名列定宽，六行结论左边才对齐、扫读不用来回找——
+     每个 li 各自是一个 grid，用 max-content 会让各行按自己的名字长短各定各的宽、结论参差不齐。
+     宽度按最长的那个名字「JSON 格式输出」留足，配 nowrap 保证不折行。 */
+  grid-template-columns: 1.25rem 6.5rem 1fr;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+}
+
+.cap-row + .cap-row {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.cap-row__icon {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.cap-row--ok .cap-row__icon {
+  color: var(--color-success);
+}
+
+.cap-row--warn .cap-row__icon {
+  color: var(--color-warning);
+}
+
+.cap-row--bad .cap-row__icon {
+  color: var(--color-danger);
+}
+
+.cap-row__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text-secondary, var(--color-text));
+}
+
+.cap-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  min-width: 0;
+}
+
+.cap-row__summary {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--color-text);
+  /* 探到的参数名（reasoning_effort 之类）可能很长，窄栏下必须能断行而不是把清单撑宽 */
+  overflow-wrap: anywhere;
+}
+
+.cap-row--bad .cap-row__summary {
+  color: var(--color-danger-text);
+}
+
+.cap-row__detail {
+  font-size: 0.75rem;
+  line-height: 1.65;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.cap-apply {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+}
+
+.cap-apply__note {
+  flex: 1 1 14rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-muted);
+}
+
+/* 窄栏（设置页左侧菜单占位后右侧可用宽度有限）：能力名改为独占一行，避免结论被挤成一字宽 */
+@media (max-width: 62rem) {
+  .cap-row {
+    grid-template-columns: 1.25rem 1fr;
+  }
+
+  .cap-row__label {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .cap-row__body {
+    grid-column: 2;
+  }
+}

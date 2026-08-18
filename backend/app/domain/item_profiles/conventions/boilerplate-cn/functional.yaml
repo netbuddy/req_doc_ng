@@ -1,0 +1,48 @@
+# 功能需求条目档案（方案：中文 Boilerplates；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml，本文件只写方案特有槽位判定。
+convention_key: boilerplate-cn
+req_type: functional
+profile_version: 1
+statement_pattern: 「<系统> 应〔为 <用户角色>〕<动作> <对象>〔的能力〕；条件型前置「在 <条件> 下，」」——中文 Boilerplates 槽位化陈述（主体+模态词+动作+对象+条件）。
+facets:
+  - key: actor
+    label: 主体
+    required: true
+    criteria: 陈述写明行为主体（「系统应…」或明确用户角色），主语不缺失、不含糊
+    revision_hint: 请补写行为主体，例如「系统应…」「审核员可以…」
+  - key: modal_word
+    label: 模态词
+    required: true
+    criteria: 陈述使用规范模态词表达强制程度（应/不应/宜/不宜/可/不得），不混用被禁用词
+    revision_hint: 请用规范模态词，例如把「系统需要生成…」改为「系统应生成…」
+  - key: system_response
+    label: 动作
+    required: true
+    criteria: 陈述写明系统应执行的具体动作（可执行、可验证）
+    revision_hint: 请把期望行为写成可执行的系统动作，例如「系统应生成对账单」
+  - key: object
+    label: 对象
+    required: true
+    criteria: 陈述写明动作的作用对象，明确具体（非「结果」「数据」等泛指）
+    revision_hint: 请写明动作对象，例如「确认候选需求条目」而非「确认结果」
+  - key: trigger
+    label: 条件
+    required: false
+    criteria: 条件型需求写明前置条件（「在 <条件> 下，」）；常驻能力可省略
+    revision_hint: 如为条件型，请补写前置条件，例如「在系统处于维护模式期间…」
+payload_fields:
+  - key: actor
+    label: 主体
+    facet_ref: actor
+  - key: modal_word
+    label: 模态词
+    facet_ref: modal_word
+  - key: system_response
+    label: 动作
+    facet_ref: system_response
+  - key: object
+    label: 对象
+    facet_ref: object
+  - key: trigger
+    label: 条件
+    facet_ref: trigger

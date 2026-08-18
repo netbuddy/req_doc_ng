@@ -1,0 +1,24 @@
+# 业务规则完备性判据（蓝本：Wiegers 业务规则要项；两翼框架增补 §3）
+element_type: business_rule
+rubric_version: 1
+facets:
+  - key: rule_statement
+    label: 规则陈述
+    required: true
+    criteria: 规则本身表述完整，含适用条件与结果/义务
+    revision_hint: 请写明完整规则，例如「单笔超过 5 万元的付款须经二级审批」
+  - key: authority_source
+    label: 出处或授权依据
+    required: true
+    criteria: 说明规则来自何处（政策文件、监管条文、业务惯例、口头决策）
+    revision_hint: 请补充规则出处，例如「依据财务管理制度 v3 §4.2」
+  - key: applicability_scope
+    label: 作用范围
+    required: true
+    criteria: 说明规则适用的业务对象、角色或场景边界
+    revision_hint: 请说明适用范围，例如「仅适用于对公付款流程」
+  - key: rule_category
+    label: 规则类别
+    required: false
+    criteria: 事实 / 约束型规则 / 触发条件（action enabler）/ 推断 / 计算规则
+    revision_hint: 如可判断，请标注规则类别，便于后续转化为条目

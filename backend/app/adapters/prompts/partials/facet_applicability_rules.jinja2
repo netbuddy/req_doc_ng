@@ -1,0 +1,5 @@
+{#- 判据成分适用性（N/A 通道）共享规则（T20260714-completeness-na-gate）；
+    枚举取值由 facet_statuses（base_vars，单一来源 rubrics/item_profiles.FACET_STATUSES）注入，
+    本 partial 只约定 not_applicable 的裁定条件与行为，不重复枚举语义。-#}
+- 成分适用性（N/A）：判据中标注了〔适用性：…〕的成分，才可能被裁 not_applicable——当该陈述/要素的形态不满足其适用性条件时（如值域、格式、编码、枚举等定义类，本无存储/量级维度），对该成分判 not_applicable，并在 note 中用一句中文说明为何不适用（判定理由必给，供用户核对不是漏检）。
+- not_applicable 是"判据不适配"而非"缺失"：不出补写方向、不计入缺口，evidence 可省。未标注适用性的成分不得裁 not_applicable，仍按 present/missing/ambiguous 判定。

@@ -1,0 +1,19 @@
+# 外部系统完备性判据（蓝本：外部依赖要项；设计增补 §1 第二批）
+element_type: external_system
+rubric_version: 1
+facets:
+  - key: system_identity
+    label: 系统标识
+    required: true
+    criteria: 明确外部系统是哪一个（名称或可识别的描述）
+    revision_hint: 请写明外部系统，例如「人行征信系统」「企业微信」
+  - key: interaction_purpose
+    label: 交互目的
+    required: true
+    criteria: 明确与该系统交互要达成什么（依赖什么能力或数据）
+    revision_hint: 请补充交互目的，例如「获取客户征信报告用于授信审批」
+  - key: boundary_or_constraint
+    label: 边界或约束
+    required: false
+    criteria: 说明依赖边界、可用性约束或对接限制
+    revision_hint: 如有必要，请补充边界或约束，例如「仅工作日 9-17 点可查询，日限 1000 次」

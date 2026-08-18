@@ -1,0 +1,122 @@
+# 离线生产环境编排。与仓库根的 docker-compose.yml（开发用）分工不同：
+#   - 镜像一律按标签引用，不含 build 段（离线机不构建）；
+#   - api 与 worker 共用同一个镜像（REQDOC_IMAGE），杜绝两容器版本分叉；
+#   - 数据库与 Redis 不发布到宿主端口，只在 compose 网络内可达，对外只暴露一个应用端口；
+#   - 迁移与模板初始化是显式的一次性服务，应用容器等它们成功退出才启动。
+# 与本文件同目录的 .env 提供全部变量（安装脚本按 env.template 生成）。
+
+services:
+  db:
+    image: ${REQDOC_DB_IMAGE}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - reqdoc_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: ${REQDOC_REDIS_IMAGE}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - reqdoc_redis_data:/data
+    restart: unless-stopped
+
+  # 一次性：数据库表结构迁移。alembic upgrade head 天然幂等（已在目标版本则无操作），
+  # 因此被 compose 重复触发无害——不能指望编排层保证「只跑一次」。
+  migrate:
+    image: ${REQDOC_IMAGE}
+    restart: "no"
+    working_dir: /app
+    command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # 一次性：灌入内置文档模板。空库下 template_registry 为空会让发布功能直接不可用。
+  # 导入按内容指纹去重，重复执行只是跳过，同样幂等。
+  template-init:
+    image: ${REQDOC_IMAGE}
+    restart: "no"
+    working_dir: /app
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.scripts.import_packaged_templates"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # 按需运行：重算全局检索的派生索引（search_index 表）。
+  # 该表不随业务写入自动回填（当前实现无增量入队点），不重算则顶栏 ⌘K 全局检索查不到东西。
+  # profiles 限定它不随 docker compose up 启动，只在显式调用时运行：
+  #   docker compose --profile ops run --rm reindex
+  reindex:
+    image: ${REQDOC_IMAGE}
+    profiles: ["ops"]
+    restart: "no"
+    working_dir: /app
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.workers.reindex", "--all"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: ${REQDOC_IMAGE}
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_DIR: /app/var/exports
+      FRONTEND_DIST: /app/frontend-dist
+    ports:
+      - "${APP_PORT}:8000"
+    volumes:
+      # 前端产物挂宿主目录、不进镜像：更新前端＝替换目录内容，不必重出镜像。
+      - ./frontend-dist:/app/frontend-dist:ro
+      # 与 worker 同卷：worker 生成 docx，api 读回转 PDF，不同卷会读不到。
+      - reqdoc_exports:/app/var/exports
+    depends_on:
+      template-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: ${REQDOC_IMAGE}
+    command: ["sh", "-c", "uv run --no-sync rq worker -u \"$${REDIS_URL}\" intake"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_DIR: /app/var/exports
+    volumes:
+      - reqdoc_exports:/app/var/exports
+    depends_on:
+      template-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  reqdoc_pg_data:
+  reqdoc_redis_data:
+  reqdoc_exports:

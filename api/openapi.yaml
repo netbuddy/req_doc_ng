@@ -1,0 +1,192 @@
+openapi: 3.1.0
+info:
+  title: 需求治理平台 · 重构契约（生长中）
+  version: 0.1.0
+  description: >-
+    本文件是 V1 向 V2 重构期间的活契约：只收录已经实现并经用户定案的接口，
+    随重构逐步丰富——每对齐一组接口，就把定案形态补录进来。
+    完整的 V2 设计蓝图存档在 api/v2-openapi.yaml（原 req_gov 契约，人读参考）；
+    V1 全部存量接口的实测快照在 api/v1-openapi.yaml。
+    应答约定＝V2 信封：成功与业务拒绝同走 200、以 result 字段区分，错误走 4xx/5xx。
+    收录史：2026-08-07 材料列表（首个条目，随材料一态制裁定落地）；同日按用户裁定将 V1 材料导入三拍现状原样录入（受理关口去留待裁）；
+    同日项目管理四操作按重构定案形态收录（信封化、列表摘要＋单读详情、创建带操作者与幂等键、删除拒绝走业务拒绝信封——首组整体切换到 V2 应答约定的存量接口）；
+    2026-08-08 用户裁定路线 A——三拍制（提交→异步受理→查结论）保留为定案形态，接入两操作按信封形态改写（前检不过归位为业务拒绝信封），业务拒绝共享结构抽出为 schemas/common.yaml。
+servers:
+  - url: /api
+    description: V1 后端的统一挂载前缀。
+paths:
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [项目]
+      summary: 列出全部项目
+      description: >-
+        返回全部项目的摘要列表（标识、名称、创建时刻），按创建时刻升序；
+        详情经「读单个项目」获取。实现＝backend/app/api/projects.py；
+        裁定依据＝docs/v2/drafts/项目管理字段级差异表-讨论稿.md（2026-08-07 四件全做）。
+      responses:
+        '200':
+          description: 成功信封：项目摘要列表。
+          content:
+            application/json:
+              schema:
+                $ref: './schemas/projects.yaml#/SuccessOfProjectList'
+    post:
+      operationId: createProject
+      tags: [项目]
+      summary: 创建项目
+      description: >-
+        创建业务项目并返回其详情。操作者与幂等键必填：操作者随项目行存储
+        （V2 操作留痕的接口准备），同一幂等键重放返回同一项目、不重复创建。
+        空名返回 400。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './schemas/projects.yaml#/CreateProjectCommand'
+      responses:
+        '200':
+          description: 成功信封：新建（或幂等重放命中的既有）项目详情。
+          content:
+            application/json:
+              schema:
+                $ref: './schemas/projects.yaml#/SuccessOfProjectDetail'
+  /projects/{project_id}:
+    get:
+      operationId: readProject
+      tags: [项目]
+      summary: 读单个项目
+      description: >-
+        按项目标识返回项目详情（名称、范围、背景、领域档案键与显示名、创建时刻）。
+        项目不存在返回 404。
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 项目标识（UUID）。
+      responses:
+        '200':
+          description: 成功信封：项目详情。
+          content:
+            application/json:
+              schema:
+                $ref: './schemas/projects.yaml#/SuccessOfProjectDetail'
+    delete:
+      operationId: deleteProject
+      tags: [项目]
+      summary: 删除项目
+      description: >-
+        应用层级联删净（单事务），返回删除清点回执。项目不存在返回 404；
+        项目内有执行中的 AI 任务时返回业务拒绝信封（200，原因码
+        「项目内存在执行中任务」，正本见 docs/v2/design/业务拒绝原因码表.md）。
+        操作者标识经查询参数传入，记入结构化日志。
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 项目标识（UUID）。
+        - name: operator_ref
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 操作者标识——删除发起者，记入结构化日志。
+      responses:
+        '200':
+          description: 成功信封（删除清点回执）或业务拒绝信封（项目内存在执行中任务）。
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: './schemas/projects.yaml#/SuccessOfProjectDeletion'
+                  - $ref: './schemas/common.yaml#/BusinessRejectionEnvelope'
+  /projects/{project_id}/intake:
+    post:
+      operationId: submitIntake
+      tags: [材料]
+      summary: 提交材料接入（三拍制定案）
+      description: >-
+        提交一份纯文本材料，进入异步受理判断（接收／退回补充／排除三值结论）。
+        三拍制（提交→异步受理→查结论）经 2026-08-08 用户裁定（路线 A）保留为定案形态，
+        应答为 V2 信封：成功返回接入上下文与任务标识，同一幂等键重放返回同一上下文；
+        正文为空或项目未选定返回业务拒绝信封（200，原因码「材料正文为空」「项目未选定」）。
+        项目标识只走路径参数。裁定记录＝docs/v2/drafts/材料接入字段级差异表-讨论稿.md 第 7 节；
+        实现＝backend/app/api/intake.py。
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 项目标识。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './schemas/materials.yaml#/IntakeSubmitCommand'
+      responses:
+        '200':
+          description: 成功信封（提交回执）或业务拒绝信封（正文为空／项目未选定）。
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: './schemas/materials.yaml#/SuccessOfIntakeReceipt'
+                  - $ref: './schemas/common.yaml#/BusinessRejectionEnvelope'
+  /projects/{project_id}/intake/{context_ref}:
+    get:
+      operationId: readIntakeResult
+      tags: [材料]
+      summary: 读取接入结论（三拍制定案）
+      description: >-
+        按接入上下文标识查询受理结论与依据；判断中、判断失败停靠、三值结论都是合法读取结果，
+        结论为「接收」时返回正式材料标识。上下文不存在返回 404。应答为 V2 成功信封。
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 项目标识。
+        - name: context_ref
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 接入上下文标识——提交时返回的 context_ref。
+      responses:
+        '200':
+          description: 成功信封：受理结论读视图。
+          content:
+            application/json:
+              schema:
+                $ref: './schemas/materials.yaml#/SuccessOfIntakeConclusion'
+  /projects/{project_id}/materials:
+    get:
+      operationId: listMaterials
+      tags: [材料]
+      summary: 列出项目内全部材料
+      description: >-
+        返回项目内全部材料的摘要列表（名称、来源形态、导入时刻、内容哈希），按导入时刻倒序。
+        实现＝backend/app/api/materials.py；裁定依据＝docs/v2/drafts/材料接入字段级差异表-讨论稿.md
+        「5-补 材料一态制」与名称三规则（2026-08-07）。
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 项目标识（UUID）。
+      responses:
+        '200':
+          description: 成功信封：材料摘要列表。
+          content:
+            application/json:
+              schema:
+                $ref: './schemas/materials.yaml#/SuccessOfMaterialList'

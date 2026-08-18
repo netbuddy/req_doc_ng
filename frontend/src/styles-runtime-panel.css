@@ -1,0 +1,71 @@
+/* 运行态面板「最近作业」明细表（T20260724-agent-run-observability ⑤）。
+ *
+ * 由 shell/RuntimeStatusBadge.tsx 自行 import（先例＝RequirementQualityPanel.tsx 引
+ * styles-rmv2.css）。面板其余样式住在 styles.css（本卡禁区），故这里只补明细表自己需要的
+ * 几条规则、不改既有规则；配色与字号一律走既有令牌，跟面板同一套设计语言。
+ */
+
+/* 表格四列在 480px 抽屉里的分配：类型让宽（白话名最长），其余按内容收窄。 */
+.runtime-jobs {
+  table-layout: fixed;
+}
+
+.runtime-jobs th:nth-child(1),
+.runtime-jobs td:nth-child(1) {
+  width: 34%;
+}
+
+.runtime-jobs th:nth-child(2),
+.runtime-jobs td:nth-child(2) {
+  width: 26%;
+}
+
+.runtime-jobs th:nth-child(3),
+.runtime-jobs td:nth-child(3) {
+  width: 20%;
+}
+
+.runtime-jobs th:nth-child(4),
+.runtime-jobs td:nth-child(4) {
+  width: 20%;
+}
+
+/* 类型名过长时截断而非撑破表格（悬停原文由 title 无法承载，故留省略号提示）。 */
+.runtime-jobs__type {
+  overflow: hidden;
+  color: var(--color-title);
+  text-overflow: ellipsis;
+}
+
+/* 状态点＋文字：与组件状态（.runtime-component__state）同形，色调走 .runtime-tone--*。 */
+.runtime-jobs__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-weight: 600;
+}
+
+.runtime-jobs__dot {
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+/* 失败原因稳定码：等宽字体点明它是码不是话，弱化到次要层级。
+ * 稳定码是排障要用的原样字符串，截断了就没用了——故覆盖表格的 nowrap 允许换行，
+ * 宁可占两行也要完整可读。 */
+.runtime-jobs__reason {
+  margin-top: 0.125rem;
+  color: var(--color-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.runtime-jobs__duration {
+  color: var(--color-title);
+  font-variant-numeric: tabular-nums;
+}

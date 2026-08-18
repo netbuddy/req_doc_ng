@@ -1,0 +1,368 @@
+/* 总览台「需求统计」转化链 / 数字桥 / 状态对账（任务卡 T20260724-overview-conversion-chain）。
+ *
+ * 样式依据＝docs/proposals/overview-requirement-funnel/总览台需求统计转化链原型-v2.html。
+ * 只用 styles.css 的全局颜色令牌（都有暗色主题覆盖值，故亮暗双主题自动成立）；尺寸一律 rem，
+ * 不写 vh 定高（页内滚动由 page-fill 承担）。
+ *
+ * 为什么不改 styles.css：该文件在冷审查冻结集内。凡需覆盖既有规则的地方，用
+ * 「.overview-prototype-main .ovc-*」两个类选择器提高优先级，胜过 styles.css 的单类规则，
+ * 从而不依赖两个样式表的加载顺序（顺序依赖会造成本地正常、打包后失效）。
+ */
+
+.ovc-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* tone 文本色：indigo 是原型给「条目形成」这一段的专用色，styles.css 的六色里没有 */
+.ovc-tone-blue { color: var(--color-primary); }
+.ovc-tone-green { color: var(--color-success); }
+.ovc-tone-orange { color: var(--color-warning); }
+.ovc-tone-indigo { color: var(--color-indigo); }
+.ovc-tone-gray { color: var(--color-muted); }
+
+/* ---- 转化链条 ---- */
+
+.ovc-chain-section {
+  display: grid;
+  justify-items: start;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+/* 四节点等宽 + 箭头列。窄宽（1280）时节点会挤到可读下限，此时由本容器横向内滚：
+   既不砍节点，也不让页面整体横向滚动。 */
+.ovc-chain-strip {
+  display: grid;
+  grid-template-columns: 1fr 1.375rem 1.1fr 1.375rem 1.1fr 1.375rem 1.1fr;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 0.125rem;
+}
+
+.ovc-chain-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4375rem;
+  min-width: 11.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-tile, 0.625rem);
+  background: var(--color-surface);
+  padding: 0.75rem 0.875rem 0.6875rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ovc-chain-node:hover,
+.ovc-chain-node:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.ovc-chain-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.ovc-chain-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  border-radius: 0.25rem;
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+  padding: 0 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.ovc-chain-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+
+.ovc-chain-num {
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ovc-chain-name {
+  color: var(--color-title);
+  font-size: 0.84375rem;
+  font-weight: 600;
+}
+
+.ovc-chain-counter {
+  margin-left: auto;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.ovc-chain-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.625rem;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.ovc-chain-sub b {
+  font-weight: 600;
+}
+
+/* 门禁注脚钉在节点底部，四个节点的注脚因此对齐成一行 */
+.ovc-chain-gate {
+  margin-top: auto;
+  border-top: 1px dashed var(--color-border-soft);
+  padding-top: 0.25rem;
+  color: var(--color-muted);
+  font-size: 0.71875rem;
+  line-height: 1.55;
+}
+
+.ovc-chain-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted-soft);
+  font-size: 0.8125rem;
+}
+
+/* ---- 进度条（转化链节点与类型瓦片共用）---- */
+
+.ovc-bar {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 0.375rem;
+  border-radius: 0.1875rem;
+  background: var(--color-border-soft);
+}
+
+.ovc-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 0.1875rem;
+  background: var(--color-primary);
+}
+
+.ovc-bar-fill--green { background: var(--color-success); }
+.ovc-bar-fill--indigo { background: var(--color-indigo); }
+.ovc-bar-fill--orange { background: var(--color-warning); }
+.ovc-bar-fill--blue { background: var(--color-primary); }
+/* 类型瓦片按瓦片自身 tone 取色（tone 取值域＝OverviewTone 六色） */
+.ovc-bar-fill--tone-blue { background: var(--color-primary); }
+.ovc-bar-fill--tone-green { background: var(--color-success); }
+.ovc-bar-fill--tone-orange { background: var(--color-warning); }
+.ovc-bar-fill--tone-purple { background: var(--color-purple); }
+.ovc-bar-fill--tone-red { background: var(--color-danger); }
+.ovc-bar-fill--tone-gray { background: var(--color-muted); }
+
+/* ---- 数字桥 ---- */
+
+.ovc-bridge {
+  display: grid;
+  justify-items: start;
+  gap: 0.625rem;
+  min-width: 0;
+  margin: 0.75rem 0 0.125rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-tile, 0.625rem);
+  background: var(--color-panel);
+  padding: 0.75rem 0.875rem;
+}
+
+.ovc-bridge-rows {
+  display: grid;
+  gap: 0.375rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.ovc-bridge-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 0.4375rem;
+  background: var(--color-surface);
+  padding: 0.375rem 0.75rem;
+  color: var(--color-text);
+  font-size: 0.78125rem;
+}
+
+.ovc-bridge-head {
+  min-width: 10.625rem;
+  color: var(--color-title);
+  font-weight: 700;
+}
+
+.ovc-bridge-op {
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+.ovc-bridge-conclusion {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 0.5625rem;
+  color: var(--color-text);
+  font-size: 0.78125rem;
+  line-height: 1.8;
+}
+
+.ovc-bridge-empty {
+  color: var(--color-muted);
+  font-size: 0.78125rem;
+}
+
+/* ---- 类型瓦片：主体切桥 + 右侧箭头跳转 ---- */
+
+/* 瓦片由 button 变为容器（内含两个按钮），故补回 styles.css 给 .overview-stat-tile
+   button 形态设定的排布，并腾出右上角放跳转按钮 */
+.overview-prototype-main .ovc-type-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+}
+
+/* 两个类选择器（0,2,0）：单类写法会被 styles.css `.overview-stat-tile` 的 border 简写
+   按加载顺序重置掉 border-color，选中态就只剩一圈很淡的 box-shadow。 */
+.overview-prototype-main .ovc-type-tile--selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.ovc-type-tile-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.4375rem;
+  min-width: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  padding: 0.75rem 0.875rem;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ovc-type-tile-body .overview-stat-bottom {
+  justify-content: flex-start;
+}
+
+.ovc-type-confirm {
+  color: var(--color-muted);
+  font-size: 0.71875rem;
+  white-space: nowrap;
+}
+
+.ovc-type-confirm b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.ovc-type-tile-go {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: none;
+  color: var(--color-muted-soft);
+  cursor: pointer;
+}
+
+.ovc-type-tile-go:hover,
+.ovc-type-tile-go:focus-visible {
+  background: var(--color-bg-subtle);
+  color: var(--color-primary);
+}
+
+/* 箭头图标自己挂 .overview-arrow，styles.css 在那里直接声明了 color，继承进不来；
+   所以要直接给图标写规则，否则「悬停箭头本身」不变色，只有悬停瓦片主体才变色——
+   与「两个动作分离」的意图相反。 */
+.ovc-type-tile-go:hover .overview-arrow,
+.ovc-type-tile-go:focus-visible .overview-arrow {
+  color: var(--color-primary);
+}
+
+/* ---- 状态组：三瓦片 + 对账行 ---- */
+
+/* styles.css 给状态列只分了 0.92fr（两瓦片时代的宽度），三瓦片会挤；
+   按原型 v2 改为 1.28fr。两个类选择器胜过单类规则，与加载顺序无关。 */
+.overview-prototype-main .ovc-stat-groups {
+  grid-template-columns: 1.28fr 1.5fr 1.28fr;
+}
+
+/* 上面那条无媒体查询包裹，特异度 0,2,0，会把 styles.css 里两条把状态组压成单列的窄宽规则
+   （`.overview-stat-groups`，≤1320px 与 ≤1120px 两处，特异度都是 0,1,0）一并压掉——媒体查询
+   本身不增加特异度。所以必须在本文件补回单列回退，否则 1280 宽下三个分组框继续并排，
+   状态列只分到约 275px，塞不下三个迷你瓦片。
+   只写 ≤1320px 一档即可：styles.css 的 ≤1120px 一档声明与它逐字相同，且 1120 落在 1320 区间内，
+   再写一遍是重复规则。若日后 styles.css 解冻并把两档改成不同声明，这里需要同步拆成两档。 */
+@media (max-width: 1320px) {
+  .overview-prototype-main .ovc-stat-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ovc-recon {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 0.4375rem;
+  background: var(--color-surface);
+  padding: 0.375rem 0.625rem;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.ovc-recon-result {
+  color: var(--color-success-text);
+  font-weight: 700;
+}
+
+/* 对账不成立：按缺陷显示，不粉饰 */
+.ovc-recon--off {
+  border-color: var(--color-danger);
+}
+
+.ovc-recon--off .ovc-recon-result {
+  color: var(--color-danger-text);
+}
+
+/* ---- 窄宽（≤1440）：节点仍是四个，靠内滚承载 ---- */
+
+@media (width <= 90rem) {
+  .ovc-bridge-head {
+    min-width: 8.75rem;
+  }
+}

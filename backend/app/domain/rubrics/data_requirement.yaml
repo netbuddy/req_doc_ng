@@ -1,0 +1,20 @@
+# 数据需求完备性判据（蓝本：数据对象 + 关键属性 + 生存期/量级；设计增补 §1）
+element_type: data_requirement
+rubric_version: 1
+facets:
+  - key: data_object
+    label: 数据对象
+    required: true
+    criteria: 明确涉及的业务数据对象是什么（实体或数据集合）
+    revision_hint: 请写明数据对象，例如「客户开户申请记录」「设备运行日志」
+  - key: key_attributes
+    label: 关键属性
+    required: true
+    criteria: 列出该数据对象需要承载的关键属性或信息项
+    revision_hint: 请补充关键属性，例如「含申请人、证件号、申请时间、审批状态」
+  - key: lifecycle_or_volume
+    label: 生存期或量级
+    required: true
+    criteria: 说明数据的保存期限、归档要求或预期量级/增长速度中的至少一项
+    revision_hint: 请补充生存期或量级，例如「保存 5 年后归档」「日增约 10 万条」
+    applicability: 仅当要素涉及数据的持久化/存储（需长期保留、归档或有规模量级）时适用；纯值域、格式、编码、枚举等定义类要素判 not_applicable

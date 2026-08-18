@@ -1,0 +1,24 @@
+# 功能需求完备性判据（蓝本：EARS 模板；设计增补 §1）
+element_type: functional_requirement
+rubric_version: 1
+facets:
+  - key: trigger
+    label: 触发条件
+    required: true
+    criteria: 明确功能在何种事件、状态或前置条件下被触发（EARS 的 While/When/Where 部分）
+    revision_hint: 请补充功能的触发条件，例如「当用户提交订单时…」「在系统处于维护模式期间…」
+  - key: actor
+    label: 执行者
+    required: true
+    criteria: 明确由谁或哪个系统承担该行为（用户角色、外部系统或本系统）
+    revision_hint: 请写明行为主体，例如「系统应…」「审核员可以…」
+  - key: system_response
+    label: 系统响应
+    required: true
+    criteria: 明确系统应执行的具体行为（EARS 的 shall <response> 部分），动词可执行、不含糊
+    revision_hint: 请把期望行为写成可执行的系统动作，例如「系统应生成对账单并发送至…」
+  - key: observable_outcome
+    label: 可观测结果
+    required: true
+    criteria: 行为完成后存在可观察、可验证的结果（输出、状态变化或通知）
+    revision_hint: 请补充完成后的可观测结果，例如「订单状态更新为已受理，并向用户展示受理编号」

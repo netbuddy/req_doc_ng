@@ -1,0 +1,19 @@
+# 假设完备性判据（蓝本：假设模板；设计增补 §1 第二批）
+element_type: assumption
+rubric_version: 1
+facets:
+  - key: statement
+    label: 假设陈述
+    required: true
+    criteria: 明确被当作前提成立的事项
+    revision_hint: 请写明假设内容，例如「假设上游系统每日 6 点前完成数据推送」
+  - key: impact_if_false
+    label: 失效影响
+    required: true
+    criteria: 说明假设不成立时对需求或方案的影响
+    revision_hint: 请补充失效影响，例如「若推送延迟，当日报表生成顺延并需人工触发」
+  - key: basis
+    label: 成立依据
+    required: false
+    criteria: 说明假设的来源或依据（约定、历史数据、口头承诺等）
+    revision_hint: 如有依据，请补充，例如「依据与上游团队的接口约定会议纪要」

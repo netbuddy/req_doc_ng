@@ -1,0 +1,141 @@
+import type { ChartRead, ChartWorkspaceRead, TraceLinkRead } from '../api/charts';
+
+/** 图表设计工作台 fixture：VM 构建函数的输入快照（测试与开发预览用）。 */
+export const diagramChartListFixture: ChartRead[] = [
+  {
+    chart_ref: 'chart-1',
+    title: '导出流程图',
+    chart_kind: 'graphic',
+    chart_type: 'flowchart',
+    format: 'mermaid',
+    status: 'draft',
+    draft_version: 2,
+    source_count: 2,
+    updated_at: '2026-07-03T10:00:00+00:00',
+  },
+  {
+    chart_ref: 'chart-2',
+    title: '导出决策表',
+    chart_kind: 'table',
+    chart_type: 'decision_table',
+    format: 'markdown_table',
+    status: 'confirmed',
+    draft_version: 3,
+    source_count: 1,
+    updated_at: '2026-07-03T11:00:00+00:00',
+  },
+];
+
+export const diagramTraceLinksFixture: TraceLinkRead[] = [
+  {
+    link_ref: 'link-1',
+    relation_type: 'chart',
+    upstream_type: 'requirement_item',
+    upstream_ref: 'item-1',
+    upstream_label: 'REQ-001 系统应支持导出 docx',
+    downstream_type: 'chart',
+    downstream_ref: 'chart-1',
+    downstream_label: '导出流程图',
+    status: 'pre_established',
+    initial_basis: '图表创建自动预建立',
+  },
+  {
+    link_ref: 'link-2',
+    relation_type: 'chart',
+    upstream_type: 'requirement_item',
+    upstream_ref: 'item-2',
+    upstream_label: 'REQ-002 导出耗时不超过五秒',
+    downstream_type: 'chart',
+    downstream_ref: 'chart-2',
+    downstream_label: '导出决策表',
+    status: 'effective',
+    initial_basis: '图表创建自动预建立',
+    established_basis: '随图表确认同批确立',
+    established_at: '2026-07-03T11:00:00+00:00',
+  },
+];
+
+export const diagramWorkspaceFixture: ChartWorkspaceRead = {
+  chart_ref: 'chart-1',
+  project_ref: 'prj-1',
+  title: '导出流程图',
+  chart_kind: 'graphic',
+  chart_type: 'flowchart',
+  format: 'mermaid',
+  source_code: 'flowchart TD\n  A[导出] --> B[完成]',
+  draft_version: 2,
+  status: 'pending_confirmation',
+  preview_capability: 'renderable',
+  creation_basis: '来源准入通过：2 条确认态需求条目',
+  sources: [
+    { item_ref: 'item-1', req_no: 'REQ-001', expression: '系统应支持导出 docx', req_type: 'functional', status: 'confirmed' },
+  ],
+  trace_links: [diagramTraceLinksFixture[0]],
+  suggestions: [
+    {
+      suggestion_ref: 'sug-1',
+      source_code: 'flowchart TD\n  A --> B',
+      explanation: 'stub 建议',
+      process_status: 'pending',
+      created_for_version: 2,
+    },
+  ],
+  suggestion_thread: [
+    {
+      context_ref: 'sug-ctx-1',
+      intent: '补充导出分支',
+      created_at: '2026-07-03T10:30:00+00:00',
+      kind: 'revision',
+      status: 'suggested',
+      suggestion: {
+        suggestion_ref: 'sug-1',
+        source_code: 'flowchart TD\n  A --> B',
+        explanation: 'stub 建议',
+        process_status: 'pending',
+        created_for_version: 2,
+      },
+    },
+    {
+      context_ref: 'sug-ctx-2',
+      intent: '再增加一个通过消息队列发送的通道',
+      created_at: '2026-07-03T10:40:00+00:00',
+      kind: 'revision',
+      status: 'stopped',
+      stop_reason: '来源需求条目中未提及相关语义，无法引入该新需求内容；可重试请求或继续人工编辑，不伪造候选建议',
+    },
+  ],
+  verification: {
+    round_ref: 'round-1',
+    round_no: 1,
+    chart_draft_version: 2,
+    processing_status: 'completed',
+    invalidated: false,
+    findings: [
+      {
+        finding_ref: 'finding-1',
+        finding_type: 'suspected_hidden_requirement',
+        summary: '图表中存在来源未覆盖的新增语义',
+        basis_summary: '节点 C 无来源支撑',
+        related_source_refs: ['item-1'],
+        is_blocking: true,
+      },
+    ],
+  },
+  revisions: [],
+  confirmation_gate: {
+    can_submit: false,
+    blocked_reasons: ['存在未复核的核对发现项'],
+    review_summary_ref: 'round-1',
+  },
+  available_actions: [
+    { key: 'apply_source_change', enabled: false, disabled_reason: '仅草稿中可编辑源码（待确认已冻结编辑）' },
+    { key: 'request_suggestion', enabled: false, disabled_reason: '仅草稿中可请求 AI 源码建议' },
+    { key: 'start_verification', enabled: true, disabled_reason: null },
+    { key: 'submit_finding_decision', enabled: true, disabled_reason: null },
+    { key: 'confirm_chart', enabled: false, disabled_reason: '存在未复核的核对发现项' },
+    { key: 'return_for_revision', enabled: true, disabled_reason: null },
+    { key: 'void_chart', enabled: true, disabled_reason: null },
+    { key: 'resume_editing', enabled: false, disabled_reason: '仅退回修订可重回编辑' },
+  ],
+  validation_errors: [],
+};

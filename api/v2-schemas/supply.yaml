@@ -1,0 +1,47 @@
+# 智能体供给接口（边界②）专用的数据结构。
+# 这些结构不出现在任何 HTTP 路径上，但登记进 api/openapi.yaml 的名称表，
+# 使 Python 类型生成器能把它们与治理接口的结构一起生成——数据结构一处定义、两条边界共用。
+
+AnchorInput:
+  type: object
+  description: |
+    锚点提交形态——智能体提交候选时随内容附上的来源锚定。
+    按共享结构决定点二的分工：智能体只交出引文（抄录原文精确子串），
+    偏移与命中数由治理内核做字符串查找算出，智能体全程不计数；
+    引文非原文精确子串的，整次提交被业务拒绝「引文非原文子串」。
+  required: [material_id, quote]
+  properties:
+    material_id:
+      $ref: './common.yaml#/Uuid'
+      description: 材料标识——引文出自哪份材料。
+    quote:
+      type: string
+      minLength: 1
+      description: 引文——材料解析文本的精确子串，提交时经硬校验。
+
+MaterialParsedText:
+  type: object
+  description: 材料解析文本——只读工具的返回物，即锚点基准（引文必须是它的精确子串）。
+  required: [material_id, parse_result_id, text]
+  properties:
+    material_id:
+      $ref: './common.yaml#/Uuid'
+      description: 材料标识。
+    parse_result_id:
+      $ref: './common.yaml#/Uuid'
+      description: 解析结果标识——锚点六字段之一，随候选提交时由内核回填对应锚点。
+    text:
+      type: string
+      description: 解析后的规范化全文（偏移按 Unicode 码点在此文本上计算）。
+
+CandidateSubmissionReceipt:
+  type: object
+  description: 候选提交回执——提交工具落库成功后返回给智能体。
+  required: [asset_id, snapshot_id]
+  properties:
+    asset_id:
+      $ref: './common.yaml#/Uuid'
+      description: 资产标识——首次提交时新建，退回重做时沿用原资产。
+    snapshot_id:
+      $ref: './common.yaml#/Uuid'
+      description: 本次提交固化的候选稿快照标识。

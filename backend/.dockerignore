@@ -1,0 +1,9 @@
+# 构建 worker 镜像时排除（host venv 平台不兼容、env 由 compose 注入）。
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.env
+.mypy_cache

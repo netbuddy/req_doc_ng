@@ -1,0 +1,19 @@
+# 角色完备性判据（蓝本：角色目录要项；设计增补 §1 第二批）
+element_type: role
+rubric_version: 1
+facets:
+  - key: role_name
+    label: 角色名
+    required: true
+    criteria: 明确角色的称谓
+    revision_hint: 请写明角色名，例如「结算专员」「系统管理员」
+  - key: responsibility
+    label: 职责
+    required: true
+    criteria: 明确该角色在业务中承担的职责或参与的环节
+    revision_hint: 请补充职责，例如「负责差异复核与人工调账」
+  - key: permissions_or_interactions
+    label: 权限或交互对象
+    required: false
+    criteria: 说明角色的操作权限边界或主要交互对象
+    revision_hint: 如有必要，请补充权限或交互对象，例如「可审批调账，与财务主管交互」

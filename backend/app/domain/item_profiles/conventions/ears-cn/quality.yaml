@@ -1,0 +1,39 @@
+# 质量属性条目档案（蓝本：QAS 六要素 + Planguage 量化度量；设计增补 §1）
+convention_key: ears-cn
+req_type: quality
+profile_version: 1
+statement_pattern: 「在 <环境/负载条件> 下，当 <刺激> 时，系统应 <响应>，且 <响应度量：数值 + 单位 + 统计口径>」——质量场景（QAS）风格陈述，度量必须可验收。
+facets:
+  - key: stimulus
+    label: 刺激
+    required: true
+    criteria: 陈述写明质量要求在什么情况下被触发（负载、事件、故障、操作等刺激来源与刺激）
+    revision_hint: 请补写适用场景，例如「在峰值并发 1000 用户时…」「当单节点故障时…」
+  - key: response
+    label: 响应
+    required: true
+    criteria: 陈述写明系统面对刺激应表现出的行为或能力
+    revision_hint: 请写明系统应有的响应，例如「系统继续提供查询服务」「请求被正常处理」
+  - key: response_measure
+    label: 响应度量
+    required: true
+    criteria: 陈述含可测量的阈值或指标（数值 + 单位 + 统计口径/条件），可据以验收
+    revision_hint: 请给出可验证的量化指标，例如「95% 请求响应时间 < 2 秒」「恢复时间 ≤ 30 分钟」
+  - key: environment
+    label: 环境
+    required: false
+    criteria: 陈述说明刺激发生时的运行环境或负载条件（正常运行/降级/维护等）
+    revision_hint: 如有必要，请补写适用的运行环境，例如「正常运行状态下」「月末批处理期间」
+payload_fields:
+  - key: stimulus
+    label: 刺激
+    facet_ref: stimulus
+  - key: response
+    label: 响应
+    facet_ref: response
+  - key: response_measure
+    label: 响应度量
+    facet_ref: response_measure
+  - key: environment
+    label: 环境
+    facet_ref: environment

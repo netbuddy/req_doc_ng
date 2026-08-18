@@ -1,0 +1,106 @@
+# 治理接口·知识单元内容结构（2026-08-04 经用户裁定议定）。
+# 共同约定（出处：R-004 单层结构、R-005 描述字段是存储件、2026-08-04 裁定取
+# 「必备字段固定＋其余属性开放键值」）：内容是单层的一组结构化属性加领域引用，
+# 不存在属性之外的独立文字层；本结构同时约束提取智能体的产出、确认界面的展示与确认固化的对象。
+
+KnowledgeContent:
+  description: 知识单元内容——两类知识各一个结构，以 kind 字段区分。
+  oneOf:
+    - $ref: './knowledge.yaml#/RequirementContent'
+    - $ref: './knowledge.yaml#/ConceptContent'
+  discriminator:
+    propertyName: kind
+
+RequirementContent:
+  type: object
+  description: 需求知识单元的内容。
+  required: [kind, title, description, category]
+  properties:
+    kind:
+      type: string
+      const: 需求知识
+    title:
+      type: string
+      minLength: 1
+      description: 标题——短名，队列与列表显示用。
+    description:
+      type: string
+      minLength: 1
+      description: 描述字段——面向人阅读的陈述文字，存储件而非临时生成物（R-005）；人阅读与核对从这里入手。
+    category:
+      type: string
+      enum: [功能需求, 约束, 其他]
+      description: 类别——骨架期粗分三档（2026-08-04 用户裁定），细分类目延后。
+    attributes:
+      type: array
+      items:
+        $ref: './knowledge.yaml#/AttributeItem'
+      description: 开放键值属性——属性名由提取智能体按材料实际情况自定（如「时限」「执行角色」）；机器检测与投影以属性为操作对象。
+    concept_refs:
+      type: array
+      items:
+        $ref: './common.yaml#/Uuid'
+      description: 领域引用——指向所涉领域概念的资产标识。同组新提出的概念候选同样以标识指；「需求知识不得正式引用未确认领域知识」（R-008）与「同组原子确认」（R-009）由治理状态机在确认门禁执行，内容结构不作特殊表示（2026-08-04 默认裁定）。
+
+ConceptContent:
+  type: object
+  description: 领域概念的内容（领域知识库的知识单元）。
+  required: [kind, name, definition]
+  properties:
+    kind:
+      type: string
+      const: 领域概念
+    name:
+      type: string
+      minLength: 1
+      description: 名称。
+    definition:
+      type: string
+      minLength: 1
+      description: 定义——即本类知识单元的描述字段（R-005 对两类知识同样成立）。
+    aliases:
+      type: array
+      items: { type: string }
+      description: 别名——同一概念在材料中出现过的其他叫法。
+    attributes:
+      type: array
+      items:
+        $ref: './knowledge.yaml#/AttributeItem'
+      description: 开放键值属性（可选，与需求知识同构）。
+    concept_refs:
+      type: array
+      items:
+        $ref: './common.yaml#/Uuid'
+      description: 领域引用——概念之间的引用（如上位概念），可选。
+
+AttributeItem:
+  description: |
+    一条结构化属性。两种形态之一：歧义已消解＝name 加 value；
+    歧义未消解＝name 加 candidates（候选解释列表，R-007：提取遇多种可能解释不得自行择一送审）。
+    带着未消解 candidates 的知识过不了「结构规范」绿灯（R-038），确认被拦；
+    治理者经人工修订（reviseCandidate）选定其一后方可确认（2026-08-04 默认裁定）。
+  oneOf:
+    - type: object
+      title: AttributeResolved
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: 属性名（开放命名）。
+        value:
+          type: string
+          description: 属性值（骨架期一律为文字）。
+    - type: object
+      title: AttributeAmbiguous
+      required: [name, candidates]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: 属性名（开放命名）。
+        candidates:
+          type: array
+          minItems: 2
+          items: { type: string }
+          description: 候选解释列表——该属性的多种可能取值，待治理者选定。

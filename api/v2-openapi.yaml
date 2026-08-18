@@ -1,0 +1,325 @@
+openapi: 3.1.0
+info:
+  title: 需求治理平台·治理接口
+  version: 0.1.0
+  description: |
+    前端与后端之间治理接口的契约正本（设计先行：后端实现必须符合本文件，不得由代码反向生成本文件；
+    改接口先改本文件、再改实现）。当前覆盖骨架期核心流程（知识提取确认环）的操作，
+    随各环建成逐步增补。设计依据与形式说明见 docs/design/接口设计说明.md。
+
+    全局约定（依既有裁定，出处见设计说明）：
+    一、成功与业务拒绝都返回 HTTP 200，以应答信封区分；错误走 400 与 5xx；
+        唯一例外是成员边界类拒绝返回 403。
+    二、基于内容快照的写操作必须携带所依据的快照标识（based_on）做并发校验。
+    三、每次调用由后端自动留痕（操作用户、时刻、所依据快照），接口不另设留痕参数。
+    四、原因码与状态值为中文字面量（裁定甲-11：不设英文别名层）；
+        字段名用英文标识符，其对应的规范中文名写在各字段 description 里。
+
+tags:
+  - name: 材料
+    description: 原始材料的导入与查看——流程的起点；导入即不可改写。
+  - name: 任务
+    description: 认知任务的发起与状态查询（任务台账，真实回执）。
+  - name: 提取确认
+    description: 待确认队列的审阅与治理者的四个动作（确认、退回、拒绝、人工修订）——人独占确认出口。
+
+paths:
+  /projects/{project_id}/materials:
+    post:
+      operationId: importMaterial
+      tags: [材料]
+      summary: 导入一份原始材料（纯文本：文件内容或粘贴）。导入即不可改写，同时产生解析结果与锚点基准。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, text, source_kind]
+              properties:
+                name:
+                  type: string
+                  description: 材料名称。
+                text:
+                  type: string
+                  description: 材料正文（骨架期只收纯文本）。
+                source_kind:
+                  type: string
+                  enum: [文件, 粘贴]
+                  description: 来源形态。
+      responses:
+        '200':
+          description: 成功（材料回执）或业务拒绝，信封区分。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessOfMaterialReceipt'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+    get:
+      operationId: listMaterials
+      tags: [材料]
+      summary: 列出项目内全部材料。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: 成功（材料摘要列表）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOfMaterialList'
+
+  /projects/{project_id}/extraction-tasks:
+    post:
+      operationId: startExtraction
+      tags: [任务]
+      summary: 发起一次知识提取任务。登记任务台账并派发提取智能体；任务状态此后凭 getTask 查询（骨架期手动刷新）。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [material_ids]
+              properties:
+                material_ids:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/Uuid'
+                  description: 从哪些材料提取。
+                mode:
+                  type: string
+                  enum: [全面]
+                  default: 全面
+                  description: 提取档位（规范中文名：档位）。接口参数预留，骨架期仅有全面档；快速与深入档延后。
+      responses:
+        '200':
+          description: 成功（任务回执）或业务拒绝。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessOfTaskReceipt'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+
+  /projects/{project_id}/tasks/{task_id}:
+    get:
+      operationId: getTask
+      tags: [任务]
+      summary: 查询任务状态（真实回执——界面所见一切状态来自内核登记的事实）。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: 成功（任务状态）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOfTaskStatus'
+
+  /projects/{project_id}/pending-candidates:
+    get:
+      operationId: listPendingCandidates
+      tags: [提取确认]
+      summary: 待确认队列——项目内全部处于「待确认」状态的候选，供逐条审阅。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: 成功（候选摘要列表）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOfCandidateList'
+
+  /projects/{project_id}/candidates/{asset_id}:
+    get:
+      operationId: getCandidate
+      tags: [提取确认]
+      summary: 单条候选视图——当前候选稿全文、逐条来源锚点及其材料原文片段（来源片段同屏）。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      responses:
+        '200':
+          description: 成功（候选详情）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOfCandidateDetail'
+
+  /projects/{project_id}/candidates/{asset_id}/confirm:
+    post:
+      operationId: confirmCandidate
+      tags: [提取确认]
+      summary: 确认——把治理者审阅的那份候选稿固化为该资产的新版本。门禁在裁决时刻重算，不采信先前算得的结果。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BasedOnBody'
+      responses:
+        '200':
+          description: 成功（版本回执）或业务拒绝（快照已过时／存在阻断级标记／引用未确认领域知识）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessOfVersionReceipt'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+
+  /projects/{project_id}/candidates/{asset_id}/send-back:
+    post:
+      operationId: sendBackCandidate
+      tags: [提取确认]
+      summary: 退回（附意见）——意见留痕，内核携意见自动重新派发原智能体重做；不需要治理者另行发起任务。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/BasedOnBody'
+                - type: object
+                  required: [opinion]
+                  properties:
+                    opinion:
+                      type: string
+                      minLength: 1
+                      description: 退回意见正文（规范中文名：意见）。必填，随重做任务转给智能体。
+      responses:
+        '200':
+          description: 成功（重做任务的回执）或业务拒绝（快照已过时）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessOfTaskReceipt'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+
+  /projects/{project_id}/candidates/{asset_id}/reject:
+    post:
+      operationId: rejectCandidate
+      tags: [提取确认]
+      summary: 拒绝——终结该候选（已拒绝为终结状态，无出边）。留痕即回执。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BasedOnBody'
+      responses:
+        '200':
+          description: 成功（无载荷）或业务拒绝（快照已过时）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessEmpty'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+
+  /projects/{project_id}/candidates/{asset_id}/revise:
+    post:
+      operationId: reviseCandidate
+      tags: [提取确认]
+      summary: 人工修订——治理者直接修改候选内容。独立动作、不是裁决：产生一份作者身份为「治理者」的新候选稿快照，内容仍处待确认。
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/BasedOnBody'
+                - type: object
+                  required: [new_content]
+                  properties:
+                    new_content:
+                      $ref: '#/components/schemas/KnowledgeContent'
+      responses:
+        '200':
+          description: 成功（新快照回执）或业务拒绝（快照已过时）。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SuccessOfSnapshotReceipt'
+                  - $ref: '#/components/schemas/BusinessRejectionEnvelope'
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      description: 项目标识（规范中文名：项目边界）。一切治理接口的必备参数；骨架期单项目写死一行，但参数不可省略。
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      description: 资产标识。
+      schema:
+        $ref: '#/components/schemas/Uuid'
+
+  schemas:
+    # 数据结构按主题拆分在 api/schemas/ 三个文件（common＝信封与基础类型、knowledge＝知识内容、
+    # payloads＝各操作载荷），此处只作名称登记，内部引用 '#/components/schemas/…' 因此保持稳定。
+    # 改数据结构改那三个文件，不改本节。
+    Uuid: { $ref: './v2-schemas/common.yaml#/Uuid' }
+    BasedOnBody: { $ref: './v2-schemas/common.yaml#/BasedOnBody' }
+    BusinessRejection: { $ref: './v2-schemas/common.yaml#/BusinessRejection' }
+    ErrorShape: { $ref: './v2-schemas/common.yaml#/ErrorShape' }
+    BusinessRejectionEnvelope: { $ref: './v2-schemas/common.yaml#/BusinessRejectionEnvelope' }
+    SuccessEmpty: { $ref: './v2-schemas/common.yaml#/SuccessEmpty' }
+    KnowledgeContent: { $ref: './v2-schemas/knowledge.yaml#/KnowledgeContent' }
+    RequirementContent: { $ref: './v2-schemas/knowledge.yaml#/RequirementContent' }
+    ConceptContent: { $ref: './v2-schemas/knowledge.yaml#/ConceptContent' }
+    AttributeItem: { $ref: './v2-schemas/knowledge.yaml#/AttributeItem' }
+    MaterialReceipt: { $ref: './v2-schemas/payloads.yaml#/MaterialReceipt' }
+    MaterialSummary: { $ref: './v2-schemas/payloads.yaml#/MaterialSummary' }
+    TaskReceipt: { $ref: './v2-schemas/payloads.yaml#/TaskReceipt' }
+    FailureItem: { $ref: './v2-schemas/payloads.yaml#/FailureItem' }
+    TaskStatus: { $ref: './v2-schemas/payloads.yaml#/TaskStatus' }
+    CandidateSummary: { $ref: './v2-schemas/payloads.yaml#/CandidateSummary' }
+    SourceAnchorView: { $ref: './v2-schemas/payloads.yaml#/SourceAnchorView' }
+    CandidateDetail: { $ref: './v2-schemas/payloads.yaml#/CandidateDetail' }
+    VersionReceipt: { $ref: './v2-schemas/payloads.yaml#/VersionReceipt' }
+    SnapshotReceipt: { $ref: './v2-schemas/payloads.yaml#/SnapshotReceipt' }
+    SuccessOfMaterialReceipt: { $ref: './v2-schemas/payloads.yaml#/SuccessOfMaterialReceipt' }
+    SuccessOfMaterialList: { $ref: './v2-schemas/payloads.yaml#/SuccessOfMaterialList' }
+    SuccessOfTaskReceipt: { $ref: './v2-schemas/payloads.yaml#/SuccessOfTaskReceipt' }
+    SuccessOfTaskStatus: { $ref: './v2-schemas/payloads.yaml#/SuccessOfTaskStatus' }
+    SuccessOfCandidateList: { $ref: './v2-schemas/payloads.yaml#/SuccessOfCandidateList' }
+    SuccessOfCandidateDetail: { $ref: './v2-schemas/payloads.yaml#/SuccessOfCandidateDetail' }
+    SuccessOfVersionReceipt: { $ref: './v2-schemas/payloads.yaml#/SuccessOfVersionReceipt' }
+    SuccessOfSnapshotReceipt: { $ref: './v2-schemas/payloads.yaml#/SuccessOfSnapshotReceipt' }
+    # 以下两项属边界②（智能体供给接口，api/supply_facade.py），不出现在上方任何路径上；
+    # 登记于此是为了让 Python 类型生成器把全部数据结构一次生成（一处定义、两条边界共用）。
+    AnchorInput: { $ref: './v2-schemas/supply.yaml#/AnchorInput' }
+    MaterialParsedText: { $ref: './v2-schemas/supply.yaml#/MaterialParsedText' }
+    CandidateSubmissionReceipt: { $ref: './v2-schemas/supply.yaml#/CandidateSubmissionReceipt' }

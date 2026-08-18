@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>需求工程工作台</title>
+    <!-- 防 FOUC：先于样式/应用同步读取本地主题偏好（与 src/ui/theme.tsx 同一套规则） -->
+    <script>
+      (function () {
+        try {
+          var keys = ['a-qingkong', 'b-xuanye', 'c-dianqing', 'd-qingbi', 'e-baolan'];
+          var follow = localStorage.getItem('rx-theme-follow') === '1';
+          var saved = localStorage.getItem('rx-theme');
+          var key = follow
+            ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'b-xuanye'
+                : 'a-qingkong')
+            : keys.indexOf(saved) >= 0
+              ? saved
+              : 'a-qingkong';
+          document.documentElement.dataset.theme = key;
+          /* 字体大小档位（rx-font-scale，白名单）：首帧写 --user-font-scale，刷新不闪 */
+          var scales = ['90', '100', '110', '125'];
+          var fs = localStorage.getItem('rx-font-scale');
+          if (scales.indexOf(fs) >= 0 && fs !== '100') {
+            document.documentElement.style.setProperty('--user-font-scale', String(Number(fs) / 100));
+          }
+        } catch (error) {
+          /* 本地偏好不可用（隐私模式等）时回落默认主题 */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

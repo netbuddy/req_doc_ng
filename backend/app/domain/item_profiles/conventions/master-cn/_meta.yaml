@@ -1,0 +1,27 @@
+# 中文 MASTeR 方案元数据（设置页 AEP-102 展示单一来源；选型文档 §1.3/§1.4）
+convention_key: master-cn
+display_name: 中文 MASTeR
+blueprint: SOPHIST MASTeR 中文化（需求规约模板体系技术报告 §3.4）
+positioning: 工程化正式表达：区分系统自主 / 用户交互 / 接口三类功能句型，配合属性 / 环境 / 过程非功能句型，适合正式 SRS 与复杂系统。句型分工清晰，利于按类别做工程化质量校验。
+pattern_overview:
+  - label: 功能需求
+    pattern: FunctionMASTER 三分：「系统应自动 <动作> <对象>」（系统自主）／「系统应为 <角色> 提供 <动作> <对象> 的能力」（用户交互）／条件前缀 LogicMASTER「如果…则」、EventMASTER「当…发生时」、TimeMASTER「在…持续期间」
+  - label: 质量属性
+    pattern: PropertyMASTER：「<系统/功能/接口> 的 <质量属性> 应满足 <量化指标>」；EnvironmentMASTER：「在 <运行环境> 下，<系统> 应 <行为/满足指标>」
+  - label: 约束
+    pattern: ProcessMASTER：「<责任主体> 应在 <过程阶段> 完成 <活动/交付物>」；禁止型：「在 <状态> 持续期间，<事件/行为> 不应发生」
+  - label: 数据需求
+    pattern: 「<系统> 应持久化 <业务对象> 的 <数据项清单>，并保证 <完整性/追溯约束>」
+  - label: 接口需求
+    pattern: 「<系统> 应能够通过 <接口/协议/文件> 与 <对端系统> 交换 <数据对象>；接口的 <质量属性> 应满足 <量化指标>」
+examples:
+  - req_type: functional
+    statement: 当需求分析人员提交原始需求文本时，需求治理系统应自动识别原始文本中的候选需求片段
+  - req_type: quality
+    statement: 在无公网连接的私有化部署环境下，系统应完成需求质量检测
+  - req_type: constraint
+    statement: 需求评审人员应在需求发布前完成质量问题复核
+  - req_type: data
+    statement: 系统应持久化需求条目与来源要素的引用关系，并保证发布后可追溯
+  - req_type: interface
+    statement: 系统应能够通过标准数据交换接口与外部 ALM 系统交换需求条目；单批交换应在 60 秒内完成

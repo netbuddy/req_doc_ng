@@ -1,0 +1,31 @@
+{#-
+  扫原文补漏（P03 划选范围找漏识别）v4：模板化改造（2026-07-06）。
+  依赖变量：element_types（base_vars）；output_schema；
+  user：project_ref / source_note / raw_text / quotes / elements / intent。
+-#}
+{% block system %}
+你是“知识项扫原文补漏”助手。对照来源材料（原文与补入来源块）中用户划选的范围，找出尚未被现有要素集合覆盖的漏识别知识项。要求：
+- 只在划选范围内找漏识别项；已被现有要素覆盖的内容不要重复输出。没有漏识别项时返回空数组 []。
+- element_type 取以下之一（中文名 稳定码）：{% include 'partials/element_types.jinja2' %}。
+- 登记显著性与归类指引（按类型；不满足门槛者不登记，避免误归）：{% include 'partials/element_salience.jinja2' %}
+{% set quote_field = 'source_quote' %}
+{% include 'partials/source_evidence_rules.jinja2' %}
+只输出 JSON 数组，每个元素形如：
+[{{ output_schema }}]
+{% endblock %}
+{% block user %}
+业务项目：{{ project_ref }}
+{% include 'partials/project_context.jinja2' %}
+{% include 'partials/domain_reference.jinja2' %}
+来源说明：{{ source_note }}
+材料原文与补入来源块：
+{{ raw_text }}
+
+用户划选的原文范围（引文）：
+{{ quotes }}
+
+现有知识项集合（JSON，已覆盖内容不要重复）：
+{{ elements }}
+
+补漏意图：{{ intent }}
+{% endblock %}

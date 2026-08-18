@@ -1,0 +1,40 @@
+# 约束条目档案（方案：中文 MASTeR，ProcessMASTER / 禁止型；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml。statement/source/scope 沿用 ears-cn 键以对齐跨方案 UI。
+convention_key: master-cn
+req_type: constraint
+profile_version: 1
+statement_pattern: ProcessMASTER：「<责任主体> 应在 <过程阶段> 完成 <活动/交付物>」；禁止型：「在 <状态> 持续期间，<事件/行为> 不应发生」——中文 MASTeR 过程/禁止句型。
+facets:
+  - key: master_variant
+    label: MASTeR 句型
+    required: true
+    criteria: 陈述可明确归入 ProcessMASTER（过程阶段完成活动/交付物）或禁止型（某状态下某事件/行为不应发生）
+    revision_hint: 请标明句型，例如过程型「评审人员应在发布前完成…」，禁止型「在…期间，…不应发生」
+  - key: statement
+    label: 约束陈述
+    required: true
+    criteria: 约束内容本身表述明确（应完成什么 / 不应发生什么），不是模糊的期望
+    revision_hint: 请把约束写成明确的限定语句，例如「应在发布前完成质量问题复核」
+  - key: source
+    label: 出处
+    required: true
+    criteria: 陈述写明约束来自哪里（法规、标准、合同、既有系统、组织制度等）
+    revision_hint: 请补写约束出处，例如「依据等保 2.0 三级要求」「合同附件 B 约定」
+  - key: scope
+    label: 作用范围
+    required: true
+    criteria: 陈述写明约束作用于哪些对象、模块、过程阶段或状态
+    revision_hint: 请写明约束的作用范围，例如「适用于需求发布过程」「仅限生产环境」
+payload_fields:
+  - key: master_variant
+    label: MASTeR 句型
+    facet_ref: master_variant
+  - key: statement
+    label: 约束陈述
+    facet_ref: statement
+  - key: source
+    label: 出处
+    facet_ref: source
+  - key: scope
+    label: 作用范围
+    facet_ref: scope

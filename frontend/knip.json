@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/api/generated/schema.ts",
+    "src/api/materials.ts",
+    "src/chat-widget/__mount__/**"
+  ]
+}

@@ -1,0 +1,144 @@
+# 材料主题数据结构（重构契约的第一个主题文件，2026-08-07）。
+# 收录规则同 ../openapi.yaml：只收已实现并定案的结构，随重构逐主题增加。
+# 旧蓝图的数据结构存档在 ../v2-schemas/。
+
+MaterialSummary:
+  type: object
+  description: 材料摘要——列表一行所需字段。
+  required: [material_id, name, source_kind, imported_at, content_sha256]
+  properties:
+    material_id:
+      type: string
+      description: 材料标识（UUID）——材料的唯一身份；名称只是展示标签。
+    name:
+      type: string
+      description: >-
+        材料名称——展示用标签，允许同名（唯一性由 material_id 承担）。
+        默认名规则：文件导入取文件名（原样含扩展名）；粘贴导入取正文首个非空行（截断约二十字），
+        不成话兜底「粘贴材料-导入时刻」。
+    source_kind:
+      type: string
+      enum: [文件, 粘贴]
+      description: 来源形态。当前实现只有「粘贴」一种，文件导入待导入界面切换时实装。
+    imported_at:
+      type: string
+      format: date-time
+      description: 导入时刻。
+    content_sha256:
+      type: string
+      description: >-
+        内容哈希（SHA-256）——「导入即不可改写」（材料一态制）的机器凭据，
+        兼作同内容重复导入的查重依据；早于加列的存量材料此字段为空串。
+
+SuccessOfMaterialList:
+  type: object
+  description: 成功信封：材料列表。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+      description: 应答信封结果字段，本操作恒为「成功」。
+    data:
+      type: array
+      items:
+        $ref: '#/MaterialSummary'
+      description: 项目内全部材料，按导入时刻倒序。
+
+# ——三拍制定案结构（2026-08-08 用户裁定路线 A：三拍制保留，应答改 V2 信封）——
+# 与后端代码同源：backend/app/api/schemas.py 的同名类。
+
+IntakeSubmitCommand:
+  type: object
+  description: 提交材料接入的请求体（项目标识走路径参数，不入请求体）。
+  required: [text, operator_ref, idempotency_key]
+  properties:
+    text:
+      type: string
+      description: 材料正文（纯文本）。提交后由受理判断决定是否形成正式材料。
+    source_note:
+      type: string
+      default: ''
+      description: 来源备注——材料从哪里来的自由说明，选填。
+    operator_ref:
+      type: string
+      description: 操作者标识——记入操作留痕，回答「这份材料是谁提交的」。
+    idempotency_key:
+      type: string
+      description: 幂等键——同一键重复提交不重复受理，重放返回同一接入上下文。
+
+IntakeReceipt:
+  type: object
+  description: 提交回执——受理已登记、进入异步判断。
+  required: [context_ref]
+  properties:
+    context_ref:
+      type: string
+      description: 接入上下文标识——后续用它查询受理结论。
+    agent_run_ref:
+      type: [string, 'null']
+      description: 异步任务标识——经任务通道（轮询或 SSE）追踪受理进度；幂等重放命中时为空。
+
+SuccessOfIntakeReceipt:
+  type: object
+  description: 成功信封：提交回执。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+    data:
+      $ref: '#/IntakeReceipt'
+
+SuccessOfIntakeConclusion:
+  type: object
+  description: 成功信封：受理结论读视图（判断中／失败停靠／三值结论都是合法的读取结果）。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+    data:
+      $ref: '#/IntakeResultRead'
+
+ActionFact:
+  type: object
+  description: 可执行动作事实——由后端领域规则裁定，前端照单呈现、不自算门禁。
+  required: [key, enabled]
+  properties:
+    key:
+      type: string
+      description: 动作标识，例如「重新提交」。
+    enabled:
+      type: boolean
+      description: 该动作当前是否可执行。
+    disabled_reason:
+      type: [string, 'null']
+      description: 不可执行时的原因说明，供界面展示。
+
+IntakeResultRead:
+  type: object
+  description: 接入结论读视图（三拍制定案：判断中、失败停靠、三值结论都是合法读取结果）。
+  required: [context_ref]
+  properties:
+    context_ref:
+      type: string
+      description: 接入上下文标识——与提交时返回的 context_ref 对应。
+    intake_conclusion:
+      type: [string, 'null']
+      enum: [accepted, returned_for_supplement, excluded, null]
+      description: 受理结论三值：accepted＝接收成为正式材料；returned_for_supplement＝退回补充；excluded＝排除。判断未完成时为空。
+    material_ref:
+      type: [string, 'null']
+      description: 材料标识——仅结论为「接收」时非空，此后以它引用该材料。
+    basis:
+      type: [string, 'null']
+      description: 结论依据——受理判断给出的理由说明。
+    next_action:
+      type: [string, 'null']
+      description: 建议的下一步动作，供界面导航。
+    available_actions:
+      type: array
+      items:
+        $ref: '#/ActionFact'
+      description: 当前可用动作清单——门禁裁定结果。

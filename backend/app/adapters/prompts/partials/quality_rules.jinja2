@@ -1,0 +1,19 @@
+{#- 需求质量诊断器（v2 签名件）共享段：规则分类法 + 6 维评分口径 + EARS 句式 + evidence_span / 对齐分纪律。
+    依赖变量：quality_rules / quality_dimensions / quality_severities / ears_patterns（base_vars）。
+    单一来源：清单一律循环注入，禁手写枚举（渲染测试 tests/test_prompt_templates.py 兜底）。
+    质量元数据为旁路产物：可省略，绝不改变结论状态字与聚合守卫。 -#}
+- 质量诊断（可选旁路，与结论状态字/发现项聚合无关，缺失不影响结论）：在给出上述结论的同时，可为该条目补充质量画像、逐条发现项的规则归类、EARS 改写脚手架与逐源对齐分。
+- 规则分类法（rule_code 是 finding_type 的细化；严重度取 {% for s in quality_severities %}{{ s.code }}（{{ s.label }}）{% if not loop.last %}/ {% endif %}{% endfor %}）：
+{% for r in quality_rules %}
+  - {{ r.code }}（{{ r.label }}，维度 {{ r.dimension }}，细化自 {{ r.finding_type }}，默认严重度 {{ r.default_severity }}{% if r.can_autofix %}，可给修订点一键修复{% else %}，仅提示不给修订点{% endif %}）：{{ r.hint }}；
+{% endfor %}
+- 每条发现项可附 rule_code（取上表之一）、dimension、severity，以及 evidence_span——evidence_span 必须是基准表达（条目 expression）中**逐字连续、恰好出现一次**的片段，供界面高亮；无法逐字定位则省略 evidence_span（不要给近似片段、行号或概括）。
+- 6 维质量评分（quality_profile）：对以下每一维给 0–100 分并一句口径；overall 为加权总分（0–100）。维度与权重：
+{% for d in quality_dimensions %}
+  - {{ d.code }}（{{ d.label }}，权重 {{ d.weight }}）：{{ d.hint }}；
+{% endfor %}
+- EARS 规范化改写（ears_rewrite，脚手架供人工润色，不写入需求事实）：pattern_type 取以下之一，lines 给改写句（每行一句）：
+{% for p in ears_patterns %}
+  - {{ p.code }}（{{ p.label }}）：{{ p.hint }}；
+{% endfor %}
+- 逐源对齐分（source_alignments）：对给定的每条来源知识项，输出 element_ref 与 alignment（0.0–1.0，当前表达对该来源引文的忠实程度：1.0 完全忠实，越低偏离越大），依据锚定来源引文、不臆造；不判定 drift（偏离由系统按来源原文确定性派生）。

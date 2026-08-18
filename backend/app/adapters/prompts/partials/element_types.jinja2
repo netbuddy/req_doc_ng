@@ -1,0 +1,4 @@
+{#- 要素类型清单按两翼分组（唯一来源：app.domain.labels）。
+    element_types=[{code,label,category}]、knowledge_categories=[{code,label,hint}]、
+    knowledge_discourse_guidance=话语特征判别指引。禁在模板手写枚举清单。 -#}
+{% for wing in knowledge_categories %}{{ "\n" }}{{ wing.label }}（{{ wing.hint }}）：{% for t in element_types if t.category == wing.code %}{{ t.label }} {{ t.code }}{% if not loop.last %}、{% endif %}{% endfor %}{% endfor %}{{ "\n" }}{{ knowledge_discourse_guidance }}

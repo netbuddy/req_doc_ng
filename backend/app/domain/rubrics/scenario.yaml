@@ -1,0 +1,24 @@
+# 场景完备性判据（蓝本：场景要项；设计增补 §1 第二批）
+element_type: scenario
+rubric_version: 1
+facets:
+  - key: actor
+    label: 参与者
+    required: true
+    criteria: 明确场景中的参与角色或系统
+    revision_hint: 请补充参与者，例如「结算专员」「外部支付网关」
+  - key: precondition
+    label: 触发或前置
+    required: true
+    criteria: 明确场景在什么触发条件或前置状态下发生
+    revision_hint: 请补充触发或前置条件，例如「月末结算任务启动后」
+  - key: main_flow
+    label: 主要过程
+    required: true
+    criteria: 描述场景的关键步骤或交互过程
+    revision_hint: 请补充主要过程，例如「导入流水 → 自动对账 → 差异人工复核」
+  - key: outcome
+    label: 结果
+    required: true
+    criteria: 明确场景结束时的可观察结果或状态
+    revision_hint: 请补充场景结果，例如「生成对账报告并归档」

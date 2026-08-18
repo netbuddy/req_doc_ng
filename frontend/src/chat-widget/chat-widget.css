@@ -1,0 +1,297 @@
+/* 统一 AI 对话控件样式（工作包 01 篇 §0 高保真基准件的令牌化机械转译）。
+   纪律：全 rem、类名 cw- 前缀、无 vh 定高、无页面级 h1；配色一律取 styles.css 的 --color-* 令牌，
+   五主题＋暗色（主题 B 玄夜）自动适配。视觉照原型主视图帧复刻（布局/间距层次/气泡徽标形态）。
+   容器高度由接入页给定（flex:1 min-height:0）；本控件不定死高度。 */
+
+.cw-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: var(--color-surface);
+  border: 0.0625rem solid var(--color-border);
+  border-radius: 0.875rem;
+  overflow: hidden;
+  box-shadow: var(--shadow-soft);
+}
+
+/* ============ 会话头 ============ */
+.cw-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 0.0625rem solid var(--color-border-soft);
+  flex: none;
+}
+.cw-logo {
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-indigo));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.cw-logo svg { width: 0.875rem; height: 0.875rem; display: block; }
+.cw-head-title { font-size: 0.875rem; font-weight: 700; color: var(--color-title); white-space: nowrap; }
+.cw-scene {
+  display: inline-block;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--color-primary-strong);
+  background: var(--color-primary-soft);
+  border: 0.0625rem solid var(--color-primary-border);
+  border-radius: 0.3125rem;
+  padding: 0.0625rem 0.4375rem;
+  max-width: 14rem;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cw-tools { margin-left: auto; display: flex; gap: 0.125rem; }
+.cw-tool {
+  width: 1.6875rem;
+  height: 1.6875rem;
+  border: none;
+  background: none;
+  border-radius: 0.4375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.cw-tool:hover { background: var(--color-panel); color: var(--color-text); }
+.cw-tool svg { width: 0.9375rem; height: 0.9375rem; }
+
+/* ============ 消息区 ============ */
+.cw-thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 0.875rem 0.375rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-anchor: none;
+}
+.cw-empty {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  text-align: center;
+  padding: 1.5rem 0.5rem;
+}
+.cw-inflight {
+  align-self: flex-start;
+  font-size: 0.6875rem;
+  color: var(--color-primary-strong);
+  font-style: italic;
+}
+.cw-sys {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+.cw-sys-dot { width: 0.3125rem; height: 0.3125rem; border-radius: 50%; background: var(--color-success); flex: none; }
+
+/* 消息＝列布局（原型主视图帧：无头像；AI 锚左、用户锚右，气泡限宽 88% 各自留白一侧）。 */
+.cw-msg-group { display: flex; flex-direction: column; gap: 0.75rem; }
+.cw-date-chip {
+  align-self: center;
+  font-size: 0.65625rem;
+  color: var(--color-muted);
+  background: var(--color-panel);
+  border: 0.0625rem solid var(--color-border-soft);
+  border-radius: 999px;
+  padding: 0.0625rem 0.625rem;
+}
+.cw-msg { display: flex; flex-direction: column; gap: 0.375rem; max-width: 100%; }
+.cw-msg--ai { align-items: flex-start; }
+.cw-msg--user { align-items: flex-end; }
+.cw-msg--failed .cw-bubble { border-color: var(--color-danger-border, var(--color-danger)); }
+.cw-msg > .cw-bubble { max-width: 88%; }
+.cw-meta { font-size: 0.65625rem; color: var(--color-muted); padding: 0 0.1875rem; }
+.cw-bubble {
+  background: var(--color-panel);
+  border: 0.0625rem solid var(--color-border-soft);
+  border-radius: 0.6875rem;
+  border-bottom-left-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.78125rem;
+  line-height: 1.65;
+  color: var(--color-title);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cw-bubble--user {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary);
+  border-bottom-left-radius: 0.6875rem;
+  border-bottom-right-radius: 0.25rem;
+}
+
+/* markdown 分部：受限富文本，排版继承气泡度量 */
+.cw-markdown { font-size: 0.78125rem; line-height: 1.65; }
+.cw-markdown :first-child { margin-top: 0; }
+.cw-markdown :last-child { margin-bottom: 0; }
+.cw-markdown h1, .cw-markdown h2, .cw-markdown h3,
+.cw-markdown h4, .cw-markdown h5, .cw-markdown h6 { font-size: 0.84375rem; margin: 0.375rem 0 0.25rem; }
+.cw-markdown p, .cw-markdown li { margin: 0.1875rem 0; }
+.cw-markdown code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.71875rem;
+  background: var(--color-bg-subtle);
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+}
+.cw-markdown table { border-collapse: collapse; font-size: 0.71875rem; margin: 0.25rem 0; }
+.cw-markdown th, .cw-markdown td {
+  border: 0.0625rem solid var(--color-border-soft);
+  padding: 0.1875rem 0.4375rem;
+  text-align: left;
+}
+.cw-text { white-space: pre-wrap; }
+
+/* image 分部 */
+.cw-img { max-width: 100%; border-radius: 0.5rem; display: block; }
+.cw-img-broken {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+  background: var(--color-panel);
+  border: 0.0625rem dashed var(--color-border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.625rem;
+}
+
+/* card 分部 P1 兜底文本 / 降级折叠 */
+.cw-card-fallback {
+  font-size: 0.75rem;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: 0.0625rem solid var(--color-border-soft);
+  border-radius: 0.5rem;
+  padding: 0.4375rem 0.6875rem;
+  line-height: 1.7;
+}
+.cw-fold {
+  font-size: 0.6875rem;
+  color: var(--color-warning-text);
+  background: var(--color-warning-soft);
+  border: 0.0625rem dashed var(--color-warning);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.625rem;
+}
+
+/* ============ 链路回执条容器（内嵌既有 AiTraceRail，不重写） ============ */
+.cw-trace {
+  flex: none;
+  padding: 0.4375rem 0.875rem;
+  border-top: 0.0625rem solid var(--color-border-soft);
+  background: var(--color-primary-bg);
+  overflow-x: auto;
+}
+
+/* ============ 快捷命令药丸 ============ */
+.cw-quick {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5625rem 0.875rem 0;
+  flex-wrap: wrap;
+  flex: none;
+}
+.cw-quick-label { font-size: 0.65625rem; color: var(--color-muted); margin-right: 0.125rem; }
+.cw-pill {
+  font-size: 0.71875rem;
+  color: var(--color-primary-strong);
+  background: var(--color-primary-soft);
+  border: 0.0625rem solid var(--color-primary-border);
+  border-radius: 999px;
+  padding: 0.125rem 0.6875rem;
+  cursor: pointer;
+}
+.cw-pill:hover { background: var(--color-primary-bg); border-color: var(--color-primary); }
+.cw-pill--more { color: var(--color-muted); background: var(--color-panel); border-color: var(--color-border-soft); }
+
+/* ============ 输入区 ============ */
+.cw-foot {
+  flex: none;
+  padding: 0.5625rem 0.875rem 0.8125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.cw-note {
+  font-size: 0.6875rem;
+  color: var(--color-note-text);
+  background: var(--color-note-bg);
+  border: 0.0625rem solid var(--color-note-border);
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.5625rem;
+}
+.cw-ctx-row { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; }
+.cw-ctx-hint { font-size: 0.65625rem; color: var(--color-muted); }
+.cw-ctx-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.65625rem;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: 0.0625rem solid var(--color-border-soft);
+  border-radius: 0.3125rem;
+  padding: 0.0625rem 0.4375rem;
+}
+.cw-ctx-sw { width: 0.375rem; height: 0.375rem; border-radius: 0.125rem; background: var(--color-primary); flex: none; }
+/* 携带徽标三色轮转（原型：蓝／紫／绿） */
+.cw-ctx-sw--1 { background: var(--color-purple); }
+.cw-ctx-sw--2 { background: var(--color-success); }
+.cw-ctx-tag--quote .cw-ctx-sw { background: var(--color-purple); }
+.cw-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5625rem;
+  border: 0.0625rem solid var(--color-border);
+  border-radius: 0.6875rem;
+  padding: 0.5625rem 0.625rem 0.5625rem 0.8125rem;
+  background: var(--color-surface);
+}
+.cw-compose:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.1875rem var(--color-primary-soft);
+}
+.cw-input {
+  flex: 1;
+  font: inherit;
+  font-size: 0.78125rem;
+  line-height: 1.6;
+  border: none;
+  outline: none;
+  resize: none;
+  min-height: 2.375rem;
+  background: transparent;
+  color: var(--color-title);
+}
+.cw-send {
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 0.5625rem;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  flex: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cw-send svg { width: 0.9375rem; height: 0.9375rem; }
+.cw-send:disabled { background: var(--color-control-track); cursor: not-allowed; }

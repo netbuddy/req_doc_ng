@@ -1,0 +1,9 @@
+{#- P6a 项目领域上下文注入（08 §1）：仅用于理解语境与判别归类，自带幻觉防线声明。
+    空值省略整段（|default 兼容 StrictUndefined，未传变量即不渲染，不牵动各 lane 调用点）。 -#}
+{% if project_scope|default('') or project_background|default('') %}
+项目背景与范围（仅用于理解语境与判别归类，不得作为要素/结论内容的来源）：
+{% if project_scope|default('') %}范围：{{ project_scope }}
+{% endif %}
+{%- if project_background|default('') %}背景：{{ project_background }}
+{% endif %}
+{% endif %}

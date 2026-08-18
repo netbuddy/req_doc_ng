@@ -1,0 +1,97 @@
+/*
+ * 条目评审页·人工确认相关样式（T20260721-attested-diagnosis-context B）。
+ *
+ * 由 RequirementItemReviewFlow.tsx 自行 import（先例＝styles-runtime-panel.css、
+ * styles-pub-rail.css）：styles.css 冷审查冻结中，且本组样式只服务这一页，落独立文件
+ * 既避开冻结面，也让作用域一眼可见。
+ *
+ * 两组：
+ * - rv5-gate--attested：来源缺口刚由人工确认闭合时，区5 顶部那条状态条就地升格为醒目形态
+ *   （不是在它上面另加一条横幅——说明句只有一句，两处都显示就是同一句话连说两遍）；
+ * - rv5-attested：结论卡里被降格为非阻断提示的来源类发现（与上方问题块视觉分级：
+ *   问题是要处理的，提示不是，二者不能长得一样）。
+ *
+ * 尺寸一律 rem（全站流体根字号缩放，见 frontend/docs 自适应缩放约定）；配色走既有主题令牌，
+ * 不硬编码色值——五套主题切换只换令牌，硬编码会在暗色下瞎掉。
+ *
+ * 两条 2026-07-26 冷审查消费（K3/K11）：
+ * - 升格规则用双类选择器 `.rv5-gate.rv5-gate--attested` 提特异度。此前它与 styles.css 的
+ *   `.rv5-gate` 同为单类（特异度 0,1,0），胜负由样式表先后顺序决定；main.tsx 先 import App
+ *   再 import './styles.css'，ES 模块深度优先求值使本文件先进 <head>，于是基础规则赢，整条
+ *   升格只剩行高生效。开发时看不出来是因为 Vite 的模块热替换会把当次编辑过的样式模块追加到
+ *   <head> 末尾——那是热替换的假象，全新构建里不成立。
+ * - `--color-warning-border` 此前全仓从未定义，只被使用，于是恒取兜底的浅奶油色 #f3ddb0，
+ *   在暗色主题下与暖色前景对比度只有 1.6:1。该令牌现已在 styles.css 五个主题块逐一定义；
+ *   徽标的前景改用 --color-title，五套主题实测对比度 8.4:1 起（AA 要求 4.5:1）。
+ */
+
+.rv5-gate.rv5-gate--attested {
+  border-color: var(--color-warning-border);
+  border-left-width: 0.1875rem;
+  background: color-mix(in srgb, var(--color-warning-border) 22%, var(--color-surface));
+  font-size: 0.78125rem;
+  line-height: 1.5;
+  color: var(--color-title);
+}
+
+.rv5-gate__mark {
+  flex: none;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.25rem;
+  background: var(--color-warning-border);
+  color: var(--color-title);
+}
+
+/* ---- 结论卡内：降格为提示的来源类发现 ---- */
+
+.rv5-attested {
+  margin-top: 0.5rem;
+  padding: 0.4375rem 0.5rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.rv5-attested__cap {
+  font-size: 0.71875rem;
+  color: var(--color-muted);
+}
+
+.rv5-attested__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+}
+
+.rv5-attested__mark {
+  flex: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.25rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+}
+
+.rv5-attested__src {
+  font-size: 0.6875rem;
+  color: var(--color-warning-text);
+}
+
+/* 提示区里被否决过的那一条：状态与撤销入口（K10(a)）。降格项被移出问题列表后，
+   「重新计入」按钮所在的问题卡片也随之消失，用户既看不到自己曾经的裁定、也无法撤销它，
+   而那条否决按指纹对此后所有轮次持续生效。这里把状态与入口补回提示区。 */
+.rv5-attested__veto {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}

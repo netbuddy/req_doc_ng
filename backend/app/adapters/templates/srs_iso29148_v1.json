@@ -1,0 +1,188 @@
+{
+  "template_id": "srs-iso29148-v1",
+  "schema_version": "1.0",
+  "doc_type": "srs",
+  "title": "需求规格说明",
+  "description": "基于 ISO/IEC/IEEE 29148 需求工程标准的软件需求规格说明（SRS）模板；章节结构对齐其 SRS 信息项要求。",
+  "export_binding": {
+    "body_font_east_asia": "宋体",
+    "body_font_ascii": "Times New Roman",
+    "body_size_pt": 12,
+    "first_line_indent_chars": 2,
+    "heading_font_east_asia": "黑体",
+    "heading_font_ascii": "Arial",
+    "heading_sizes_pt": { "1": 16, "2": 14, "3": 13 },
+    "line_spacing": 1.5
+  },
+  "sections": [
+    {
+      "key": "intro",
+      "number": "1",
+      "title": "引言",
+      "level": 1,
+      "purpose": "说明文档的目的、范围与阅读约定。",
+      "content_types": [],
+      "required": false,
+      "repeatable": false,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "intro.purpose",
+      "number": "1.1",
+      "title": "编写目的",
+      "level": 2,
+      "purpose": "说明本需求规格说明的编写目的与预期读者。",
+      "content_types": ["boilerplate"],
+      "required": true,
+      "repeatable": false,
+      "missing_policy": "block",
+      "boilerplate": "本文档定义{project_name}的软件需求，作为设计、实现、测试与验收的共同依据。预期读者包括需方业务代表、开发团队、测试团队与项目管理人员。"
+    },
+    {
+      "key": "intro.scope",
+      "number": "1.2",
+      "title": "范围",
+      "level": 2,
+      "purpose": "界定本次发布覆盖的业务与系统范围。",
+      "content_types": ["boilerplate"],
+      "required": true,
+      "repeatable": false,
+      "missing_policy": "block",
+      "boilerplate": "本文档覆盖范围：{coverage_scope}。超出该范围的需求不在本版本约束之内。"
+    },
+    {
+      "key": "intro.references",
+      "number": "1.3",
+      "title": "参考资料",
+      "level": 2,
+      "purpose": "列出编制本文档引用的外部资料。",
+      "content_types": ["material"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "intro.conventions",
+      "number": "1.4",
+      "title": "文档约定",
+      "level": 2,
+      "purpose": "定义条目属性表中验证方式与优先级取值的判读口径（29148 §5.2.8 属性对齐；静态文案，零生成）。",
+      "content_types": ["boilerplate"],
+      "required": false,
+      "repeatable": false,
+      "missing_policy": "skip",
+      "boilerplate": "本文档需求条目属性表中的取值按以下口径判读。验证方式（可组合多选）：测试=以可执行用例对照预期结果验证；演示=在真实或准真实环境操作展示功能行为；检查=对产物、配置或文档做静态查验；分析=依据数据、模型或推演做符合性论证。优先级（三级）：高=本发布范围内不满足即不可交付；中=本发布范围内应满足，个别可经干系人裁量顺延；低=允许顺延到后续发布。范围外需求由发布范围机制承接，不使用优先级表达。验证方式与验收准则缺失的条目在治理侧仅作警示，不阻断发布。"
+    },
+    {
+      "key": "overview",
+      "number": "2",
+      "title": "总体描述",
+      "level": 1,
+      "purpose": "给出产品视角的整体说明与影响需求的总体因素。",
+      "content_types": [],
+      "required": false,
+      "repeatable": false,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "overview.product",
+      "number": "2.1",
+      "title": "产品概述",
+      "level": 2,
+      "purpose": "概述产品定位与主要能力。",
+      "content_types": ["boilerplate"],
+      "required": true,
+      "repeatable": false,
+      "missing_policy": "block",
+      "boilerplate": "{project_name}的需求源自已接入并确认的来源材料；本章后续内容由治理链路中的确认态需求资产按索引编排生成。"
+    },
+    {
+      "key": "overview.constraints",
+      "number": "2.2",
+      "title": "设计与实现约束",
+      "level": 2,
+      "purpose": "承载约束类需求条目。",
+      "content_types": ["requirement_item:constraint"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "requirements",
+      "number": "3",
+      "title": "具体需求",
+      "level": 1,
+      "purpose": "分类承载确认态需求条目。",
+      "content_types": [],
+      "required": false,
+      "repeatable": false,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "requirements.functional",
+      "number": "3.1",
+      "title": "功能需求",
+      "level": 2,
+      "purpose": "承载功能类需求条目（必填）。",
+      "content_types": ["requirement_item:functional"],
+      "required": true,
+      "repeatable": true,
+      "missing_policy": "block"
+    },
+    {
+      "key": "requirements.data",
+      "number": "3.2",
+      "title": "数据需求",
+      "level": 2,
+      "purpose": "承载数据类需求条目。",
+      "content_types": ["requirement_item:data"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "requirements.interface",
+      "number": "3.3",
+      "title": "接口需求",
+      "level": 2,
+      "purpose": "承载接口类需求条目。",
+      "content_types": ["requirement_item:interface"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "requirements.quality",
+      "number": "3.4",
+      "title": "质量属性",
+      "level": 2,
+      "purpose": "承载质量属性类需求条目（必填）。",
+      "content_types": ["requirement_item:quality"],
+      "required": true,
+      "repeatable": true,
+      "missing_policy": "block"
+    },
+    {
+      "key": "requirements.charts",
+      "number": "3.5",
+      "title": "需求图表",
+      "level": 2,
+      "purpose": "承载受控需求图表（图表源码随文档发布，图形渲染由外部能力提供）。",
+      "content_types": ["chart"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    },
+    {
+      "key": "appendix.materials",
+      "number": "附录A",
+      "title": "支撑材料",
+      "level": 1,
+      "purpose": "登记作为来源依据的支撑材料。",
+      "content_types": ["material"],
+      "required": false,
+      "repeatable": true,
+      "missing_policy": "skip"
+    }
+  ]
+}

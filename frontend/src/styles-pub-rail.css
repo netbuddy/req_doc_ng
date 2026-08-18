@@ -1,0 +1,416 @@
+/* 发布主工作台右栏「定稿 · 导出 · 发布」竖向进度条（方案 A · 细轨圆节点）。
+   复刻 docs/proposals/publication-stepper-redesign/发布页定稿导出发布竖向进度条原型-v1.html。
+
+   为什么独立成文件：styles.css 同时处于 clarity 与 ux-feedback-batch 两笔待审冷审查的冻结
+   清单内，且落在数张待领卡的允许区里，改它必起冲突；本文件由 PublicationWorkbench.tsx 自行
+   import（先例＝RequirementQualityPanel.tsx 引 styles-rmv2.css），与全部并行工作零重叠。
+   styles.css 内既有的 .pub-stage* 旧样式段保留原样，新结构不再引用它。 */
+
+/* 变量层＝主题令牌映射（theme-schemes-tokens-only）：原型自带的变量名（--blue/--ink-3…）
+   与本仓全局令牌名（--color-primary/--color-muted…）不同但取值逐一相等，故在作用域根上做
+   一层别名，规则层只引用别名——原型样式得以近乎原样移植，而暗色等其余主题靠
+   :root[data-theme] 覆盖全局令牌即自动联动，本文件无须为每套主题各写一份。
+   原型中三个未进令牌表的颜色改为从令牌推导：失败卡描边 #f6b6b0、成功行描边 #bfe6cf、
+   完成横幅渐变尾 #f2fbf6，均以 color-mix 兑出，不硬编码。 */
+.pub-vsteps {
+  --card: var(--color-surface);
+  --panel: var(--color-panel);
+  --page: var(--color-bg);
+  --ink: var(--color-title);
+  --ink-2: var(--color-text);
+  --ink-3: var(--color-muted);
+  --line: var(--color-border);
+  --line-soft: var(--color-border-soft);
+  --blue: var(--color-primary);
+  --blue-strong: var(--color-primary-strong);
+  --blue-weak: var(--color-primary-soft);
+  --blue-bg: var(--color-primary-bg);
+  --blue-border: var(--color-primary-border);
+  --green: var(--color-success);
+  --green-weak: var(--color-success-soft);
+  --green-text: var(--color-success-text);
+  --orange-weak: var(--color-warning-soft);
+  --orange-text: var(--color-warning-text);
+  --red: var(--color-danger);
+  --red-weak: var(--color-danger-soft);
+  --red-text: var(--color-danger-text);
+  --on-primary: var(--color-on-primary);
+  /* 描边色：原型的 #f6b6b0 / #bfe6cf 即危险色、成功色各兑白到约四成浓度 */
+  --red-border: color-mix(in srgb, var(--color-danger) 42%, var(--color-surface));
+  --green-border: color-mix(in srgb, var(--color-success) 38%, var(--color-surface));
+  color: var(--ink);
+}
+
+/* ── 每步＝节点列（1.75rem 宽，节点＋下延轨道）＋ 内容卡 ── */
+.pub-vstep {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr;
+  column-gap: 0.875rem;
+}
+
+.pub-vstep__rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pub-vstep__node {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.pub-vstep__node--done {
+  background: var(--green);
+  box-shadow: 0 0 0 0.25rem var(--green-weak);
+  color: var(--on-primary);
+}
+
+.pub-vstep__node--active {
+  border: 2px solid var(--blue);
+  color: var(--blue);
+}
+
+/* 当前步的脉冲环：外扩淡出，示意「正等你操作」 */
+.pub-vstep__node--active::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--blue);
+  border-radius: 50%;
+  opacity: 0.55;
+  animation: pub-vstep-pulse 2s ease-out infinite;
+}
+
+@keyframes pub-vstep-pulse {
+  0% { opacity: 0.55; transform: scale(1); }
+  70% { opacity: 0; transform: scale(1.55); }
+  100% { opacity: 0; transform: scale(1.55); }
+}
+
+.pub-vstep__node--busy {
+  border: 2px solid var(--blue-border);
+  color: var(--blue);
+}
+
+/* 转换中的旋转环：圆锥渐变取四分之一弧，用径向遮罩掏空成环 */
+.pub-vstep__spin {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: conic-gradient(var(--blue) 0 25%, transparent 25% 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  animation: pub-vstep-spin 1s linear infinite;
+}
+
+@keyframes pub-vstep-spin {
+  to { transform: rotate(1turn); }
+}
+
+.pub-vstep__node--pending {
+  border: 1.5px solid var(--line);
+  color: var(--ink-3);
+  font-weight: 600;
+}
+
+.pub-vstep__node--failed {
+  background: var(--red);
+  box-shadow: 0 0 0 0.25rem var(--red-weak);
+  color: var(--on-primary);
+}
+
+/* 轨道段：绿实线=已完成段；蓝→灰渐变=当前推进段；灰=未达段 */
+.pub-vstep__line {
+  width: 2px;
+  flex: 1;
+  min-height: 1.625rem;
+  margin: 0.375rem 0;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+.pub-vstep__line--done {
+  background: var(--green);
+}
+
+.pub-vstep__line--flow {
+  background: linear-gradient(var(--green) 0%, var(--blue) 45%, var(--line) 100%);
+}
+
+/* ── 内容卡：仅当前步强调，其余步降为素卡 ── */
+.pub-vstep__card {
+  min-width: 0;
+  margin-bottom: 1.125rem;
+  padding: 0.75rem 0.875rem 0.8125rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--card);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.pub-vstep__card--active {
+  border-color: var(--blue-border);
+  background: linear-gradient(180deg, var(--blue-bg) 0%, var(--card) 34%);
+  box-shadow: 0 0.375rem 1.125rem color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.pub-vstep__card--failed {
+  border-color: var(--red-border);
+  background: linear-gradient(180deg, var(--red-weak) 0%, var(--card) 30%);
+}
+
+/* 「弱化」须在浅色与暗色两个方向都成立：暗色主题里 panel 反比 surface 更亮（该主题用亮度
+   分层替代阴影），直接用 panel 会让本应后退的弱化卡反而浮起。改为从 card 向页面底色 page 兑
+   一点——page 在两套主题里都比 surface 更暗，故弱化卡在两个方向都后退（C8）。 */
+.pub-vstep__card--dim {
+  background: color-mix(in srgb, var(--card) 90%, var(--page));
+}
+
+.pub-vstep__card--dim .pub-vstep__title {
+  color: var(--ink-3);
+}
+
+.pub-vstep__titlerow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+.pub-vstep__title {
+  color: var(--ink);
+  font-size: 0.90625rem;
+  font-weight: 700;
+}
+
+/* 阶段徽标：沿用现行 finalizeBadge/exportBadge/baselineBadge 的语气分档 */
+.pub-vstep__chip {
+  margin-left: auto;
+  padding: 0 0.5625rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.125rem;
+  white-space: nowrap;
+}
+
+.pub-vstep__chip--processing {
+  background: var(--blue-weak);
+  color: var(--blue-strong);
+}
+
+.pub-vstep__chip--success {
+  background: var(--green-weak);
+  color: var(--green-text);
+}
+
+.pub-vstep__chip--neutral {
+  background: var(--line-soft);
+  color: var(--ink-2);
+}
+
+.pub-vstep__chip--warning {
+  background: var(--orange-weak);
+  color: var(--orange-text);
+}
+
+.pub-vstep__chip--danger {
+  background: var(--red-weak);
+  color: var(--red-text);
+}
+
+.pub-vstep__meta {
+  margin-bottom: 0.5625rem;
+  color: var(--ink-3);
+  font-size: 0.75rem;
+}
+
+/* 已完成步收为单行摘要（谁、何时）时不再留下方间距 */
+.pub-vstep__meta--last {
+  margin-bottom: 0;
+}
+
+.pub-vstep__hint {
+  margin-top: 0.5rem;
+  color: var(--ink-3);
+  font-size: 0.75rem;
+}
+
+.pub-vstep__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.5625rem;
+}
+
+/* ── 步内嵌套件：候选件行 / 基线详情 / 失败块 ── */
+.pub-vstep__sub {
+  margin-top: 0.625rem;
+  padding: 0.5625rem 0.6875rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5625rem;
+  background: var(--panel);
+  font-size: 0.78125rem;
+}
+
+.pub-vstep__sub--ok {
+  border-color: var(--green-border);
+  background: var(--green-weak);
+}
+
+.pub-vstep__sub--fail {
+  border-color: var(--red-border);
+  background: var(--red-weak);
+}
+
+.pub-vstep__sub + .pub-vstep__sub {
+  margin-top: 0.5rem;
+}
+
+.pub-vstep__subrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pub-vstep__subrow .pub-vstep__chip {
+  margin-left: 0;
+}
+
+.pub-vstep__time {
+  color: var(--ink-3);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pub-vstep__note {
+  margin-top: 0.3125rem;
+  color: var(--ink-2);
+  font-size: 0.75rem;
+}
+
+/* 基线详情块（renderBaselineDetail）内：首行说明贴顶、人工降级标记行与上文留一点间距。
+   两条原为组件里的内联样式（marginTop:0 与手写的 0.3125rem 魔法数），收回样式文件。 */
+.pub-vstep__sub > .pub-vstep__note:first-child {
+  margin-top: 0;
+}
+
+.pub-vstep__note + .pub-vstep__subrow {
+  margin-top: 0.3125rem;
+}
+
+.pub-vstep__reason {
+  color: var(--red-text);
+  font-size: 0.78125rem;
+  font-weight: 600;
+}
+
+.pub-vstep__num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 转换中的流光进度条：不表示真实百分比，只表示「异步任务在跑」 */
+.pub-vstep__progress {
+  position: relative;
+  height: 0.375rem;
+  margin-top: 0.5625rem;
+  border-radius: 0.1875rem;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.pub-vstep__progress i {
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  border-radius: 0.1875rem;
+  background: linear-gradient(90deg, var(--blue-weak), var(--blue) 50%, var(--blue-weak));
+  background-size: 200% 100%;
+  animation: pub-vstep-shimmer 1.4s linear infinite;
+}
+
+@keyframes pub-vstep-shimmer {
+  to { background-position: -200% 0; }
+}
+
+/* ── 完成横幅：三步全绿的已发布基线态，承载只读复核说明与开启新一轮入口 ── */
+/* 右栏窄到 1280 档时，横幅一行放不下「说明文字＋开启新一轮按钮」，不换行会把文字挤成竖条；
+   故允许换行，文字保底 8rem，按钮挤不下时整只落到下一行并靠右。 */
+.pub-vsteps__doneband {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0.125rem 0 1rem;
+  padding: 0.6875rem 0.875rem;
+  border: 1px solid var(--green-border);
+  border-radius: 0.75rem;
+  background: linear-gradient(180deg, var(--green-weak), color-mix(in srgb, var(--green-weak) 45%, var(--card)));
+}
+
+.pub-vsteps__doneband-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 50%;
+  background: var(--green);
+  color: var(--on-primary);
+  font-weight: 700;
+}
+
+.pub-vsteps__doneband-text {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.pub-vsteps__doneband-text b {
+  color: var(--green-text);
+  font-size: 0.84375rem;
+}
+
+.pub-vsteps__doneband-text span {
+  color: var(--ink-2);
+  font-size: 0.75rem;
+}
+
+.pub-vsteps__doneband .ant-btn {
+  flex: none;
+  margin-left: auto;
+}
+
+/* 动效降级：脉冲环、旋转环、流光三处在系统「减少动态效果」下静止，
+   形态与配色不变，仅停止动画（A5 验收项）。 */
+@media (prefers-reduced-motion: reduce) {
+  .pub-vstep__node--active::after,
+  .pub-vstep__spin,
+  .pub-vstep__progress i {
+    animation: none;
+  }
+
+  /* 流光条是 42% 定宽、只靠动画位移渐变来表意「在跑」。动画一停，它就静止成一根
+     固定 42% 的实心条，会被读成「完成 42%」。降级态改为整条铺满的低饱和底——不携带
+     任何百分比语义，只保留「转换进行中」的存在感（C9）。 */
+  .pub-vstep__progress i {
+    width: 100%;
+    background: var(--blue-weak);
+  }
+}
+
+/* 发布基线历史区里承载「上一轮基线」详情时，沿用进度条的令牌与子块样式（.pub-vsteps 提供变量层），
+   但它不是进度条的一步，故不带节点列，只留一点上间距与历史表分开。 */
+.pub-history__baseline {
+  margin-top: 0.5rem;
+}

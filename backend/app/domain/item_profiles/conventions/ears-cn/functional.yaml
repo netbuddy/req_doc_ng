@@ -1,0 +1,39 @@
+# 功能需求条目档案（蓝本：EARS 句式；设计增补 §1）
+convention_key: ears-cn
+req_type: functional
+profile_version: 1
+statement_pattern: 「〔当/在 <触发条件> 时/期间，〕<执行者（默认为系统）> 应 <可执行的系统响应>，〔并 <可观测结果>〕」——EARS 风格陈述；触发条件缺省仅限常驻能力（Ubiquitous）。
+facets:
+  - key: trigger
+    label: 触发条件
+    required: true
+    criteria: 陈述写明功能在何种事件、状态或前置条件下被触发（When/While/Where）；常驻能力可判 present 但须整句无歧义
+    revision_hint: 请在条目中补写触发条件，例如「当用户提交订单时…」「在系统处于维护模式期间…」
+  - key: actor
+    label: 执行者
+    required: true
+    criteria: 陈述写明由谁承担该行为（「系统应…」或明确角色），主语不缺失、不含糊
+    revision_hint: 请补写行为主体，例如「系统应…」「审核员可以…」
+  - key: system_response
+    label: 系统响应
+    required: true
+    criteria: 陈述中的系统行为动词可执行、不含糊（避免「支持」「优化」「更好地」类空泛表述）
+    revision_hint: 请把期望行为写成可执行的系统动作，例如「系统应生成对账单并发送至…」
+  - key: observable_outcome
+    label: 可观测结果
+    required: true
+    criteria: 陈述写明行为完成后可观察、可验证的结果（输出、状态变化或通知）
+    revision_hint: 请补写完成后的可观测结果，例如「订单状态更新为已受理，并向用户展示受理编号」
+payload_fields:
+  - key: trigger
+    label: 触发条件
+    facet_ref: trigger
+  - key: actor
+    label: 执行者
+    facet_ref: actor
+  - key: system_response
+    label: 系统响应
+    facet_ref: system_response
+  - key: observable_outcome
+    label: 可观测结果
+    facet_ref: observable_outcome

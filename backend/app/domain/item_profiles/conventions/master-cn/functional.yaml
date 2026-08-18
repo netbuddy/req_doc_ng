@@ -1,0 +1,48 @@
+# 功能需求条目档案（方案：中文 MASTeR，FunctionMASTER 三分；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml，本文件只写方案特有句型判定。
+convention_key: master-cn
+req_type: functional
+profile_version: 1
+statement_pattern: FunctionMASTER 三分：「<系统> 应自动 <动作> <对象>」（系统自主）／「<系统> 应为 <用户角色> 提供 <动作> <对象> 的能力」（用户交互）／条件前缀按 LogicMASTER「如果 <逻辑条件> 成立，则」、EventMASTER「当 <事件> 发生时，」、TimeMASTER「在 <状态> 持续期间，」——中文 MASTeR 功能句型。
+facets:
+  - key: interaction_kind
+    label: 交互类别
+    required: true
+    criteria: 陈述可明确归入 FunctionMASTER 三类之一：系统自主（应自动…）／用户交互（应为角色提供…能力）／接口（与对端交换…）
+    revision_hint: 请明确功能类别，例如系统自主写「系统应自动…」，用户交互写「系统应为…提供…能力」
+  - key: trigger
+    label: 触发条件
+    required: true
+    criteria: 陈述写明功能在何种事件、逻辑条件或状态期间被触发（Event/Logic/Time MASTER 前缀）；常驻能力可判 present 但须整句无歧义
+    revision_hint: 请补写触发条件，例如「当用户提交订单时…」「如果余额不足成立，则…」
+  - key: actor
+    label: 执行者
+    required: true
+    criteria: 陈述写明由谁承担该行为（「系统应…」或明确角色），主语不缺失、不含糊
+    revision_hint: 请补写行为主体，例如「系统应…」「审核员可以…」
+  - key: system_response
+    label: 系统响应
+    required: true
+    criteria: 陈述中的系统行为动词可执行、不含糊
+    revision_hint: 请把期望行为写成可执行的系统动作，例如「系统应自动生成对账单」
+  - key: observable_outcome
+    label: 可观测结果
+    required: false
+    criteria: 陈述写明行为完成后可观察、可验证的结果（输出、状态变化或通知）
+    revision_hint: 请补写完成后的可观测结果，例如「订单状态更新为已受理」
+payload_fields:
+  - key: interaction_kind
+    label: 交互类别
+    facet_ref: interaction_kind
+  - key: trigger
+    label: 触发条件
+    facet_ref: trigger
+  - key: actor
+    label: 执行者
+    facet_ref: actor
+  - key: system_response
+    label: 系统响应
+    facet_ref: system_response
+  - key: observable_outcome
+    label: 可观测结果
+    facet_ref: observable_outcome

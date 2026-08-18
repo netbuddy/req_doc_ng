@@ -1,0 +1,33 @@
+# 数据需求条目档案（方案：中文 MASTeR；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml。facets 沿用 ears-cn 数据档案键以对齐跨方案 UI。
+convention_key: master-cn
+req_type: data
+profile_version: 1
+statement_pattern: 「<系统> 应持久化 <业务对象> 的 <数据项清单>，并保证 <完整性/追溯约束>」——中文 MASTeR 数据句型。
+facets:
+  - key: data_object
+    label: 数据对象
+    required: true
+    criteria: 陈述写明涉及的业务数据对象是什么（实体或数据集合）
+    revision_hint: 请写明数据对象，例如「客户开户申请记录」「设备运行日志」
+  - key: key_attributes
+    label: 关键属性
+    required: true
+    criteria: 陈述列出该数据对象需要承载的关键属性或信息项
+    revision_hint: 请补写关键属性，例如「含申请人、证件号、申请时间、审批状态」
+  - key: lifecycle_or_volume
+    label: 生存期或量级
+    required: true
+    criteria: 陈述说明数据的完整性/追溯约束、保存期限、归档要求或预期量级中的至少一项
+    revision_hint: 请补写完整性/追溯或量级约束，例如「保证发布后可追溯」「保存 5 年后归档」
+    applicability: 仅当陈述涉及数据的持久化/追溯（需长期保留、归档、可追溯或有规模量级）时适用；纯值域、格式、编码、枚举等定义类陈述判 not_applicable
+payload_fields:
+  - key: data_object
+    label: 数据对象
+    facet_ref: data_object
+  - key: key_attributes
+    label: 关键属性
+    facet_ref: key_attributes
+  - key: lifecycle_or_volume
+    label: 生存期或量级
+    facet_ref: lifecycle_or_volume

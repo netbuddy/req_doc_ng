@@ -1,0 +1,4 @@
+key: generic
+label: 通用
+description: 不指定业务领域（默认）；无领域先验注入，抽取行为等同未启用领域档案（P6a）。
+version: 1

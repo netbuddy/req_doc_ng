@@ -1,0 +1,52 @@
+# 开发环境离线包（devkit）在离线机上需要的操作系统 deb 包清单。
+# 实证口径：以裸 Ubuntu 24.04 容器为基线逐个 ldd 核对，装齐本清单后
+# 包内 mermaid（无头 Chrome）与 plantuml（JRE）中文渲染实测出图（2026-08-17）。
+# 包内自带、因此【不需要】任何系统包的：Node.js、JRE、CPython、uv、
+# 全部 Python wheel（含 libpq）、全部 npm 包、编译工具链（零编译，全走二进制）。
+#
+# 联网机下载（发行版版本必须与离线机一致；含依赖闭包，多下的基础库无害）：
+#   mkdir debs && cd debs
+#   apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
+#     --no-conflicts --no-breaks --no-replaces --no-enhances \
+#     $(grep -vE '^#|^$' devkit-os-debs.txt) | grep '^[a-z0-9]' | sort -u)
+# 离线机安装：
+#   sudo dpkg -i debs/*.deb   （或 sudo apt-get install ./debs/*.deb）
+#
+# 版本差异：本清单按 Ubuntu 24.04 命名；22.04 上去掉 t64 后缀
+# （libasound2t64→libasound2、libatk1.0-0t64→libatk1.0-0、
+#   libatk-bridge2.0-0t64→libatk-bridge2.0-0、libatspi2.0-0t64→libatspi2.0-0、
+#   libglib2.0-0t64→libglib2.0-0）。
+#
+# 另：数据库与 docx→PDF 依赖 Docker（全量发布包的前提）。若离线机还没装 Docker，
+# 需另备 docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+# docker-compose-plugin 的 deb（来自 download.docker.com 官方源，不在本清单展开）。
+
+# ---- A. mermaid 渲染：无头 Chrome（chrome-headless-shell）的共享库，缺一不可 ----
+libx11-6
+libxcomposite1
+libxdamage1
+libxext6
+libxfixes3
+libxrandr2
+libasound2t64
+libatk1.0-0t64
+libatk-bridge2.0-0t64
+libatspi2.0-0t64
+libdbus-1-3
+libexpat1
+libgbm1
+libglib2.0-0t64
+libnspr4
+libnss3
+libxcb1
+libxkbcommon0
+
+# ---- B. 字体索引：随包的 Noto CJK 字体要靠它被 Chrome 与 JRE 找到 ----
+fontconfig
+
+# ---- C. 基础工具（最小化系统可能缺；xz-utils 是安装器硬前提，解 Node 的 tar.xz 用）----
+xz-utils
+git
+make
+psmisc
+iproute2

@@ -1,0 +1,40 @@
+# 接口需求条目档案（方案：中文 Boilerplates，T8 接口样板；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml。facets 沿用 ears-cn 接口档案键以对齐跨方案 UI。
+convention_key: boilerplate-cn
+req_type: interface
+profile_version: 1
+statement_pattern: 「<系统> 应能够通过 <接口/协议/文件> 接收/发送 <数据对象>〔；异常时应 <异常行为>〕」——Boilerplates 接口样板句（T8）。
+facets:
+  - key: counterpart
+    label: 对端
+    required: true
+    criteria: 陈述写明接口的对端系统或参与方是谁
+    revision_hint: 请写明对端系统，例如「与人行征信系统对接」「对接企业微信」
+  - key: direction
+    label: 方向
+    required: true
+    criteria: 陈述写明数据/调用方向（推送、拉取、双向、回调等）
+    revision_hint: 请补写交互方向，例如「本系统定时拉取」「对端回调通知本系统」
+  - key: payload
+    label: 交换内容
+    required: true
+    criteria: 陈述写明交换的业务内容或数据范围
+    revision_hint: 请写明交换内容，例如「同步客户基本信息与账户状态」
+  - key: error_behavior
+    label: 异常行为
+    required: true
+    criteria: 陈述说明接口失败、超时或数据异常时的期望行为（重试、降级、人工介入等）
+    revision_hint: 请补写异常处理期望，例如「超时后重试 3 次，仍失败转人工处理」
+payload_fields:
+  - key: counterpart
+    label: 对端
+    facet_ref: counterpart
+  - key: direction
+    label: 方向
+    facet_ref: direction
+  - key: payload
+    label: 交换内容
+    facet_ref: payload
+  - key: error_behavior
+    label: 异常行为
+    facet_ref: error_behavior

@@ -1,0 +1,15 @@
+# 跨平台换行符规范：所有文本文件在仓库内统一存 LF，检出时也保持 LF。
+# Windows 上必须如此：backend/Dockerfile 会把 shell 脚本 COPY 进 Linux 容器，
+# CRLF 的脚本在容器里无法执行；uv.lock / package-lock.json 被改写行尾会导致校验失败。
+* text=auto eol=lf
+
+# 二进制文件明确声明，防止被行尾规范误伤
+*.jar   binary
+*.docx  binary
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary

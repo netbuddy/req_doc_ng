@@ -1,0 +1,11 @@
+{#- P6b 领域档案注入（08 §2.3）：术语/通用词/规则模式仅作判别参考，自带幻觉防线。
+    空档案（generic）不渲染；|default 兼容 StrictUndefined，未传变量即不渲染。 -#}
+{% if domain_glossary|default('') or domain_common_terms|default('') or domain_rule_patterns|default('') %}
+领域判别参考（仅用于判断领域相关性、术语显著性与业务规则归类，不得作为要素内容来源）：
+{% if domain_glossary|default('') %}领域术语（判别参考，非内容来源）：{{ domain_glossary }}
+{% endif %}
+{%- if domain_common_terms|default('') %}通用词（不单独登记为术语要素）：{{ domain_common_terms }}
+{% endif %}
+{%- if domain_rule_patterns|default('') %}业务规则模式（归类参考）：{{ domain_rule_patterns }}
+{% endif %}
+{% endif %}

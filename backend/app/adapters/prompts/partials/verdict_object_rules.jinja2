@@ -1,0 +1,15 @@
+{#- 结论对象共享规则（SCN-003 v5 契约；服务端 _sanitize_verdict 三段校验为准，不信任模型自检）；
+    依赖变量：verdict_kinds / finding_types（base_vars）-#}
+- verdict_kind 取以下之一：
+{% for k in verdict_kinds %}
+  - {{ k.code }}（{{ k.label }}）：{{ k.hint }}；
+{% endfor %}
+- finding_type 取以下之一：
+{% for t in finding_types %}
+  - {{ t.code }}（{{ t.label }}）：{{ t.hint }}；
+{% endfor %}
+- 聚合一致性（违反任何一条，输出整轮拒收）：pass 的 findings 必须全为 no_blocker；revise 必须给至少 1 个修订点，每个点的 finding_index 指向它解决的发现项（从 0 起）；仅 revise 给 revision_points；仅 supplement 给 supplement_gaps；findings 为 1~6 个，只报有依据的问题，不堆砌。
+- 修订点必须是独立编辑：find 是基准表达中恰好出现一次的逐字连续片段（不要行号或概括）；不同点的 find 不得重叠；任意子集单独应用后仍是通顺句子；语法上必须联动的点用相同 group 字符串标记（同组整组采纳），优先生成互相独立的点。
+- 修订不得改变需求含义，不得引入来源中不存在的新需求。
+- 「已排除修订点」中的问题不得再次提出，除非有新证据并在该点 basis 中说明。
+

@@ -1,0 +1,51 @@
+{
+  "name": "req-doc-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate:api": "npx -y openapi-typescript http://localhost:8000/openapi.json -o src/api/generated/schema.ts",
+    "generate:api:file": "npx -y openapi-typescript ../api/v1-openapi.yaml -o src/api/generated/schema.ts",
+    "lint": "eslint src",
+    "smell": "eslint src && knip --include files,dependencies && npx -y jscpd ../backend/app src --min-tokens 70 --threshold 2 --ignore '**/generated/**'"
+  },
+  "dependencies": {
+    "@ant-design/cssinjs": "^2.1.2",
+    "@ant-design/icons": "^6.3.2",
+    "@codemirror/commands": "6.10.4",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.6",
+    "@lezer/highlight": "1.2.3",
+    "@lezer/markdown": "1.7.2",
+    "antd": "^6.0.0",
+    "docx-preview": "^0.4.0",
+    "mermaid": "^11.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "jsdom": "^25.0.0",
+    "knip": "^6.32.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.66.0",
+    "vite": "^8.0.0",
+    "vitest": "^4.0.0"
+  }
+}

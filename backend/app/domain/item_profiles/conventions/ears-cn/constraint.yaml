@@ -1,0 +1,31 @@
+# 约束条目档案（蓝本：约束陈述 + 出处 + 作用范围；设计增补 §1）
+convention_key: ears-cn
+req_type: constraint
+profile_version: 1
+statement_pattern: 「〔依据 <出处>，〕<作用范围> 必须/禁止 <明确的限定内容>」——约束三元陈述；「必须/禁止/限于」等限定词明确，不写成期望。
+facets:
+  - key: statement
+    label: 约束陈述
+    required: true
+    criteria: 约束内容本身表述明确（必须/禁止/限定什么），不是模糊的期望
+    revision_hint: 请把约束写成明确的限定语句，例如「必须使用国密算法存储口令」
+  - key: source
+    label: 出处
+    required: true
+    criteria: 陈述写明约束来自哪里（法规、标准、合同、既有系统、组织制度等）
+    revision_hint: 请补写约束出处，例如「依据等保 2.0 三级要求」「合同附件 B 约定」
+  - key: scope
+    label: 作用范围
+    required: true
+    criteria: 陈述写明约束作用于哪些对象、模块、环节或阶段
+    revision_hint: 请写明约束的作用范围，例如「适用于所有对外接口」「仅限生产环境」
+payload_fields:
+  - key: statement
+    label: 约束陈述
+    facet_ref: statement
+  - key: source
+    label: 出处
+    facet_ref: source
+  - key: scope
+    label: 作用范围
+    facet_ref: scope

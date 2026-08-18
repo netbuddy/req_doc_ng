@@ -1,0 +1,48 @@
+# 质量属性条目档案（方案：中文 MASTeR，Property/Environment MASTER；选型文档 §1.4）
+# 公共模态词/质量规则见 common.yaml。stimulus/response/response_measure/environment 沿用 ears-cn 键以对齐跨方案 UI。
+convention_key: master-cn
+req_type: quality
+profile_version: 1
+statement_pattern: PropertyMASTER：「<系统/功能/接口> 的 <质量属性> 应满足 <量化指标>」；EnvironmentMASTER：「在 <运行环境> 下，<系统> 应 <行为/满足指标>」——中文 MASTeR 非功能句型。
+facets:
+  - key: master_variant
+    label: MASTeR 句型
+    required: true
+    criteria: 陈述可明确归入 PropertyMASTER（属性 + 量化指标）或 EnvironmentMASTER（运行环境下的行为/指标）
+    revision_hint: 请标明句型，例如属性型「系统的响应时间应满足…」，环境型「在无公网环境下，系统应…」
+  - key: stimulus
+    label: 刺激
+    required: true
+    criteria: 陈述写明质量要求在什么情况下被触发（负载、事件、故障、操作等刺激来源与刺激）
+    revision_hint: 请补写适用场景，例如「在峰值并发 1000 用户时…」「当单节点故障时…」
+  - key: response
+    label: 响应
+    required: true
+    criteria: 陈述写明系统面对刺激应表现出的行为或能力
+    revision_hint: 请写明系统应有的响应，例如「系统继续提供查询服务」「请求被正常处理」
+  - key: response_measure
+    label: 响应度量
+    required: true
+    criteria: 陈述含可测量的阈值或指标（数值 + 单位 + 统计口径/条件），可据以验收
+    revision_hint: 请给出可验证的量化指标，例如「95% 请求响应时间 < 2 秒」「恢复时间 ≤ 30 分钟」
+  - key: environment
+    label: 环境
+    required: false
+    criteria: 陈述说明刺激发生时的运行环境或负载条件（正常运行/降级/维护等）
+    revision_hint: 如有必要，请补写适用的运行环境，例如「正常运行状态下」「月末批处理期间」
+payload_fields:
+  - key: master_variant
+    label: MASTeR 句型
+    facet_ref: master_variant
+  - key: stimulus
+    label: 刺激
+    facet_ref: stimulus
+  - key: response
+    label: 响应
+    facet_ref: response
+  - key: response_measure
+    label: 响应度量
+    facet_ref: response_measure
+  - key: environment
+    label: 环境
+    facet_ref: environment

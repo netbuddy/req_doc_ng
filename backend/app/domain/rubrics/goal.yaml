@@ -1,0 +1,19 @@
+# 目标完备性判据（蓝本：目标建模 KAOS 风格；设计增补 §1 第二批）
+element_type: goal
+rubric_version: 1
+facets:
+  - key: objective
+    label: 目标陈述
+    required: true
+    criteria: 明确表达希望达成的业务成效或方向，不是功能动作
+    revision_hint: 请把目标写成期望成效，例如「缩短月末结算周期」「降低人工对账工作量」
+  - key: beneficiary
+    label: 受益方
+    required: true
+    criteria: 明确目标服务于谁（业务部门、用户群体或组织）
+    revision_hint: 请补充受益方，例如「面向财务结算团队」「服务对公客户」
+  - key: success_measure
+    label: 成效度量
+    required: false
+    criteria: 存在可衡量目标达成程度的指标或判断口径
+    revision_hint: 如有条件，请补充成效度量，例如「结算周期从 3 天缩短到 1 天」

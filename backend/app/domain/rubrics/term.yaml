@@ -1,0 +1,19 @@
+# 术语完备性判据（蓝本：术语表要项；设计增补 §1 第二批）
+element_type: term
+rubric_version: 1
+facets:
+  - key: term_name
+    label: 术语名
+    required: true
+    criteria: 明确被定义的术语本身
+    revision_hint: 请写明术语名，例如「结算周期」
+  - key: definition
+    label: 定义
+    required: true
+    criteria: 给出术语的含义解释，能与相近概念区分
+    revision_hint: 请补充定义，例如「结算周期：从流水截止到对账报告出具的时间区间」
+  - key: scope_or_synonyms
+    label: 适用范围或同义词
+    required: false
+    criteria: 说明术语的适用边界、上下文或常见同义/别名
+    revision_hint: 如有必要，请补充适用范围或同义词，例如「仅指对公业务；亦称清算窗口」

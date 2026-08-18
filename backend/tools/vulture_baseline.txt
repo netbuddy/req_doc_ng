@@ -1,0 +1,4 @@
+app/adapters/event_bus.py: unreachable code after 'return' (100% confidence)
+app/db/models.py: unused variable 'compiler' (100% confidence)
+app/db/models.py: unused variable 'kw' (100% confidence)
+app/repositories/sqlalchemy.py: unused variable 'chain_incremental' (100% confidence)

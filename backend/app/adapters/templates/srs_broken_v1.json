@@ -1,0 +1,9 @@
+{
+  "template_id": "srs-broken-v1",
+  "schema_version": "1.0",
+  "doc_type": "srs",
+  "title": "损坏的模板（验收用：缺章节元数据与导出绑定）",
+  "sections": [
+    { "key": "intro", "title": "引言" }
+  ]
+}

@@ -1,0 +1,4 @@
+{#- 抽取显著性判据 / 归类提示（唯一来源 app.domain.labels.ELEMENT_SALIENCE）。
+    只对带 salience 的类型渲染；解决"该不该登记 / 优先归哪类"，与 element_types 的话语判别指引分工。
+    禁在模板手写判据。 -#}
+{% for t in element_types if t.salience is defined %}{{ "\n" }}- {{ t.label }} {{ t.code }}：{{ t.salience }}{% endfor %}

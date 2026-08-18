@@ -1,0 +1,136 @@
+# 项目主题数据结构（2026-08-07 项目管理组重构定案）。
+# 收录规则同 ../openapi.yaml：只收已实现并定案的结构，随重构逐主题增加。
+# 裁定依据＝docs/v2/drafts/项目管理字段级差异表-讨论稿.md（四件全做：信封化、
+# 列表瘦身＋单读启用、创建与删除补操作者与幂等键、status 死列删除）。
+
+ProjectSummary:
+  type: object
+  description: 项目摘要——列表一行所需字段；详情经「读单个项目」获取。
+  required: [project_id, name, created_at]
+  properties:
+    project_id:
+      type: string
+      description: 项目标识（UUID）——项目的唯一身份，全部治理资产的归属边界根。
+    name:
+      type: string
+      description: 项目名称。
+    created_at:
+      type: string
+      format: date-time
+      description: 创建时刻。
+
+ProjectDetail:
+  type: object
+  description: 项目详情——单读与创建回执的载荷。
+  required: [project_id, name, domain_profile_label, created_at]
+  properties:
+    project_id:
+      type: string
+      description: 项目标识（UUID）。
+    name:
+      type: string
+      description: 项目名称。
+    scope:
+      type: [string, 'null']
+      description: 项目范围说明（选填，可为空）。
+    background:
+      type: [string, 'null']
+      description: 项目背景说明（选填，可为空）。
+    domain_profile_key:
+      type: [string, 'null']
+      description: 领域档案键（封闭集；空＝不注入领域先验）。
+    domain_profile_label:
+      type: string
+      description: 领域档案显示名——按键从封闭集派生，不落表；键为空时为通用档案的显示名。
+    created_at:
+      type: string
+      format: date-time
+      description: 创建时刻。
+
+CreateProjectCommand:
+  type: object
+  description: 创建项目入参。操作者与幂等键必填——对齐 V1 写接口纪律与 V2「每笔操作留痕记用户标识」的要求。
+  required: [name, operator_ref, idempotency_key]
+  properties:
+    name:
+      type: string
+      description: 项目名称（去首尾空白后不得为空，空名返回 400）。
+    scope:
+      type: [string, 'null']
+      description: 项目范围说明（选填）。
+    background:
+      type: [string, 'null']
+      description: 项目背景说明（选填）。
+    domain_profile_key:
+      type: [string, 'null']
+      description: 领域档案键（封闭集，选填；缺省不注入领域先验）。
+    operator_ref:
+      type: string
+      description: 操作者标识——创建者，随项目行存储。
+    idempotency_key:
+      type: string
+      description: 幂等键——同键重放返回同一项目，不重复建行。
+
+ProjectDeletionReport:
+  type: object
+  description: 删除清点回执——「删了什么」的机器可验摘要（逐表明细另走结构化日志）。
+  required: [project_id, project_name, deleted_rows, table_counts, files_deleted, files_failed]
+  properties:
+    project_id:
+      type: string
+      description: 被删项目标识。
+    project_name:
+      type: string
+      description: 被删项目名称。
+    deleted_rows:
+      type: integer
+      description: 全部表删除行数合计（含项目行自身）。
+    table_counts:
+      type: object
+      additionalProperties:
+        type: integer
+      description: 表名 → 删除行数（删净证据摘要）。
+    files_deleted:
+      type: integer
+      description: 落盘导出文件实删个数。
+    files_failed:
+      type: integer
+      description: 落盘文件删除失败个数（已记结构化日志，不回滚）。
+
+# 业务拒绝形状与信封已抽到 ./common.yaml（2026-08-08，第三个使用主题出现时抽出）。
+
+SuccessOfProjectList:
+  type: object
+  description: 成功信封：项目摘要列表。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+    data:
+      type: array
+      items:
+        $ref: './projects.yaml#/ProjectSummary'
+      description: 全部项目摘要，按创建时刻升序。
+
+SuccessOfProjectDetail:
+  type: object
+  description: 成功信封：项目详情（单读与创建回执共用）。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+    data:
+      $ref: './projects.yaml#/ProjectDetail'
+
+SuccessOfProjectDeletion:
+  type: object
+  description: 成功信封：删除清点回执。
+  required: [result, data]
+  properties:
+    result:
+      type: string
+      const: 成功
+    data:
+      $ref: './projects.yaml#/ProjectDeletionReport'
