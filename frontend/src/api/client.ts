@@ -119,20 +119,6 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path, { method: 'GET' });
 }
 
-/** HEAD 探活（不取正文）：2xx resolve，否则抛 ApiError。用于 iframe 直连前先判可用（如 PDF 精确预览）。 */
-export async function apiHead(path: string): Promise<void> {
-  const url = `${API_BASE}${path}`;
-  let response: Response;
-  try {
-    response = await fetch(url, { method: 'HEAD' });
-  } catch {
-    throw new ApiError(`请求 ${url} 失败：无法连接后端（网络或代理错误）`, { kind: 'network' });
-  }
-  noteServerDate(response);
-  if (!response.ok) {
-    throw new ApiError(`请求 ${url} 失败：HTTP ${response.status}`, { kind: 'http', status: response.status });
-  }
-}
 
 /** 取二进制资源（如生成好的 docx 字节流）为 Blob；错误口径同 request（抛 ApiError）。 */
 export async function apiGetBlob(path: string): Promise<Blob> {

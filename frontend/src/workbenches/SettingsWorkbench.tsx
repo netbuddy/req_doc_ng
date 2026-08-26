@@ -1535,7 +1535,7 @@ function ExportReadinessSection() {
             <span>
               {readiness
                 ? `${readiness.summary}（${readiness.checkedText}）`
-                : '导出 Word 文档时，图形渲染与 PDF 精确预览要用到本机装的几个工具。点右上角的按钮查看它们是否就绪。'}
+                : '导出文档时，结构图（PlantUML）渲染要用到本机装的 Java 与 plantuml.jar。点右上角的按钮查看它们是否就绪。'}
             </span>
           </div>
           {readiness ? (

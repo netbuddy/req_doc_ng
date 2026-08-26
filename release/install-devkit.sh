@@ -209,27 +209,6 @@ EOF
   log "backend/.env 已指向全量包数据库（localhost:${DB_PORT}），AI 服务参数已照抄现场配置。"
   log "REDIS_URL 保持留空＝AI 任务同步执行；要试异步就填 redis://localhost:${REDIS_PORT}/0 并本机跑 make worker。"
 
-  # LibreOffice 不随包也不必装在宿主机：全量包 api 镜像里带着 LibreOffice＋中文字体
-  # （生产的 docx→PDF 精确预览用的就是它）。生成 soffice 包装脚本把转换转发进该镜像跑：
-  # 挂载 /tmp（临时 profile/HOME）与安装目录（导出文件），同 uid 运行保证产物归属，断网执行。
-  REQDOC_IMAGE="$(read_env REQDOC_IMAGE)"
-  if [ -n "$REQDOC_IMAGE" ] && docker image inspect "$REQDOC_IMAGE" >/dev/null 2>&1; then
-    cat > "$TOOL/bin/soffice" <<EOF
-#!/usr/bin/env bash
-# soffice 包装器（install-devkit.sh 生成）：复用全量发布包镜像内的 LibreOffice 与中文字体，
-# 宿主机不必安装 LibreOffice。后端经 SOFFICE_PATH 调用本脚本，与直接调 soffice 参数兼容。
-exec docker run --rm --network none --user "\$(id -u):\$(id -g)" \\
-  -e HOME -e LC_ALL -e LANG \\
-  -v /tmp:/tmp -v "$INSTALL_DIR:$INSTALL_DIR" \\
-  "$REQDOC_IMAGE" soffice "\$@"
-EOF
-    chmod +x "$TOOL/bin/soffice"
-    set_env_kv SOFFICE_PATH "$TOOL/bin/soffice"
-    log "docx→PDF 精确预览已接通：SOFFICE_PATH → 包装脚本 → 全量包镜像内的 LibreOffice（与生产同源）。"
-  else
-    warn "全量包镜像不可用（REQDOC_IMAGE=$REQDOC_IMAGE）：SOFFICE_PATH 未配置，docx→PDF 精确预览降级。"
-  fi
-
   # 关键一步：全量包的库表停在出包时的旧版本，增量迁移到本包代码的最新版本。
   # alembic 幂等：已在目标版本则无操作；--rebuild-db 后这里就是从零建全套表。
   (cd "$INSTALL_DIR/backend" && env -u PYTHONPATH uv run alembic upgrade head)

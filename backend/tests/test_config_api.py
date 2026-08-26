@@ -431,27 +431,25 @@ def _readiness(client):
 
 
 def test_export_readiness_matches_adapter_verdicts(client):
-    """就绪结论必须与适配器判定同源（A3）：soffice 项 == pdf_render_available()，图形两项 == resolve_tools()。"""
+    """就绪结论必须与适配器判定同源（A3）：图形项 == resolve_tools()。"""
     from app.adapters.diagram_render import resolve_tools
-    from app.adapters.docx_to_pdf import pdf_render_available
 
     body, items = _readiness(client)
-    assert [i["key"] for i in body["items"]] == ["pdf_preview", "plantuml_diagram"]
+    assert [i["key"] for i in body["items"]] == ["plantuml_diagram"]
     tools = resolve_tools()
-    assert items["pdf_preview"]["ready"] is pdf_render_available()
     assert items["plantuml_diagram"]["ready"] is (tools["java"] is not None and tools["plantuml_jar"] is not None)
     assert body["all_ready"] is all(i["ready"] for i in body["items"])
 
 
 def test_export_readiness_never_converts_or_renders(client, monkeypatch):
     """探测零副作用（A2）：不得调用任何真实转换/渲染入口。"""
-    from app.adapters import diagram_render, docx_to_pdf
+    from app.adapters import diagram_render
 
     def _boom(*args, **kwargs):  # pragma: no cover - 被调用即测试失败
         raise AssertionError("就绪探测不得发起真实转换/渲染")
 
-    monkeypatch.setattr(docx_to_pdf, "convert_docx_to_pdf", _boom)
     monkeypatch.setattr(diagram_render, "render_to_png", _boom)
+    monkeypatch.setattr(diagram_render, "render_to_svg", _boom)
     body, _ = _readiness(client)
     assert isinstance(body["checked_at"], str) and body["checked_at"]
 
@@ -460,13 +458,11 @@ def test_export_readiness_reports_missing_tools_with_stable_outcomes(client, mon
     """缺失态：结果码指出缺的是哪一个依赖，且路径/版本不再下发（A2 构造缺失态）。"""
     from app.services import config_registry as registry
 
-    monkeypatch.setattr(registry, "find_soffice", lambda: None)
     monkeypatch.setattr(
         registry, "resolve_tools", lambda: {"java": None, "plantuml_jar": None}
     )
     body, items = _readiness(client)
     assert body["all_ready"] is False
-    assert items["pdf_preview"]["outcome"] == "soffice_missing"
     assert items["plantuml_diagram"]["outcome"] == "java_missing"
     assert all(i["path"] is None and i["version"] is None for i in body["items"])
 

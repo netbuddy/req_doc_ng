@@ -87,10 +87,10 @@ check-report-deck: ## 校验项目汇报大纲、演示脚本、图片清单与�
 migrate: ## 应用数据库迁移（alembic upgrade head）
 	cd $(BACKEND_DIR) && PYTHONPATH=. $(UV) run alembic upgrade head
 
-build: ## 构建 worker 容器镜像（瘦镜像，不含 LibreOffice）
+build: ## 构建 worker 容器镜像（瘦镜像，不含图形渲染工具链）
 	$(COMPOSE) build worker
 
-build-api: ## 构建发布用 API 容器镜像（含 LibreOffice + 中文字体；精确预览用）
+build-api: ## 构建发布用 API 容器镜像（含 Java + graphviz + 中文字体；plantuml 渲染用）
 	$(COMPOSE) --profile release build api
 
 worker-bg: ## [后台] 以容器方式跑 worker（不调试 worker 代码时；勿与 make worker 同开）

@@ -1,9 +1,7 @@
-import { Alert, Button, Modal, Segmented, Spin } from 'antd';
+import { Alert, Button, Modal, Spin } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { renderAsync } from 'docx-preview';
 import { publicationApi } from '../api/publication';
-
-type PreviewMode = 'content' | 'pdf';
 
 interface DocxPreviewModalProps {
   open: boolean;
@@ -14,23 +12,15 @@ interface DocxPreviewModalProps {
 }
 
 /**
- * 候选 / 基线 docx 在线预览（双模）。
- * - 内容预览（快速）：docx-preview 在浏览器 HTML 近似渲染，看内容用；版式/页数不保证与真实 docx 一致。
- * - 精确预览（PDF）：后端 LibreOffice 把 docx 真转 PDF，浏览器原生查看器呈现，真实分页/版式/页数正确。
- * 字节均走 publicationApi（守 MVVM 边界：视图不直连 fetch）。LibreOffice 缺失时精确预览回 503，
- * 提示降级到内容预览/下载查看。
+ * 候选 / 基线 docx 在线预览：docx-preview 在浏览器 HTML 近似渲染，看内容用；版式/页数以下载后的
+ * Word 文件为准。字节走 publicationApi（守 MVVM 边界：视图不直连 fetch）。
+ * 原「精确预览（PDF）」（后端 LibreOffice 转 PDF）已退役（AppImage 单机模式方案裁定 D2）。
  */
 export function DocxPreviewModal({ open, title, projectId, exportRef, onClose }: DocxPreviewModalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [mode, setMode] = useState<PreviewMode>('content');
-  // 加载开关按页签各自独立：遮罩只看当前页签自己的开关，切页签无须任何代码去碰开关，
-  // 「切走再切回 → 转圈永不熄灭」（issue #86 缺陷 1）在结构上不可发生。
   const [contentLoading, setContentLoading] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pdfReady, setPdfReady] = useState(false);
   const renderedDocxRef = useRef<string | null>(null);  // 已渲染内容预览的 exportRef
-  const probedPdfRef = useRef<string | null>(null);      // 已探活 PDF 的 exportRef
 
   // 可拖拽调整的弹窗尺寸（w=弹窗宽，h=正文区高）；默认适当加大，用户可拖右下角把手放大/缩小。
   // 默认值与拖拽夹紧同界（减 24/132 给边距与页眉页脚），避免小视口下首次拖拽发生跳变。
@@ -64,22 +54,18 @@ export function DocxPreviewModal({ open, title, projectId, exportRef, onClose }:
   };
 
   const fileUrl = projectId && exportRef ? publicationApi.exportFileUrl(projectId, exportRef) : '';
-  const pdfUrl = projectId && exportRef ? publicationApi.exportPdfUrl(projectId, exportRef) : '';
 
-  // 打开或切换预览目标时重置：回内容模式、清渲染/探活标记。
+  // 打开或切换预览目标时重置：清渲染标记。
   useEffect(() => {
     if (!open) return;
-    setMode('content');
     setError(null);
-    setPdfReady(false);
     renderedDocxRef.current = null;
-    probedPdfRef.current = null;
     if (containerRef.current) containerRef.current.innerHTML = '';
   }, [open, exportRef]);
 
   // 内容预览：docx-preview 渲染（每个目标只渲染一次）。
   useEffect(() => {
-    if (!open || mode !== 'content' || !projectId || !exportRef) return;
+    if (!open || !projectId || !exportRef) return;
     if (renderedDocxRef.current === exportRef) return;
     let disposed = false;
     setError(null);
@@ -97,44 +83,13 @@ export function DocxPreviewModal({ open, title, projectId, exportRef, onClose }:
       } catch (e) {
         if (!disposed) setError(e instanceof Error ? e.message : String(e));
       } finally {
-        // 无条件关：本开关只管内容预览页签，被中止的这一轮关掉自己的开关伤不到别的页签。
         setContentLoading(false);
       }
     })();
     return () => {
       disposed = true;
     };
-  }, [open, mode, projectId, exportRef]);
-
-  // 精确预览：先探活（HEAD 触发/命中 LibreOffice 转换缓存），可用则 iframe 直连真实 PDF 地址渲染
-  // （浏览器原生查看器对真实 URL 渲染可靠；blob: 在部分环境不渲染，故不用 objectURL）。
-  useEffect(() => {
-    if (!open || mode !== 'pdf' || !projectId || !exportRef) return;
-    if (probedPdfRef.current === exportRef) return;
-    let disposed = false;
-    setError(null);
-    setPdfReady(false);
-    setPdfLoading(true);
-    publicationApi
-      .probeExportPdf(projectId, exportRef)
-      .then(() => {
-        if (disposed) return;
-        probedPdfRef.current = exportRef;
-        setPdfReady(true);
-      })
-      .catch(() => {
-        if (!disposed) {
-          setError('精确预览暂不可用（服务端可能未安装 LibreOffice）。可切换到内容预览，或下载查看。');
-        }
-      })
-      .finally(() => {
-        // 同上：无条件关本页签的开关（探活被中止时其结果作废，下次进精确预览会重新探活）。
-        setPdfLoading(false);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [open, mode, projectId, exportRef]);
+  }, [open, projectId, exportRef]);
 
   return (
     <Modal
@@ -147,9 +102,7 @@ export function DocxPreviewModal({ open, title, projectId, exportRef, onClose }:
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 12, opacity: 0.65 }}>
-            {mode === 'pdf'
-              ? '精确预览：真实分页与版式（LibreOffice 渲染）'
-              : '内容预览：仅供看内容，版式/页数以精确预览为准'}
+            内容预览：仅供看内容，版式/页数以下载后的 Word 文件为准
           </span>
           <Button href={fileUrl} target="_blank" disabled={!fileUrl}>
             下载查看
@@ -157,46 +110,16 @@ export function DocxPreviewModal({ open, title, projectId, exportRef, onClose }:
         </div>
       }
     >
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-soft)' }}>
-        <Segmented
-          value={mode}
-          onChange={(v) => setMode(v as PreviewMode)}
-          options={[
-            { label: '内容预览（快速）', value: 'content' },
-            { label: '精确预览（PDF）', value: 'pdf' },
-          ]}
-        />
-      </div>
       <div style={{ position: 'relative', flex: 1, minHeight: 0, userSelect: resizing ? 'none' : undefined }}>
-        {(mode === 'content' ? contentLoading : pdfLoading) ? (
+        {contentLoading ? (
           <div className="docx-preview-loading">
-            <Spin description={mode === 'pdf' ? '正在生成精确预览…' : '正在加载内容预览…'} />
+            <Spin description="正在加载内容预览…" />
           </div>
         ) : null}
         {error ? (
-          <Alert
-            type={mode === 'pdf' ? 'warning' : 'error'}
-            showIcon
-            message={mode === 'pdf' ? '精确预览不可用' : '预览加载失败'}
-            description={error}
-            style={{ margin: 16 }}
-          />
+          <Alert type="error" showIcon message="预览加载失败" description={error} style={{ margin: 16 }} />
         ) : null}
-        {/* 内容预览容器：始终挂载，非内容模式隐藏（保留已渲染 DOM，切回不重渲染） */}
-        <div
-          className="docx-preview-modal"
-          ref={containerRef}
-          style={{ display: mode === 'content' ? 'block' : 'none' }}
-        />
-        {/* 精确预览：浏览器原生 PDF 查看器（自带分页/页数/缩放）；直连真实 PDF 地址。
-            拖拽时给 iframe 关掉指针事件，否则鼠标移到 iframe 上父窗口收不到 mousemove。 */}
-        {mode === 'pdf' && pdfReady && !error ? (
-          <iframe
-            title="docx 精确预览"
-            src={pdfUrl}
-            style={{ width: '100%', height: '100%', border: 'none', pointerEvents: resizing ? 'none' : 'auto' }}
-          />
-        ) : null}
+        <div className="docx-preview-modal" ref={containerRef} />
         {/* 右下角缩放把手：拖动放大/缩小预览窗口 */}
         <div
           className="docx-preview-resize"

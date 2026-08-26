@@ -2759,75 +2759,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/projects/{project_id}/publication/exports/{export_ref}/pdf:
-    head:
-      tags:
-      - publication
-      summary: Preview Export Pdf
-      description: '精确预览：候选/基线 docx → PDF（LibreOffice 真实排版；inline 供浏览器原生查看器分页呈现）。
-
-
-        结果按 {export.id}.pdf 缓存在 export_dir，docx 更新则重转；LibreOffice 缺失回 503（前端降级到内容预览）。'
-      operationId: preview_export_pdf_head
-      parameters:
-      - name: project_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Project Id
-      - name: export_ref
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Export Ref
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-    get:
-      tags:
-      - publication
-      summary: Preview Export Pdf
-      description: '精确预览：候选/基线 docx → PDF（LibreOffice 真实排版；inline 供浏览器原生查看器分页呈现）。
-
-
-        结果按 {export.id}.pdf 缓存在 export_dir，docx 更新则重转；LibreOffice 缺失回 503（前端降级到内容预览）。'
-      operationId: preview_export_pdf
-      parameters:
-      - name: project_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Project Id
-      - name: export_ref
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Export Ref
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /api/projects/{project_id}/publication/baselines/{baseline_ref}:
     get:
       tags:
@@ -7973,11 +7904,11 @@ components:
 
         `key` 是能力（不是二进制名）的封闭集：
 
-        pdf_preview（文档转 PDF 预览）/ plantuml_diagram（结构图渲染）。mermaid 由浏览器渲染，服务器无依赖，不列。
+        plantuml_diagram（结构图渲染）。mermaid 由浏览器渲染，服务器无依赖，不列；PDF 精确预览已退役。
 
         `outcome` 是封闭集里的稳定结果码，缺失时指出缺的是哪一个依赖：
 
-        ready / soffice_missing / java_missing / plantuml_jar_missing。
+        ready / java_missing / plantuml_jar_missing。
 
         `path` 是定位到的可执行文件或 jar 路径（缺失时为 None）；`version` 取不到时为 None，
 

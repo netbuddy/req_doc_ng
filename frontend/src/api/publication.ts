@@ -1,4 +1,4 @@
-import { apiGet, apiGetBlob, apiHead, apiPost } from './client';
+import { apiGet, apiGetBlob, apiPost } from './client';
 import type { RequirementItemStatus, RequirementItemType } from './item-formation';
 
 /**
@@ -527,14 +527,5 @@ export const publicationApi = {
   /** 取生成好的候选/基线 docx 字节流（供在线预览渲染）；与 exportFileUrl 同源。 */
   fetchExportBlob(projectId: string, exportRef: string): Promise<Blob> {
     return apiGetBlob(`${base(projectId)}/exports/${encodeURIComponent(exportRef)}/file`);
-  },
-
-  exportPdfUrl(projectId: string, exportRef: string): string {
-    return `/api${base(projectId)}/exports/${encodeURIComponent(exportRef)}/pdf`;
-  },
-
-  /** 精确预览探活：HEAD 触发/命中转换缓存，2xx 表示可用（iframe 可直连）；未装 LibreOffice 抛 503。 */
-  probeExportPdf(projectId: string, exportRef: string): Promise<void> {
-    return apiHead(`${base(projectId)}/exports/${encodeURIComponent(exportRef)}/pdf`);
   },
 };

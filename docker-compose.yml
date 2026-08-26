@@ -31,7 +31,7 @@ services:
   worker:
     build:
       context: ./backend
-      target: worker              # 瘦镜像：不含 LibreOffice（docx 生成走 python-docx）
+      target: worker              # 瘦镜像：不含图形渲染工具链（docx 生成走 python-docx）
     depends_on:
       db:
         condition: service_healthy
@@ -48,12 +48,12 @@ services:
       - req_doc_exports:/app/var/exports
     restart: unless-stopped
 
-  # 发布用 API 镜像（含 LibreOffice）。profile=release，默认不随 `docker compose up` 启动，
+  # 发布用 API 镜像（含 Java/graphviz 图形渲染工具链）。profile=release，默认不随 `docker compose up` 启动，
   # 不干扰本地 `make backend`（宿主机 :8000）。发布：docker compose --profile release up -d api
   api:
     build:
       context: ./backend
-      target: api                 # 含 LibreOffice + 中文字体：精确预览 docx→PDF
+      target: api                 # 含 Java + graphviz + 中文字体：plantuml 图形渲染
     profiles: ["release"]
     depends_on:
       db:

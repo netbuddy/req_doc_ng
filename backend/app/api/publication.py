@@ -275,47 +275,6 @@ def download_export_markdown_bundle(
     return FileResponse(zip_path, media_type="application/zip", filename="需求规格说明-markdown.zip")
 
 
-# GET+HEAD 拆为两个显式路由并各带唯一 operation_id：单一 api_route(methods=[GET,HEAD])
-# 会让两个方法共用同一 operationId，openapi-typescript 生成重复标识符（tsc 报错）。
-@router.get(_PREFIX + "/exports/{export_ref}/pdf", operation_id="preview_export_pdf")
-@router.head(_PREFIX + "/exports/{export_ref}/pdf", operation_id="preview_export_pdf_head")
-def preview_export_pdf(
-    project_id: str,
-    export_ref: str,
-    service: DocumentOrchestrationService = Depends(get_publication_service),
-):
-    """精确预览：候选/基线 docx → PDF（LibreOffice 真实排版；inline 供浏览器原生查看器分页呈现）。
-
-    结果按 {export.id}.pdf 缓存在 export_dir，docx 更新则重转；LibreOffice 缺失回 503（前端降级到内容预览）。
-    """
-    from app.adapters.docx_to_pdf import (
-        PdfRenderError,
-        PdfRenderUnavailable,
-        convert_docx_to_pdf,
-    )
-
-    export = service._repo.get_export(export_ref)
-    if export is None or not export.file_path or not Path(export.file_path).exists():
-        raise NotFound("导出件文件不存在或尚未生成")
-    docx_path = Path(export.file_path)
-    pdf_path = docx_path.with_suffix(".pdf")
-    # 缓存命中：PDF 已存在且不早于 docx（docx 快照不可变，一般一次转换长期有效）。
-    if not (pdf_path.exists() and pdf_path.stat().st_mtime >= docx_path.stat().st_mtime):
-        try:
-            convert_docx_to_pdf(docx_path, docx_path.parent)
-        except PdfRenderUnavailable:
-            raise HTTPException(
-                status_code=503,
-                detail="服务端未安装 LibreOffice：精确预览暂不可用，请使用内容预览或下载查看",
-            )
-        except PdfRenderError:
-            raise HTTPException(status_code=500, detail="docx 转 PDF 失败，请下载查看")
-    return FileResponse(
-        pdf_path, media_type="application/pdf",
-        content_disposition_type="inline", filename="需求规格说明.pdf",
-    )
-
-
 @router.get(_PREFIX + "/baselines/{baseline_ref}", response_model=ReleaseBaselineRead)
 def read_release_baseline(
     project_id: str,

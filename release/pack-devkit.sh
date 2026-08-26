@@ -10,7 +10,7 @@
 # 数据库不随本包：复用全量发布包（pack-full.sh 产物）装好的 db/redis 容器——
 # 安装器会停掉其 api/worker 业务容器、给 db/redis 加宿主端口发布、把旧库表
 # 增量迁移到本包代码的最新版本（详见 install-devkit.sh）。
-# LibreOffice 同样不随包：安装器生成转发脚本，docx→PDF 在全量包镜像内的一次性容器里执行。
+# PDF 精确预览已退役，不再涉及 LibreOffice。
 #
 # 用法：
 #   release/pack-devkit.sh [--output <目录>] [--package-id devkit-YYYYMMDD-NN]

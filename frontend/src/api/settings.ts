@@ -132,11 +132,10 @@ export interface ModelCapabilityProbeResult {
 // ---- 模型服务多 provider（列表管理 + 启用指针；类型封闭集由后端给）----
 
 // 导出能力就绪清单：后端只给稳定结果码与探到的事实，白话文案由 view-model 映射。
-export type ExportCapabilityKey = 'pdf_preview' | 'plantuml_diagram';
+export type ExportCapabilityKey = 'plantuml_diagram';
 
 export type ExportReadinessOutcome =
   | 'ready'
-  | 'soffice_missing'
   | 'java_missing'
   | 'plantuml_jar_missing';
 

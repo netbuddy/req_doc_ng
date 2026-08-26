@@ -1190,7 +1190,7 @@ export function validateDomainValues(values: Record<string, string | number | nu
 
 // ---- 导出能力就绪清单（04A §9「按域提供专属操作」在导出域的落点）----
 // 后端只下发稳定结果码与探到的事实（就绪与否/路径/版本串），下面这层负责把它翻成用户看得懂的话：
-// 能力名用用户视角（「文档转 PDF 预览」而不是 soffice），缺失后果一句白话，二进制名只作括注。
+// 能力名用用户视角（「结构图渲染」而不是 plantuml.jar），缺失后果一句白话，二进制名只作括注。
 // 走查改措辞在这里改，不必动后端——与模型服务连通测试同一套口径。
 
 export interface ExportReadinessRowVM {
@@ -1215,15 +1215,12 @@ export interface ExportReadinessVM {
 
 /** 各能力的用户视角名与它依赖的工具（工具名只作括注，不单独成行）。 */
 const EXPORT_CAPABILITY_LABELS: Record<ExportCapabilityKey, { capability: string; tool: string }> = {
-  pdf_preview: { capability: '文档转 PDF 预览', tool: 'LibreOffice' },
   plantuml_diagram: { capability: '结构图渲染', tool: 'PlantUML' },
 };
 
 /** 缺失时的白话说明：缺的是什么 + 对用户意味着什么。 */
 const EXPORT_MISSING_TEXT: Record<ExportReadinessOutcome, string> = {
   ready: '',
-  soffice_missing:
-    '本机没找到 LibreOffice（soffice）。发布页的「精确预览」不可用；导出的 Word 文件本身不受影响。',
   // 结构图两条要连屏幕预览一起讲：PlantUML 由后端渲染，缺 Java 或缺 jar 时发布页/追溯页的预览
   // 只会弹一条渲染失败提示，连源码都不显示——比导出文档那一面更难受。（mermaid 不在清单里：
   // 它由浏览器渲染并随发布请求提交 SVG，服务器侧没有任何依赖可探测。）

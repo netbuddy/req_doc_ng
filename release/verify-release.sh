@@ -83,7 +83,7 @@ fi
 
 # 7 图形与文档工具链在对外服务的镜像里就位（缺失时导出的图会静默降级为源码文本）。
 TOOLS="$("${COMPOSE[@]}" exec -T api sh -c '
-  for c in java dot soffice; do
+  for c in java dot; do
     command -v $c >/dev/null 2>&1 && printf "%s=ok " "$c" || printf "%s=missing " "$c"
   done
   test -f /app/tools/plantuml.jar && printf "plantuml.jar=ok" || printf "plantuml.jar=missing"

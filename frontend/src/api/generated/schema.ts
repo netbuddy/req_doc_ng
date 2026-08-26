@@ -1541,34 +1541,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/projects/{project_id}/publication/exports/{export_ref}/pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Preview Export Pdf
-         * @description 精确预览：候选/基线 docx → PDF（LibreOffice 真实排版；inline 供浏览器原生查看器分页呈现）。
-         *
-         *     结果按 {export.id}.pdf 缓存在 export_dir，docx 更新则重转；LibreOffice 缺失回 503（前端降级到内容预览）。
-         */
-        get: operations["preview_export_pdf"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        /**
-         * Preview Export Pdf
-         * @description 精确预览：候选/基线 docx → PDF（LibreOffice 真实排版；inline 供浏览器原生查看器分页呈现）。
-         *
-         *     结果按 {export.id}.pdf 缓存在 export_dir，docx 更新则重转；LibreOffice 缺失回 503（前端降级到内容预览）。
-         */
-        head: operations["preview_export_pdf_head"];
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects/{project_id}/publication/baselines/{baseline_ref}": {
         parameters: {
             query?: never;
@@ -4588,9 +4560,9 @@ export interface components {
          * @description 单条导出能力的就绪结果：只给稳定结果码与探到的事实，白话文案由前端映射。
          *
          *     `key` 是能力（不是二进制名）的封闭集：
-         *     pdf_preview（文档转 PDF 预览）/ plantuml_diagram（结构图渲染）。mermaid 由浏览器渲染，服务器无依赖，不列。
+         *     plantuml_diagram（结构图渲染）。mermaid 由浏览器渲染，服务器无依赖，不列；PDF 精确预览已退役。
          *     `outcome` 是封闭集里的稳定结果码，缺失时指出缺的是哪一个依赖：
-         *     ready / soffice_missing / java_missing / plantuml_jar_missing。
+         *     ready / java_missing / plantuml_jar_missing。
          *     `path` 是定位到的可执行文件或 jar 路径（缺失时为 None）；`version` 取不到时为 None，
          *     且**不影响 `ready`**——就绪与否只由定位结果决定，与渲染时的判据同源。
          */
@@ -11020,70 +10992,6 @@ export interface operations {
         };
     };
     download_export_markdown_bundle: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                export_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    preview_export_pdf: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-                export_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    preview_export_pdf_head: {
         parameters: {
             query?: never;
             header?: never;

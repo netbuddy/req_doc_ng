@@ -28,7 +28,7 @@
 #
 # 开关：
 #   --with-docker  install 时一并安装 Docker（get.docker.com 官方脚本；装完需重新登录使 docker 组生效）
-#   --with-tools   install 时一并安装可选工具：LibreOffice+中文字体（docx→PDF 精确预览）、
+#   --with-tools   install 时一并安装可选工具：中文字体（plantuml 渲染中文）、
 #                  Java 运行时（plantuml 渲染；mermaid 由浏览器渲染，无需工具）
 #   --mirror       config 时切国内镜像：npm→npmmirror、PyPI→清华、uv 的 CPython 下载→npmmirror；
 #                  install 时 uv 改走 PyPI（清华源）安装而非 GitHub 下载
@@ -112,8 +112,6 @@ task_check() {
   if has psql && systemctl is-active --quiet postgresql 2>/dev/null; then ok '原生 PostgreSQL 服务在运行。'; fi
   if systemctl is-active --quiet redis-server 2>/dev/null; then ok '原生 Redis 服务在运行。'; fi
 
-  if has soffice; then ok 'LibreOffice（可选：docx→PDF 精确预览）'
-  else info '未装 LibreOffice（可选：docx→PDF 精确预览），对应功能自动降级。'; fi
   if has java; then ok 'Java 运行时（可选：plantuml 图形渲染）'
   else info '未装 Java 运行时（可选：plantuml 图形渲染），对应功能自动降级。'; fi
   info 'mermaid 图形由浏览器渲染，服务器侧不需要任何工具。'
@@ -172,8 +170,8 @@ task_install() {
   fi
 
   if [ "$WITH_TOOLS" -eq 1 ]; then
-    echo '>> 安装可选工具：LibreOffice + 中文字体、Java 运行时（plantuml 渲染）'
-    sudo apt-get install -y libreoffice-writer fonts-noto-cjk default-jre graphviz
+    echo '>> 安装可选工具：中文字体、Java 运行时与 graphviz（plantuml 渲染）'
+    sudo apt-get install -y fonts-noto-cjk default-jre graphviz
   fi
   printf '\n%s安装完成。%s\n' "$C_OK" "$C_RST"
 }

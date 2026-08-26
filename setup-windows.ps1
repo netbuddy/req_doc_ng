@@ -27,7 +27,7 @@
 
 开关：
   -WithDocker  install 时一并安装 Docker Desktop（需管理员；装完通常要注销或重启一次）
-  -WithTools   install 时一并安装可选工具：LibreOffice（docx→PDF 精确预览）、
+  -WithTools   install 时一并安装可选工具：
                Temurin JRE（plantuml 渲染；mermaid 由浏览器渲染，无需工具）
   -Mirror      config 时切国内镜像：npm 源→npmmirror、PyPI 源→清华、
                uv 下载管理版 CPython 的源→npmmirror（原生源是 GitHub Releases）
@@ -120,7 +120,6 @@ function Invoke-Check {
     }
 
     foreach ($opt in @(
-            @{ Cmd = 'soffice'; Desc = 'LibreOffice（可选：docx→PDF 精确预览）' },
             @{ Cmd = 'java'; Desc = 'Java 运行时（可选：plantuml 图形渲染；mermaid 由浏览器渲染，无需工具）' })) {
         if (Test-Command $opt.Cmd) { Write-Ok $opt.Desc }
         else { Write-Host ("  [i] 未装 " + $opt.Desc + "，对应功能自动降级。") -ForegroundColor Gray }
@@ -134,17 +133,6 @@ function Invoke-Check {
 }
 
 # -------------------------------------------------------------- install ----
-# LibreOffice 装在 Program Files 下且不进 PATH，按默认路径探测；config 任务会把找到的路径写进 .env。
-function Find-Soffice {
-    if (Test-Command 'soffice') { return (Get-Command 'soffice').Source }
-    $roots = @($Env:ProgramFiles, ${Env:ProgramFiles(x86)}) | Where-Object { $_ }
-    foreach ($root in $roots) {
-        $p = Join-Path $root 'LibreOffice\program\soffice.exe'
-        if (Test-Path $p) { return $p }
-    }
-    return $null
-}
-
 function Install-Winget([string]$WingetId, [string]$Desc) {
     Write-Host ">> 安装 $Desc（winget id：$WingetId）" -ForegroundColor White
     winget install --id $WingetId --exact --silent --accept-package-agreements --accept-source-agreements
@@ -187,8 +175,6 @@ function Invoke-Install {
         Write-Host '  [i] Docker Desktop 首次安装后通常需要注销或重启一次，并手工启动它。' -ForegroundColor Gray
     }
     if ($WithTools) {
-        if ($null -ne (Find-Soffice)) { Write-Ok 'LibreOffice 已存在，跳过安装。' }
-        else { Install-Winget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' }
         Install-IfMissing 'java' 'EclipseAdoptium.Temurin.21.JRE' 'Temurin 21 JRE'
     }
     Write-Host "`n安装完成。新装工具已并入本会话 PATH；新开的终端会自动生效。" -ForegroundColor Green
@@ -226,16 +212,6 @@ function Invoke-Config {
 
     # 4) mermaid 由浏览器渲染，不再需要本机浏览器配置（原 puppeteer.windows.json / PUPPETEER_CONFIG 已退役）。
 
-    # 5) LibreOffice 不进 PATH：找到就把 SOFFICE_PATH 填进 .env（只填模板里的空值，不动用户已填的值）
-    $soffice = Find-Soffice
-    if ($null -ne $soffice) {
-        $envText = Get-Content $envFile -Raw
-        if ($envText -match '(?m)^SOFFICE_PATH=\s*$') {
-            $envText = $envText -replace '(?m)^SOFFICE_PATH=\s*$', "SOFFICE_PATH=$soffice"
-            [IO.File]::WriteAllText($envFile, $envText, (New-Object System.Text.UTF8Encoding $false))
-            Write-Ok "SOFFICE_PATH 已写入 .env：$soffice"
-        }
-    }
 }
 
 # ----------------------------------------------------------------- deps ----
@@ -521,7 +497,7 @@ function Show-Usage {
     Write-Host '  start    各开一个新窗口启动后端 API 与前端 dev server'
     Write-Host '  stop     停止开发进程（:8000/:5173）并停掉 compose 容器'
     Write-Host ''
-    Write-Host '开关：-WithDocker 一并装 Docker Desktop；-WithTools 一并装 LibreOffice/JRE；'
+    Write-Host '开关：-WithDocker 一并装 Docker Desktop；-WithTools 一并装 JRE；'
     Write-Host '      -Mirror 切国内镜像（npm/PyPI/uv 的 CPython 下载）；-NativeDb 数据库走原生安装；'
     Write-Host '      -Reset 让 seed 清空演示项目重建。'
     Write-Host ''

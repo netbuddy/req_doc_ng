@@ -25,7 +25,6 @@
 
 以下为可选依赖，缺失时对应功能自动降级、不影响其它开发调试：
 
-- **LibreOffice**（`soffice` 在 PATH 上）：发布环节 docx→PDF 精确预览。
 - **Java 运行时**：PlantUML 图形源码本地渲染为 SVG（界面预览与发布产物共用）；`plantuml.jar` 已随仓库放在 `backend/tools/`，不需要另外下载。Mermaid 图形由用户浏览器里的前端渲染，发起导出时随请求提交 SVG，服务器不需要浏览器，也不再需要 `@mermaid-js/mermaid-cli`（mmdc）；
 - **本地 LLM 服务**（llama.cpp/ollama 等 OpenAI 兼容接口）：AI 识别、起草、评审等功能。不配置时平台其余功能照常可用。
 
@@ -89,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 help
 
 数据库（Postgres + Redis）有两条路线，`infra` 任务自动或按开关选择：Docker 引擎在运行就起容器（与 Linux 路线同一套 compose）；没有 Docker 时在**管理员 PowerShell** 里跑 `infra -NativeDb`，脚本原生安装 PostgreSQL 16（winget 官方包，自带 pgAdmin）、装入 pgvector 扩展、创建 `req_doc` 角色与 `req_v1` 库、安装 Memurai（Redis 7 兼容的 Windows 原生实现，开发版免费），最后执行数据库迁移。注意：pgvector 官方对 Windows 只提供源码编译（MSVC/nmake），脚本装入的是社区预编译包 `andreiramani/pgvector_pgsql_windows`——迁移链会执行 `CREATE EXTENSION vector`，这一步不可省；介意非官方产物就自行编译后重跑。
 
-数据库就绪后 `seed` 任务导入全流程演示数据集（幂等，重复执行自动跳过；`-Reset` 清空重建）。脚本默认不装 Docker Desktop；要装用 `-WithDocker`，要装 LibreOffice/JRE/mermaid-cli 三件可选渲染工具用 `-WithTools`。
+数据库就绪后 `seed` 任务导入全流程演示数据集（幂等，重复执行自动跳过；`-Reset` 清空重建）。脚本默认不装 Docker Desktop；要装用 `-WithDocker`，要装 JRE（plantuml 渲染）用 `-WithTools`。
 
 以下为手工路线的等价说明（脚本做的就是这些事）。各组件均有官方 Windows 支持：uv、Python 3.12、Node.js 装原生版；Postgres 与 Redis 用 Docker Desktop 起（`docker compose up -d --wait db redis`），或自装 Windows 版 Postgres 16（需 pgvector 扩展）。已知差异与处置：
 
@@ -107,7 +106,7 @@ powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 help
 2. **RQ 默认 worker 不支持 Windows 原生运行**（依赖 `os.fork`）。三种处置任选：`.env` 的 `REDIS_URL` 留空走同步执行（开发调试完全够用，推荐）；worker 跑容器 `docker compose up -d worker`；或原生装 Memurai 后用不依赖 fork 的 SimpleWorker——`cd backend; uv run rq worker -u redis://localhost:6379/0 intake --worker-class rq.worker.SimpleWorker`（限制：任务超时强杀不生效，仅开发用）。
 3. **换行符**：仓库带 `.gitattributes`（`* text=auto eol=lf`），检出即为 LF，不要改动本地 `core.autocrlf` 去覆盖它；CRLF 会破坏容器内脚本与 lock 文件校验。
 4. **路径长度**：本仓最长路径远在 260 字符限制之内，无需特殊设置；若你把仓库放得很深，开启 `git config --global core.longpaths true` 兜底。
-5. **可选工具**：LibreOffice、Java 都有 Windows 版，装好后如不在 PATH，用 `.env` 的 `SOFFICE_PATH` / `JAVA_PATH` 指定绝对路径；不装则对应功能降级，不影响主流程。mermaid 由浏览器渲染，不需要任何本机工具。
+5. **可选工具**：Java 有 Windows 版，装好后如不在 PATH，用 `.env` 的 `JAVA_PATH` 指定绝对路径；不装则对应功能降级，不影响主流程。mermaid 由浏览器渲染，不需要任何本机工具。
 
 ## 四、开发验证命令
 
@@ -140,4 +139,4 @@ powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 help
 - **生产交付**：`pack-full.sh` 出全量安装包（应用镜像 + 数据库镜像 + 前端产物 + 编排），离线机用包内 `install-full.sh` 安装成 docker 化服务（默认 `/opt/reqdoc`）。
 - **离线开发**：`pack-devkit.sh` 出开发环境包（源码 + uv/Node.js/CPython 工具链 + 前后端全部依赖缓存，约 214MB，不含数据库镜像），离线机用包内 `install-devkit.sh` 安装——全程离线重建虚拟环境与 node_modules，之后 `uv sync`/`npm ci` 也都从包内缓存取，不需要网络。数据库复用已装好的全量安装包：安装器停掉其 api/worker 业务容器（本机开发进程接管）、给 db/redis 补宿主端口发布（`--db-port`/`--redis-port` 可避开被占端口）、把全量包出包时的旧库表用 alembic 增量迁移到开发代码的最新版本（`--rebuild-db` 可改为清库重建）。没有全量包时加 `--no-db` 也能装，测试全跑内存 SQLite。恢复生产形态必须带 `--no-deps`（`docker compose --project-name reqdoc up -d --no-deps api worker`），否则全量包的一次性迁移服务会因旧镜像不认识新库版本号而报错。
 
-开发包的完备性边界：图形渲染工具链整套随包——plantuml 用包内 Temurin JRE（plantuml.jar 本在源码树），mermaid 由用户浏览器渲染、不随包，中文渲染用随包的 Noto CJK 字体（装到用户级字体目录）；无头 Chrome 依赖的少量系统库（libnss3 等）安装器会逐个 ldd 核对并点名缺项。LibreOffice 是唯一不进包的组件，也不必装在离线机——安装器生成 `soffice` 转发脚本，后端每次转 docx→PDF 时经它临时起一个全量包镜像的一次性容器在容器内转换（输入输出靠目录挂载共享，与生产引擎同源），宿主机文件系统上并没有 LibreOffice。离线机的操作系统层要求：Linux x86_64、glibc ≥ 2.28（Ubuntu 20.04 / Debian 10 / RHEL 8 以上；安装器会检查）、Docker Engine＋Compose V2（全量包本来就要求）；此外需要的 deb 包**全部列在 `release/devkit-os-debs.txt`**（无头 Chrome 的 18 个共享库＋fontconfig＋xz-utils/git/make/psmisc/iproute2 五件基础工具，文件头带联网机下载依赖闭包的命令），该清单经裸 Ubuntu 24.04 容器实测装齐即可双渲染出图。除清单外无需任何系统包：Python、Node、npm、libpq、编译工具链全部由包内自带或二进制 wheel 覆盖。
+开发包的完备性边界：图形渲染工具链随包——plantuml 用包内 Temurin JRE（plantuml.jar 本在源码树），中文渲染用随包的 Noto CJK 字体（装到用户级字体目录）；mermaid 由用户浏览器渲染、不随包；PDF 精确预览已退役，不再涉及 LibreOffice。离线机的操作系统层要求：Linux x86_64、glibc ≥ 2.28（Ubuntu 20.04 / Debian 10 / RHEL 8 以上；安装器会检查）、Docker Engine＋Compose V2（全量包本来就要求）；此外需要的 deb 包**全部列在 `release/devkit-os-debs.txt`**（fontconfig＋xz-utils/git/make/psmisc/iproute2 五件基础工具，文件头带联网机下载依赖闭包的命令；清单中原为无头 Chrome 准备的共享库已不再需要，待下次出包时清理）。除清单外无需任何系统包：Python、Node、npm、libpq、编译工具链全部由包内自带或二进制 wheel 覆盖。

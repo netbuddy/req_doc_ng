@@ -98,7 +98,7 @@ stream_to() {
 }
 
 # ------------------------------------------------------------------ 构建镜像 --
-step "构建后端镜像（含 LibreOffice 与图形工具链）"
+step "构建后端镜像（含图形渲染工具链）"
 docker build \
   --target api \
   --build-arg "PACKAGE_ID=${PACKAGE_ID}" \
@@ -138,7 +138,6 @@ log "迁移头：${MIGRATION_HEAD}"
 TOOLCHAIN="$(docker run --rm "$IMAGE_TAG" sh -c '
   printf "java=%s\n" "$(java -version 2>&1 | head -1)"
   printf "dot=%s\n" "$(dot -V 2>&1 || echo missing)"
-  printf "soffice=%s\n" "$(soffice --version 2>/dev/null | head -1 || echo missing)"
   printf "plantuml_jar=%s\n" "$(test -f /app/tools/plantuml.jar && echo present || echo missing)"
 ')"
 printf '%s\n' "$TOOLCHAIN" >&2

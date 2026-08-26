@@ -1,11 +1,11 @@
 # 需求治理平台后端镜像（多阶段，一份 Dockerfile 出两个镜像）：
-#   deps   —— Python 依赖层（uv + uv.lock）。worker/api 共用，不含 LibreOffice、不含源码。
-#   worker —— deps + 源码，跑 RQ worker。docx 生成走 python-docx，不需要 LibreOffice → 瘦镜像。
-#   api    —— deps + LibreOffice + 中文字体 + 源码，跑 uvicorn。精确预览(docx→PDF)在 API 进程内调 soffice。
+#   deps   —— Python 依赖层（uv + uv.lock）。worker/api 共用，不含源码。
+#   worker —— deps + 源码，跑 RQ worker。docx 生成走 python-docx。
+#   api    —— deps + Java/graphviz + 中文字体 + 源码，跑 uvicorn（plantuml 图形渲染）。
 #
 # 构建：
-#   docker compose build worker                       # worker 目标（默认，无 LibreOffice）
-#   docker compose --profile release build api        # api 目标（含 LibreOffice）
+#   docker compose build worker                       # worker 目标（默认）
+#   docker compose --profile release build api        # api 目标（含图形渲染工具链）
 #   docker build --target worker -t reqdoc-worker .    # 直接 docker build 亦可
 #   docker build --target api    -t reqdoc-api    .
 FROM python:3.12-slim AS deps
@@ -24,18 +24,18 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # ------------------------------------------------------------------ worker 镜像 --
-# 不含 LibreOffice：worker 只跑 8 个 AI 任务 + docx 生成(python-docx)，都不需要真实排版引擎。
+# worker 只跑 AI 任务 + docx 生成(python-docx)。
 FROM deps AS worker
 COPY . .
 CMD ["sh", "-c", "uv run --no-sync rq worker -u \"${REDIS_URL:-redis://redis:6379/0}\" intake"]
 
 # --------------------------------------------------------------------- api 镜像 --
-# 精确预览（候选/基线 docx → PDF）依赖 LibreOffice 无头转换 + 中文字体（否则中文显示豆腐块）。
 # 离线交付用的就是本目标：api 与 worker 容器共用它，避免两容器版本分叉（离线发布打包方案 §1.1）。
-# 系统软件层全部放在 COPY 源码之前：改代码只重建源码层，不重装这一千多 MB。
+# 系统软件层全部放在 COPY 源码之前：改代码只重建源码层，不重装。中文字体供 plantuml 渲染中文
+#（否则显示豆腐块）。PDF 精确预览（LibreOffice）已退役，镜像不再装 libreoffice-writer。
 FROM deps AS api
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libreoffice-writer fonts-noto-cjk \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # 图形渲染工具链（发布产物与 docx 把 plantuml 围栏出成 SVG，缺失则保留源码文本块并报告）：

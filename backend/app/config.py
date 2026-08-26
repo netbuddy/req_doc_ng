@@ -80,10 +80,6 @@ class Settings:
     export_dir: str = os.getenv(
         "EXPORT_DIR", str(Path(__file__).resolve().parent.parent / "var" / "exports")
     )
-    # 精确预览（docx→PDF）用的 LibreOffice 可执行文件路径；留空则自动探测 soffice/libreoffice。
-    soffice_path: str = os.getenv("SOFFICE_PATH", "")
-    # docx→PDF 单次转换超时（秒）。
-    pdf_render_timeout: float = float(os.getenv("PDF_RENDER_TIMEOUT", "120"))
     # plantuml 图形源码本地渲染：全部落地，运行时不出网、不把需求内容送第三方。
     # 留空则自动探测：java 走 PATH。mermaid 由用户浏览器渲染，服务器不需要任何工具（原 MMDC_PATH /
     # PUPPETEER_CONFIG 已退役，AppImage 单机模式方案裁定 D4）。

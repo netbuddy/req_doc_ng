@@ -46,7 +46,6 @@ from app.api.schemas import (
     ReferenceStandardSaveCommand,
 )
 from app.adapters.diagram_render import plantuml_version, resolve_tools
-from app.adapters.docx_to_pdf import find_soffice, soffice_version
 from app.adapters.llm import (
     CAP_CONTEXT,
     CAP_GENERATE,
@@ -1405,26 +1404,15 @@ class ConfigRegistryService:
     def export_readiness(self) -> ExportReadinessRead:
         """逐项探测 docx 导出实际依赖的本地工具链，返回就绪清单。
 
-        判定复用适配器：soffice 走 `docx_to_pdf.find_soffice()`，java/plantuml.jar 走
-        `diagram_render.resolve_tools()`——本方法**不做任何路径解析**，防两处漂移。
+        判定复用适配器：java/plantuml.jar 走 `diagram_render.resolve_tools()`——本方法**不做任何路径解析**，
+        防两处漂移。PDF 精确预览已退役（AppImage 单机模式方案裁定 D2），LibreOffice 不再探测。
         探测零副作用：只定位可执行文件并跑 `--version` 级命令，不发起转换、不写文件、不出网；
         版本取不到不改变就绪结论。日志只记结果码与就绪与否，不记路径（路径源自环境变量，硬规则 8）。
         """
-        # 发起先留痕：两次版本探测各有最长 10 秒的超时，探测期间若没有这一行，
+        # 发起先留痕：版本探测有最长 10 秒的超时，探测期间若没有这一行，
         # 一次卡住或半途抛出的调用在日志里什么都不会留下。
         log_event(_COMPONENT, "export.readiness.started", domain="export")
         items: list[ExportReadinessItemRead] = []
-
-        soffice = find_soffice()
-        items.append(
-            ExportReadinessItemRead(
-                key="pdf_preview",
-                ready=soffice is not None,
-                outcome="ready" if soffice is not None else "soffice_missing",
-                path=soffice,
-                version=soffice_version(soffice) if soffice is not None else None,
-            )
-        )
 
         # mermaid 不在清单里：它由用户浏览器渲染，服务器侧没有任何依赖可探测（裁定 D4）。
         tools = resolve_tools()
