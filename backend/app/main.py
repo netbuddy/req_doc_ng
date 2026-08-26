@@ -38,6 +38,11 @@ from app.workers.queue import warn_if_async_without_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 单机模式（SQLite）：启动时建表并导入内置模板；服务器模式（Postgres）走 alembic，此处不动。
+    from app.bootstrap import prepare_standalone_database
+    from app.deps import _engine
+
+    prepare_standalone_database(_engine)
     try:
         warn_if_async_without_worker()  # 韧性：REDIS_URL 已配但无 worker → WARN，避免 job 静默排队
     except Exception:

@@ -1,4 +1,10 @@
-"""运行配置。从 backend/.env 加载（若存在），再读环境变量。"""
+"""运行配置。从 .env 加载（若存在），再读环境变量。
+
+两种运行形态只差配置，不差代码（AppImage 单机模式方案 §4）：
+- 服务器模式：DATABASE_URL 指向 Postgres，可选 REDIS_URL 走异步 worker；.env 在 backend/。
+- 单机模式：设 REQDOC_HOME=<目录>，默认数据库、导出目录、.env 全部落在该目录下
+  （req.db / exports/ / .env），不设 REDIS_URL 即同步执行。显式设置的 DATABASE_URL / EXPORT_DIR 仍以显式值为准。
+"""
 from __future__ import annotations
 
 import os
@@ -7,8 +13,30 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 加载 backend/.env（不覆盖已存在的进程环境变量）。
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+def resolve_home(env: "os._Environ[str] | dict[str, str]" = os.environ) -> Path | None:
+    """REQDOC_HOME 解析：未设返回 None；设了返回展开后的绝对路径（不创建目录）。"""
+    raw = env.get("REQDOC_HOME", "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def home_defaults(home: Path | None) -> dict[str, str]:
+    """REQDOC_HOME 推导出的默认值（只在对应变量没有显式设置时生效）。"""
+    if home is None:
+        return {}
+    return {
+        "DATABASE_URL": f"sqlite:///{home / 'req.db'}",
+        "EXPORT_DIR": str(home / "exports"),
+    }
+
+
+_HOME = resolve_home()
+if _HOME is not None:
+    _HOME.mkdir(parents=True, exist_ok=True)  # SQLite 建库前目录必须在
+    load_dotenv(_HOME / ".env")  # 单机模式：.env 跟数据走；不覆盖已存在的进程环境变量
+else:
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+_HOME_DEFAULTS = home_defaults(_HOME)
 
 
 @dataclass(frozen=True)
@@ -18,8 +46,11 @@ class Settings:
     environment: str = os.getenv("APP_ENV", "dev")
     # 默认指向 docker-compose 的 Postgres（db=req_v1, user=req_doc, trust auth）。
     database_url: str = os.getenv(
-        "DATABASE_URL", "postgresql+psycopg://req_doc@localhost:5432/req_v1"
+        "DATABASE_URL",
+        _HOME_DEFAULTS.get("DATABASE_URL", "postgresql+psycopg://req_doc@localhost:5432/req_v1"),
     )
+    # 单机数据目录（REQDOC_HOME）；None＝服务器模式。
+    home_dir: str | None = str(_HOME) if _HOME is not None else None
     # 外部 LLM（llama.cpp OpenAI 兼容）。未设 LLM_BASE_URL → 用 stub 判定（不调模型）。
     # 例：LLM_BASE_URL=http://192.168.1.50:8080/v1
     llm_base_url: str | None = os.getenv("LLM_BASE_URL")
@@ -78,7 +109,8 @@ class Settings:
     frontend_dist_dir: str = os.getenv("FRONTEND_DIST", "")
     # 候选 docx 导出件落盘目录（SCN-005-P03；相对 backend/）。
     export_dir: str = os.getenv(
-        "EXPORT_DIR", str(Path(__file__).resolve().parent.parent / "var" / "exports")
+        "EXPORT_DIR",
+        _HOME_DEFAULTS.get("EXPORT_DIR", str(Path(__file__).resolve().parent.parent / "var" / "exports")),
     )
     # plantuml 图形源码本地渲染：全部落地，运行时不出网、不把需求内容送第三方。
     # 留空则自动探测：java 走 PATH。mermaid 由用户浏览器渲染，服务器不需要任何工具（原 MMDC_PATH /
@@ -97,3 +129,8 @@ settings = Settings()
 
 # 演示用固定项目 id（持久化后 project_ref 必须是真实 UUID）。
 DEMO_PROJECT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def is_standalone(database_url: str) -> bool:
+    """单机模式＝数据库是 SQLite（判据只看连接串，与 REQDOC_HOME 是否设置无关）。"""
+    return database_url.startswith("sqlite")

@@ -108,6 +108,21 @@ powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 help
 4. **路径长度**：本仓最长路径远在 260 字符限制之内，无需特殊设置；若你把仓库放得很深，开启 `git config --global core.longpaths true` 兜底。
 5. **可选工具**：Java 有 Windows 版，装好后如不在 PATH，用 `.env` 的 `JAVA_PATH` 指定绝对路径；不装则对应功能降级，不影响主流程。mermaid 由浏览器渲染，不需要任何本机工具。
 
+## 三之二、单机模式（可选形态）
+
+同一套代码支持两种运行形态，区别只在配置：
+
+| 形态 | 数据库 | 判定任务执行 | 怎么选 |
+| --- | --- | --- | --- |
+| 服务器模式（默认） | Postgres（含 pgvector 向量检索） | 设 `REDIS_URL` 则由独立 worker 异步执行 | 多人共用、局域网部署、Docker 离线包 |
+| 单机模式 | SQLite 文件库 | 不设 `REDIS_URL`，请求内同步执行 | 一个人在自己电脑上用；AppImage 就是这种形态 |
+
+切换到单机模式只需设一个环境变量：`REQDOC_HOME=<数据目录>`（例如 `~/.local/share/reqdoc`）。设了它之后：数据库默认为 `sqlite:///<目录>/req.db`，导出目录默认为 `<目录>/exports`，`.env` 改从 `<目录>/.env` 读取（`backend/.env` 不再读）；启动时自动建全表并导入内置文档模板（幂等，重启不重复）。显式设置的 `DATABASE_URL` / `EXPORT_DIR` 仍以显式值为准，所以服务器部署不受影响。
+
+单机模式下的唯一功能差异：全局检索没有向量检索那一路（pgvector 是 Postgres 扩展），自动退化为纯词法检索；运行态面板的 DB 组件会如实写明。两种形态的数据不能直接互通（Postgres 库与 SQLite 文件），是已知边界。单机库的结构升级机制尚未设计（现阶段每次启动 `create_all` 只加表不改列）。
+
+本地试跑单机模式：`cd backend && REQDOC_HOME=/tmp/reqdoc-home FRONTEND_DIST=../frontend/dist uv run uvicorn app.main:app --port 8000`（先 `cd frontend && npm run build` 出前端产物）。
+
 ## 四、开发验证命令
 
 | 目的 | 命令 |

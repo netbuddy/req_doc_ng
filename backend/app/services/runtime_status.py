@@ -218,6 +218,15 @@ def _recent_agent_runs(session: Session) -> list[RecentAgentRunRead]:
     return recent
 
 
+def _db_detail(db_ok: bool, dialect: str) -> str:
+    """DB 组件说明：单机模式（SQLite）如实告知形态与检索退化，服务器模式只报探活。"""
+    if not db_ok:
+        return "探活失败,业务读写不可用"
+    if dialect == "sqlite":
+        return "单机模式:SQLite 文件库;全局检索只有词法一路(向量检索需要 Postgres)"
+    return "SELECT 1 探活通过"
+
+
 def build_runtime_status(
     session_factory: Callable[[], Session],
     async_probe: Callable[[], dict],
@@ -233,6 +242,7 @@ def build_runtime_status(
 
     # ---- DB 探活 + 悬队自愈 + agent_run 聚合(同一 session;探活失败则聚合不可用)----
     db_ok = False
+    db_dialect = ""
     runs: Optional[dict] = None
     recent_jobs: list[RecentAgentRunRead] = []
     try:
@@ -240,6 +250,7 @@ def build_runtime_status(
         try:
             session.execute(text("SELECT 1"))
             db_ok = True
+            db_dialect = session.bind.dialect.name if session.bind is not None else ""
             if queued_run_ids_probe is not None:
                 # 自愈先于聚合:本次响应的等待数即已扣除刚回收的孤儿行。
                 # 自愈失败只记 WARN,绝不拖垮运行态读取。
@@ -282,7 +293,7 @@ def build_runtime_status(
         RuntimeComponentRead(
             key="db", label="DB",
             status="ok" if db_ok else "down",
-            detail="SELECT 1 探活通过" if db_ok else "探活失败,业务读写不可用",
+            detail=_db_detail(db_ok, db_dialect),
         ),
     ]
     if mode == "inline":
