@@ -137,8 +137,6 @@ log "迁移头：${MIGRATION_HEAD}"
 
 TOOLCHAIN="$(docker run --rm "$IMAGE_TAG" sh -c '
   printf "java=%s\n" "$(java -version 2>&1 | head -1)"
-  printf "mmdc=%s\n" "$(mmdc --version 2>/dev/null || echo missing)"
-  printf "chromium=%s\n" "$(google-chrome --version 2>/dev/null || echo missing)"
   printf "dot=%s\n" "$(dot -V 2>&1 || echo missing)"
   printf "soffice=%s\n" "$(soffice --version 2>/dev/null | head -1 || echo missing)"
   printf "plantuml_jar=%s\n" "$(test -f /app/tools/plantuml.jar && echo present || echo missing)"

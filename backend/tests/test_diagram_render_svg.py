@@ -20,7 +20,7 @@ def fake_plantuml(monkeypatch):
     calls: list[list[str]] = []
 
     def _tools():
-        return {"mmdc": None, "java": "/fake/java", "plantuml_jar": "/fake/plantuml.jar"}
+        return {"java": "/fake/java", "plantuml_jar": "/fake/plantuml.jar"}
 
     def _run(cmd, **kwargs):
         calls.append(cmd)
@@ -67,11 +67,13 @@ def test_endpoint_default_output_is_png(fake_plantuml):
     assert r.headers["content-type"].startswith("image/png")
 
 
-def test_endpoint_svg_for_mermaid_is_422():
+def test_endpoint_mermaid_is_422_for_both_outputs():
+    """mermaid 由浏览器渲染：服务器端点对 png 与 svg 一律拒绝。"""
     client = TestClient(app)
-    r = client.post("/api/diagrams/render",
-                    json={"format": "mermaid", "source": "graph TD; A-->B", "output": "svg"})
-    assert r.status_code == 422
+    for output in ("svg", "png"):
+        r = client.post("/api/diagrams/render",
+                        json={"format": "mermaid", "source": "graph TD; A-->B", "output": output})
+        assert r.status_code == 422
 
 
 def test_endpoint_rejects_unknown_output():

@@ -1,6 +1,6 @@
 """本地工具版本探测：跑 `--version` 级命令取一行版本串，仅供设置页的就绪清单显示。
 
-docx_to_pdf（LibreOffice）与 diagram_render（mermaid-cli / PlantUML）两个适配器共用这一份实现，
+docx_to_pdf（LibreOffice）与 diagram_render（PlantUML）两个适配器共用这一份实现，
 避免两处逐字复制后探测口径与日志分叉。
 
 探测零副作用：不发起任何转换/渲染、不写业务文件、不出网。版本取不到不代表工具不可用——
@@ -26,7 +26,7 @@ def probe_tool_version(
 ) -> str | None:
     """跑 cmd 取首个非空行作为版本串；起不来/超时/非零退出/无版本行一律返回 None 并记一行 WARN。
 
-    component 传调用方适配器的组件名，tool 传工具标识（soffice / mmdc / plantuml），
+    component 传调用方适配器的组件名，tool 传工具标识（soffice / plantuml），
     好让「版本未知」这一个布尔值背后的三种原因（超时、进程报错、输出里没有版本行）事后能分开。
     """
     try:

@@ -84,18 +84,14 @@ class Settings:
     soffice_path: str = os.getenv("SOFFICE_PATH", "")
     # docx→PDF 单次转换超时（秒）。
     pdf_render_timeout: float = float(os.getenv("PDF_RENDER_TIMEOUT", "120"))
-    # 图形源码（mermaid/plantuml）本地栅格化：全部落地，运行时不出网、不把需求内容送第三方。
-    # 留空则自动探测：mmdc 走 PATH（@mermaid-js/mermaid-cli），java 走 PATH。
-    mmdc_path: str = os.getenv("MMDC_PATH", "")
+    # plantuml 图形源码本地渲染：全部落地，运行时不出网、不把需求内容送第三方。
+    # 留空则自动探测：java 走 PATH。mermaid 由用户浏览器渲染，服务器不需要任何工具（原 MMDC_PATH /
+    # PUPPETEER_CONFIG 已退役，AppImage 单机模式方案裁定 D4）。
     java_path: str = os.getenv("JAVA_PATH", "")
-    # plantuml.jar 与 mmdc 的 puppeteer 配置（系统 chrome + --no-sandbox）默认落 backend/tools/。
-    # 该目录入版本库（不同于被 .gitignore 排除的 backend/var/）：这两个文件是渲染功能的构件，
-    # 不入库则换机器克隆构建出的镜像必然缺图形能力且无报错（离线发布打包方案 §3.4）。
+    # plantuml.jar 默认落 backend/tools/。该目录入版本库（不同于被 .gitignore 排除的 backend/var/）：
+    # 它是渲染功能的构件，不入库则换机器克隆构建出的镜像必然缺图形能力且无报错（离线发布打包方案 §3.4）。
     plantuml_jar_path: str = os.getenv(
         "PLANTUML_JAR", str(Path(__file__).resolve().parent.parent / "tools" / "plantuml.jar")
-    )
-    puppeteer_config_path: str = os.getenv(
-        "PUPPETEER_CONFIG", str(Path(__file__).resolve().parent.parent / "tools" / "puppeteer.json")
     )
     # 单张图形栅格化超时（秒）。
     diagram_render_timeout: float = float(os.getenv("DIAGRAM_RENDER_TIMEOUT", "60"))

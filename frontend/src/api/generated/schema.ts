@@ -4588,9 +4588,9 @@ export interface components {
          * @description 单条导出能力的就绪结果：只给稳定结果码与探到的事实，白话文案由前端映射。
          *
          *     `key` 是能力（不是二进制名）的封闭集：
-         *     pdf_preview（文档转 PDF 预览）/ mermaid_diagram（流程图渲染）/ plantuml_diagram（结构图渲染）。
+         *     pdf_preview（文档转 PDF 预览）/ plantuml_diagram（结构图渲染）。mermaid 由浏览器渲染，服务器无依赖，不列。
          *     `outcome` 是封闭集里的稳定结果码，缺失时指出缺的是哪一个依赖：
-         *     ready / soffice_missing / mmdc_missing / java_missing / plantuml_jar_missing。
+         *     ready / soffice_missing / java_missing / plantuml_jar_missing。
          *     `path` 是定位到的可执行文件或 jar 路径（缺失时为 None）；`version` 取不到时为 None，
          *     且**不影响 `ready`**——就绪与否只由定位结果决定，与渲染时的判据同源。
          */

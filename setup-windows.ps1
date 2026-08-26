@@ -28,7 +28,7 @@
 开关：
   -WithDocker  install 时一并安装 Docker Desktop（需管理员；装完通常要注销或重启一次）
   -WithTools   install 时一并安装可选工具：LibreOffice（docx→PDF 精确预览）、
-               Temurin JRE（plantuml 渲染）、mermaid-cli（mermaid 渲染）
+               Temurin JRE（plantuml 渲染；mermaid 由浏览器渲染，无需工具）
   -Mirror      config 时切国内镜像：npm 源→npmmirror、PyPI 源→清华、
                uv 下载管理版 CPython 的源→npmmirror（原生源是 GitHub Releases）
   -NativeDb    infra 走原生数据库路线（不依赖 Docker；需管理员 PowerShell）
@@ -121,8 +121,7 @@ function Invoke-Check {
 
     foreach ($opt in @(
             @{ Cmd = 'soffice'; Desc = 'LibreOffice（可选：docx→PDF 精确预览）' },
-            @{ Cmd = 'java'; Desc = 'Java 运行时（可选：plantuml 图形渲染）' },
-            @{ Cmd = 'mmdc'; Desc = 'mermaid-cli（可选：mermaid 图形渲染；缺失时后端有 1 个测试用例会失败）' })) {
+            @{ Cmd = 'java'; Desc = 'Java 运行时（可选：plantuml 图形渲染；mermaid 由浏览器渲染，无需工具）' })) {
         if (Test-Command $opt.Cmd) { Write-Ok $opt.Desc }
         else { Write-Host ("  [i] 未装 " + $opt.Desc + "，对应功能自动降级。") -ForegroundColor Gray }
     }
@@ -191,26 +190,11 @@ function Invoke-Install {
         if ($null -ne (Find-Soffice)) { Write-Ok 'LibreOffice 已存在，跳过安装。' }
         else { Install-Winget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' }
         Install-IfMissing 'java' 'EclipseAdoptium.Temurin.21.JRE' 'Temurin 21 JRE'
-        if (-not (Test-Command 'mmdc')) {
-            Invoke-Checked 'npm 全局安装 mermaid-cli' { npm install -g '@mermaid-js/mermaid-cli' }
-            Update-SessionPath
-        }
-        else { Write-Ok 'mermaid-cli 已存在，跳过安装。' }
     }
     Write-Host "`n安装完成。新装工具已并入本会话 PATH；新开的终端会自动生效。" -ForegroundColor Green
 }
 
 # --------------------------------------------------------------- config ----
-function Find-Browser {
-    $roots = @($Env:ProgramFiles, ${Env:ProgramFiles(x86)}) | Where-Object { $_ }
-    foreach ($root in $roots) {
-        foreach ($rel in @('Google\Chrome\Application\chrome.exe', 'Microsoft\Edge\Application\msedge.exe')) {
-            $p = Join-Path $root $rel
-            if (Test-Path $p) { return $p }
-        }
-    }
-    return $null
-}
 
 function Invoke-Config {
     Write-Section '写开发配置'
@@ -240,23 +224,7 @@ function Invoke-Config {
         Write-Ok 'backend\.env 已从模板生成。默认 REDIS_URL 为空＝AI 任务同步执行，这正是 Windows 原生开发的推荐形态（RQ worker 依赖 fork，Windows 原生跑不了）。要接 LLM 就把 LLM_BASE_URL 填上。'
     }
 
-    # 4) 图形渲染浏览器配置：仓库自带的 backend\tools\puppeteer.json 钉的是 Linux 的
-    #    /usr/bin/google-chrome，Windows 上必须换成本机 Chrome/Edge 路径并用 PUPPETEER_CONFIG 指过去。
-    $browser = Find-Browser
-    if ($null -eq $browser) {
-        Write-Host '  [i] 未找到 Chrome/Edge，跳过图形渲染配置；装浏览器后重跑 config 即可补上。' -ForegroundColor Gray
-    }
-    else {
-        $pptr = Join-Path $BackendDir 'tools\puppeteer.windows.json'
-        # ConvertTo-Json 负责路径反斜杠转义；写无 BOM 的 UTF-8——mmdc（Node）解析带 BOM 的 JSON 会报错。
-        $json = @{ executablePath = $browser; args = @('--disable-gpu', '--disable-dev-shm-usage') } | ConvertTo-Json
-        [IO.File]::WriteAllText($pptr, $json, (New-Object System.Text.UTF8Encoding $false))
-        $envText = Get-Content $envFile -Raw
-        if ($envText -notmatch 'PUPPETEER_CONFIG') {
-            Add-Content -Path $envFile -Encoding UTF8 -Value "`n# Windows 版 mermaid 渲染浏览器配置（setup-windows.ps1 config 生成）`nPUPPETEER_CONFIG=$pptr"
-        }
-        Write-Ok "图形渲染已指向本机浏览器：$browser"
-    }
+    # 4) mermaid 由浏览器渲染，不再需要本机浏览器配置（原 puppeteer.windows.json / PUPPETEER_CONFIG 已退役）。
 
     # 5) LibreOffice 不进 PATH：找到就把 SOFFICE_PATH 填进 .env（只填模板里的空值，不动用户已填的值）
     $soffice = Find-Soffice
@@ -475,10 +443,10 @@ function Invoke-Verify {
 
     Write-Section '结果对照基线（2026-08-17 迁出时的已知状态）'
     Write-Host '  后端基线：全过。两个环境相关的例外——1 例需要能连上 Postgres（连不上会自动跳过，属正常）；'
-    Write-Host '  1 例（test_publication_chart_fragment 的 docx 渲染 mermaid 用例）需要 mmdc，未装 mermaid-cli 时会失败。'
+    Write-Host '  PlantUML 相关的少数用例需要本机 Java，未装时会失败。'
     Write-Host '  前端基线：恰好 2 例已知遗留失败（theme、app-shell 各 1，记录在案），其余全过。'
     if ($backendExit -eq 0) { Write-Ok '后端测试全过。' }
-    else { Write-Host '  [!] 后端有失败用例：若只有上述 mmdc 那 1 例，属预期；否则按上方输出排查。' -ForegroundColor Yellow }
+    else { Write-Host '  [!] 后端有失败用例：若只是需要 Java 的那几例，属预期；否则按上方输出排查。' -ForegroundColor Yellow }
     if ($frontendExit -eq 0) { Write-Ok '前端测试全过（连已知遗留失败都没出现，说明基线已被修复）。' }
     else { Write-Host '  [!] 前端有失败用例：若恰好是基线里那 2 例，属预期；多于 2 例才需要排查。' -ForegroundColor Yellow }
 }
@@ -553,7 +521,7 @@ function Show-Usage {
     Write-Host '  start    各开一个新窗口启动后端 API 与前端 dev server'
     Write-Host '  stop     停止开发进程（:8000/:5173）并停掉 compose 容器'
     Write-Host ''
-    Write-Host '开关：-WithDocker 一并装 Docker Desktop；-WithTools 一并装 LibreOffice/JRE/mermaid-cli；'
+    Write-Host '开关：-WithDocker 一并装 Docker Desktop；-WithTools 一并装 LibreOffice/JRE；'
     Write-Host '      -Mirror 切国内镜像（npm/PyPI/uv 的 CPython 下载）；-NativeDb 数据库走原生安装；'
     Write-Host '      -Reset 让 seed 清空演示项目重建。'
     Write-Host ''

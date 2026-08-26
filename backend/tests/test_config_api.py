@@ -436,10 +436,9 @@ def test_export_readiness_matches_adapter_verdicts(client):
     from app.adapters.docx_to_pdf import pdf_render_available
 
     body, items = _readiness(client)
-    assert [i["key"] for i in body["items"]] == ["pdf_preview", "mermaid_diagram", "plantuml_diagram"]
+    assert [i["key"] for i in body["items"]] == ["pdf_preview", "plantuml_diagram"]
     tools = resolve_tools()
     assert items["pdf_preview"]["ready"] is pdf_render_available()
-    assert items["mermaid_diagram"]["ready"] is (tools["mmdc"] is not None)
     assert items["plantuml_diagram"]["ready"] is (tools["java"] is not None and tools["plantuml_jar"] is not None)
     assert body["all_ready"] is all(i["ready"] for i in body["items"])
 
@@ -463,12 +462,11 @@ def test_export_readiness_reports_missing_tools_with_stable_outcomes(client, mon
 
     monkeypatch.setattr(registry, "find_soffice", lambda: None)
     monkeypatch.setattr(
-        registry, "resolve_tools", lambda: {"mmdc": None, "java": None, "plantuml_jar": None}
+        registry, "resolve_tools", lambda: {"java": None, "plantuml_jar": None}
     )
     body, items = _readiness(client)
     assert body["all_ready"] is False
     assert items["pdf_preview"]["outcome"] == "soffice_missing"
-    assert items["mermaid_diagram"]["outcome"] == "mmdc_missing"
     assert items["plantuml_diagram"]["outcome"] == "java_missing"
     assert all(i["path"] is None and i["version"] is None for i in body["items"])
 
@@ -498,14 +496,9 @@ def test_export_readiness_distinguishes_missing_jar_from_missing_java(client, mo
     from app.services import config_registry as registry
 
     monkeypatch.setattr(
-        registry, "resolve_tools", lambda: {"mmdc": "/x/mmdc", "java": "/x/java", "plantuml_jar": None}
+        registry, "resolve_tools", lambda: {"java": "/x/java", "plantuml_jar": None}
     )
-    monkeypatch.setattr(registry, "mmdc_version", lambda _p: None)
     _body, items = _readiness(client)
     assert items["plantuml_diagram"]["outcome"] == "plantuml_jar_missing"
     assert items["plantuml_diagram"]["ready"] is False
-    # 版本取不到不影响就绪结论：mmdc 定位到了就算就绪
-    assert items["mermaid_diagram"] == {
-        "key": "mermaid_diagram", "ready": True, "outcome": "ready",
-        "path": "/x/mmdc", "version": None,
-    }
+    assert "mermaid_diagram" not in items  # mermaid 由浏览器渲染，清单不再列它

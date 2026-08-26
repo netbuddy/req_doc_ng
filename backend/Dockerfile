@@ -38,19 +38,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libreoffice-writer fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# 图形源码栅格化工具链（发布预览与 docx 导出把 mermaid/plantuml 围栏出成真图，缺失则降级为源码文本块）：
-#   plantuml 一路 —— default-jre-headless 跑 plantuml.jar，graphviz 供关系类图布局；
-#   mermaid  一路 —— nodejs 跑 mmdc，chromium 供 mmdc 量文字尺寸算版面。
-# tools/puppeteer.json 里写死的是 /usr/bin/google-chrome（宿主机形态），容器内建同名符号链接指向
-# Debian 的 chromium，一份配置同时适配两处，不必为容器另存一份配置。
+# 图形渲染工具链（发布产物与 docx 把 plantuml 围栏出成 SVG，缺失则保留源码文本块并报告）：
+#   plantuml —— default-jre-headless 跑 plantuml.jar，graphviz 供关系类图布局。
+# mermaid 由用户浏览器渲染后随发布请求提交 SVG，镜像内不再装 nodejs / mermaid-cli / chromium
+#（AppImage 单机模式方案裁定 D4：服务器侧不依赖浏览器）。
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends default-jre-headless graphviz nodejs npm chromium \
-    && ln -sf /usr/bin/chromium /usr/bin/google-chrome \
+    && apt-get install -y --no-install-recommends default-jre-headless graphviz \
     && rm -rf /var/lib/apt/lists/*
-
-# PUPPETEER_SKIP_DOWNLOAD=1：不让 puppeteer 另下一份 Chromium（约 400 MB），改用上面装的系统 chromium。
-RUN PUPPETEER_SKIP_DOWNLOAD=1 npm install -g @mermaid-js/mermaid-cli@11.16.0 \
-    && npm cache clean --force
 
 COPY . .
 

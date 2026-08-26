@@ -113,7 +113,7 @@ def test_plantuml_embeds_svg_with_png_fallback(tmp_path, monkeypatch):
     svg = (b'<svg xmlns="http://www.w3.org/2000/svg" width="200px" height="80px">'
            b'<rect width="200" height="80" fill="#fff" stroke="#000"/></svg>')
     monkeypatch.setattr(diagram_render, "resolve_tools",
-                        lambda: {"mmdc": None, "java": "/fake/java", "plantuml_jar": "/fake/p.jar"})
+                        lambda: {"java": "/fake/java", "plantuml_jar": "/fake/p.jar"})
 
     def _run(cmd, **kwargs):
         import subprocess

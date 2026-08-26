@@ -29,7 +29,7 @@
 # 开关：
 #   --with-docker  install 时一并安装 Docker（get.docker.com 官方脚本；装完需重新登录使 docker 组生效）
 #   --with-tools   install 时一并安装可选工具：LibreOffice+中文字体（docx→PDF 精确预览）、
-#                  Java 运行时（plantuml 渲染）、mermaid-cli（mermaid 渲染）
+#                  Java 运行时（plantuml 渲染；mermaid 由浏览器渲染，无需工具）
 #   --mirror       config 时切国内镜像：npm→npmmirror、PyPI→清华、uv 的 CPython 下载→npmmirror；
 #                  install 时 uv 改走 PyPI（清华源）安装而非 GitHub 下载
 #   --native-db    infra 走原生 apt 安装路线（不依赖 Docker；需要 sudo）
@@ -116,8 +116,7 @@ task_check() {
   else info '未装 LibreOffice（可选：docx→PDF 精确预览），对应功能自动降级。'; fi
   if has java; then ok 'Java 运行时（可选：plantuml 图形渲染）'
   else info '未装 Java 运行时（可选：plantuml 图形渲染），对应功能自动降级。'; fi
-  if has mmdc; then ok 'mermaid-cli（可选：mermaid 图形渲染）'
-  else info '未装 mermaid-cli（可选：mermaid 渲染；缺失时后端有 1 个测试用例会失败），对应功能自动降级。'; fi
+  info 'mermaid 图形由浏览器渲染，服务器侧不需要任何工具。'
 
   if [ "$FAIL_COUNT" -gt 0 ]; then
     printf '\n%s共有 %d 项必备工具缺失。执行：./setup-linux.sh install%s\n' "$C_WARN" "$FAIL_COUNT" "$C_RST"
@@ -173,32 +172,13 @@ task_install() {
   fi
 
   if [ "$WITH_TOOLS" -eq 1 ]; then
-    echo '>> 安装可选工具：LibreOffice + 中文字体、Java 运行时、mermaid-cli'
-    sudo apt-get install -y libreoffice-writer fonts-noto-cjk default-jre
-    if has mmdc; then ok 'mermaid-cli 已存在，跳过安装。'
-    else sudo npm install -g @mermaid-js/mermaid-cli; fi
-    if ! find_browser >/dev/null; then
-      echo '>> 本机无浏览器：安装 chrome-headless-shell（Chrome 官方无头精简版，mermaid 渲染内核，装到 ~/.cache/reqdoc-chrome）'
-      npx -y puppeteer browsers install chrome-headless-shell --path "$HOME/.cache/reqdoc-chrome"
-    fi
+    echo '>> 安装可选工具：LibreOffice + 中文字体、Java 运行时（plantuml 渲染）'
+    sudo apt-get install -y libreoffice-writer fonts-noto-cjk default-jre graphviz
   fi
   printf '\n%s安装完成。%s\n' "$C_OK" "$C_RST"
 }
 
 # ----------------------------------------------------------------- config ----
-find_browser() {
-  local cand
-  for cand in /usr/bin/google-chrome /usr/bin/google-chrome-stable; do
-    [ -x "$cand" ] && { echo "$cand"; return 0; }
-  done
-  for cand in google-chrome google-chrome-stable chromium chromium-browser; do
-    has "$cand" && { command -v "$cand"; return 0; }
-  done
-  # 最后兜底：install --with-tools 装的 chrome-headless-shell（Chrome 官方无头精简版）
-  cand="$(find "$HOME/.cache/reqdoc-chrome" -name chrome-headless-shell -type f 2>/dev/null | head -1)"
-  [ -n "$cand" ] && { echo "$cand"; return 0; }
-  return 1
-}
 
 task_config() {
   section '写开发配置'
@@ -227,26 +207,6 @@ task_config() {
     ok 'backend/.env 已从模板生成。REDIS_URL 留空＝AI 任务同步执行（不需要 worker）；要接 LLM 就填 LLM_BASE_URL。'
   fi
 
-  # 图形渲染浏览器：仓库默认配置钉 /usr/bin/google-chrome；不在该路径时生成本机配置并用 PUPPETEER_CONFIG 指过去
-  if [ -x /usr/bin/google-chrome ]; then
-    ok '图形渲染用默认配置（/usr/bin/google-chrome）。'
-  else
-    local browser
-    if browser="$(find_browser)"; then
-      local pptr="$BACKEND_DIR/tools/puppeteer.local.json"
-      printf '{\n  "executablePath": "%s",\n  "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]\n}\n' "$browser" > "$pptr"
-      if ! grep -q 'PUPPETEER_CONFIG' "$env_file"; then
-        {
-          echo ''
-          echo '# 本机 mermaid 渲染浏览器配置（setup-linux.sh config 生成）'
-          echo "PUPPETEER_CONFIG=$pptr"
-        } >> "$env_file"
-      fi
-      ok "图形渲染已指向本机浏览器：$browser"
-    else
-      info '未找到 Chrome/Chromium，跳过图形渲染配置；装浏览器后重跑 config 即可补上。'
-    fi
-  fi
 }
 
 # ------------------------------------------------------------------- deps ----
@@ -354,10 +314,10 @@ task_verify() {
 
   section '结果对照基线（2026-08-17 迁出时的已知状态）'
   echo '  后端基线：全过。两个环境相关的例外——1 例需要能连上 Postgres（连不上会自动跳过，属正常）；'
-  echo '  1 例（test_publication_chart_fragment 的 docx 渲染 mermaid 用例）需要 mmdc，未装 mermaid-cli 时会失败。'
+  echo '  PlantUML 相关的少数用例需要本机 Java，未装时会失败。'
   echo '  前端基线：恰好 2 例已知遗留失败（theme、app-shell 各 1，记录在案），其余全过。'
   if [ "$backend_rc" -eq 0 ]; then ok '后端测试全过。'
-  else warn '后端有失败用例：若只有上述 mmdc 那 1 例，属预期；否则按上方输出排查。'; fi
+  else warn '后端有失败用例：若只是需要 Java 的那几例，属预期；否则按上方输出排查。'; fi
   if [ "$frontend_rc" -eq 0 ]; then ok '前端测试全过（连已知遗留失败都没出现，说明基线已被修复）。'
   else warn '前端有失败用例：若恰好是基线里那 2 例，属预期；多于 2 例才需要排查。'; fi
 }

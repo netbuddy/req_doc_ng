@@ -155,26 +155,10 @@ ln -sfn "$JRE_HOME" "$TOOL/jre"
 [ -x "$TOOL/jre/bin/java" ] || die "包内 JRE 展开异常：找不到 $TOOL/jre/bin/java"
 set_env_kv JAVA_PATH "$TOOL/jre/bin/java"
 
-# --- mermaid：包内 mermaid-cli + chrome-headless-shell（Chrome 官方无头精简版）---
-mkdir -p "$TOOL/mermaid" "$TOOL/chrome"
-tar -xzf "$PKG_DIR/vendor/mermaid.tar.gz" -C "$TOOL/mermaid"
-tar -xzf "$PKG_DIR/vendor/chrome-headless-shell.tar.gz" -C "$TOOL/chrome"
-CHROME_BIN="$(find "$TOOL/chrome" -name chrome-headless-shell -type f | head -1)"
-[ -n "$CHROME_BIN" ] || die "包内 chrome-headless-shell 展开异常"
-chmod +x "$CHROME_BIN"
-printf '{\n  "executablePath": "%s",\n  "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]\n}\n' \
-  "$CHROME_BIN" > "$INSTALL_DIR/backend/tools/puppeteer.devkit.json"
-set_env_kv MMDC_PATH "$TOOL/mermaid/node_modules/.bin/mmdc"
-set_env_kv PUPPETEER_CONFIG "$INSTALL_DIR/backend/tools/puppeteer.devkit.json"
-# 无头 Chrome 依赖少量系统库（libnss3 等），逐个核对并点名缺哪个
-MISSING_LIBS="$(ldd "$CHROME_BIN" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')"
-if [ -n "$MISSING_LIBS" ]; then
-  warn "无头 Chrome 缺系统库：${MISSING_LIBS}——mermaid 渲染不可用（Debian/Ubuntu 对应 libnss3/libnspr4/libasound2t64 等包，需离线源安装）；plantuml 与其余功能不受影响。"
-else
-  log "图形渲染工具链就绪：plantuml（包内 JRE）+ mermaid（包内 mmdc + 无头 Chrome）。"
-fi
+# mermaid 由用户浏览器渲染后随发布请求提交 SVG，离线机不再需要 mermaid-cli 与无头 Chrome。
+log "图形渲染工具链就绪：plantuml（包内 JRE）；mermaid 由浏览器渲染。"
 
-# --- 中文字体：装到用户级字体目录，plantuml 与无头 Chrome 渲染中文都靠它 ---
+# --- 中文字体：装到用户级字体目录，plantuml 渲染中文靠它 ---
 mkdir -p "$HOME/.local/share/fonts"
 cp "$PKG_DIR"/vendor/fonts/*.ttc "$HOME/.local/share/fonts/"
 if command -v fc-cache >/dev/null 2>&1; then fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true

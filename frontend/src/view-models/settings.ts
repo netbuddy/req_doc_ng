@@ -1216,7 +1216,6 @@ export interface ExportReadinessVM {
 /** 各能力的用户视角名与它依赖的工具（工具名只作括注，不单独成行）。 */
 const EXPORT_CAPABILITY_LABELS: Record<ExportCapabilityKey, { capability: string; tool: string }> = {
   pdf_preview: { capability: '文档转 PDF 预览', tool: 'LibreOffice' },
-  mermaid_diagram: { capability: '流程图渲染', tool: 'mermaid-cli' },
   plantuml_diagram: { capability: '结构图渲染', tool: 'PlantUML' },
 };
 
@@ -1225,11 +1224,9 @@ const EXPORT_MISSING_TEXT: Record<ExportReadinessOutcome, string> = {
   ready: '',
   soffice_missing:
     '本机没找到 LibreOffice（soffice）。发布页的「精确预览」不可用；导出的 Word 文件本身不受影响。',
-  mmdc_missing:
-    '本机没找到 mermaid-cli（mmdc）。导出文档里的流程图会以源码文本呈现，不会渲染成图片。',
   // 结构图两条要连屏幕预览一起讲：PlantUML 由后端渲染，缺 Java 或缺 jar 时发布页/追溯页的预览
-  // 只会弹一条渲染失败提示，连源码都不显示——比导出文档那一面更难受。（mermaid 那条不同：
-  // 它在浏览器里渲染，不经后端，所以 mmdc 缺失确实只影响导出文件。）
+  // 只会弹一条渲染失败提示，连源码都不显示——比导出文档那一面更难受。（mermaid 不在清单里：
+  // 它由浏览器渲染并随发布请求提交 SVG，服务器侧没有任何依赖可探测。）
   java_missing:
     '本机没找到 Java 运行环境。导出文档里的结构图会以源码文本呈现，不会渲染成图片；'
     + '发布页、追溯页的屏幕预览会显示一条渲染失败提示。',

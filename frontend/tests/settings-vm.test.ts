@@ -234,7 +234,6 @@ describe('buildExportReadiness（T20260724 A2）', () => {
             // 各工具自报的版本串格式不一，VM 只取其中的版本号
             version: 'LibreOffice 24.2.7.2 420(Build:2)',
           },
-          { key: 'mermaid_diagram', ready: true, outcome: 'ready', path: '/n/bin/mmdc', version: '11.16.0' },
           {
             key: 'plantuml_diagram',
             ready: true,
@@ -246,11 +245,10 @@ describe('buildExportReadiness（T20260724 A2）', () => {
         true,
       ),
     );
-    expect(vm.rows.map((r) => r.capability)).toEqual(['文档转 PDF 预览', '流程图渲染', '结构图渲染']);
-    expect(vm.rows.map((r) => r.statusText)).toEqual(['就绪', '就绪', '就绪']);
+    expect(vm.rows.map((r) => r.capability)).toEqual(['文档转 PDF 预览', '结构图渲染']);
+    expect(vm.rows.map((r) => r.statusText)).toEqual(['就绪', '就绪']);
     expect(vm.rows[0].detail).toBe('LibreOffice 24.2.7.2 · /usr/bin/soffice');
-    expect(vm.rows[1].detail).toBe('mermaid-cli 11.16.0 · /n/bin/mmdc');
-    expect(vm.rows[2].detail).toBe('PlantUML 1.2024.7 · /var/tools/plantuml.jar');
+    expect(vm.rows[1].detail).toBe('PlantUML 1.2024.7 · /var/tools/plantuml.jar');
     expect(vm.allReady).toBe(true);
     expect(vm.summary).toBe('导出所需的本地工具已全部就绪。');
     expect(vm.checkedText).toBe('检测于 2026-07-24 18:30');
@@ -261,18 +259,16 @@ describe('buildExportReadiness（T20260724 A2）', () => {
       readiness(
         [
           { key: 'pdf_preview', ready: false, outcome: 'soffice_missing', path: null, version: null },
-          { key: 'mermaid_diagram', ready: false, outcome: 'mmdc_missing', path: null, version: null },
           { key: 'plantuml_diagram', ready: false, outcome: 'java_missing', path: null, version: null },
         ],
         false,
       ),
     );
-    expect(vm.rows.map((r) => r.statusText)).toEqual(['缺失', '缺失', '缺失']);
+    expect(vm.rows.map((r) => r.statusText)).toEqual(['缺失', '缺失']);
     expect(vm.rows[0].detail).toContain('精确预览');
     expect(vm.rows[0].detail).toContain('导出的 Word 文件本身不受影响');
-    expect(vm.rows[1].detail).toContain('流程图会以源码文本呈现');
-    expect(vm.rows[2].detail).toContain('没找到 Java 运行环境');
-    expect(vm.summary).toBe('有 3 项能力缺少本地工具，导出仍可进行，但下面这些效果会打折扣。');
+    expect(vm.rows[1].detail).toContain('没找到 Java 运行环境');
+    expect(vm.summary).toBe('有 2 项能力缺少本地工具，导出仍可进行，但下面这些效果会打折扣。');
 
     const jarMissing = buildExportReadiness(
       readiness(
@@ -285,25 +281,20 @@ describe('buildExportReadiness（T20260724 A2）', () => {
 
   it('版本取不到不影响就绪结论：说明退回只写依赖名与路径', () => {
     const vm = buildExportReadiness(
-      readiness([{ key: 'mermaid_diagram', ready: true, outcome: 'ready', path: '/n/bin/mmdc', version: null }], true),
+      readiness([{ key: 'plantuml_diagram', ready: true, outcome: 'ready', path: '/var/tools/plantuml.jar', version: null }], true),
     );
     expect(vm.rows[0].ready).toBe(true);
-    expect(vm.rows[0].detail).toBe('mermaid-cli · /n/bin/mmdc');
+    expect(vm.rows[0].detail).toBe('PlantUML · /var/tools/plantuml.jar');
   });
 
   it('结构图两条要连屏幕预览的后果一起讲（PlantUML 由后端渲染，缺工具时预览也坏）', () => {
     const vm = buildExportReadiness(
       readiness(
-        [
-          { key: 'plantuml_diagram', ready: false, outcome: 'java_missing', path: null, version: null },
-          { key: 'mermaid_diagram', ready: false, outcome: 'mmdc_missing', path: null, version: null },
-        ],
+        [{ key: 'plantuml_diagram', ready: false, outcome: 'java_missing', path: null, version: null }],
         false,
       ),
     );
     expect(vm.rows[0].detail).toContain('屏幕预览会显示一条渲染失败提示');
-    // mermaid 在浏览器里渲染、不经后端，缺 mmdc 确实只影响导出文件——这条不该跟着改口径
-    expect(vm.rows[1].detail).not.toContain('屏幕预览');
   });
 
   it('后端多出一种没见过的能力：那一行降级显示，其余各行照常', () => {

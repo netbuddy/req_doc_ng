@@ -5,8 +5,8 @@
 # 即可完全离线重建开发调试环境，不需要再下载任何依赖。包内容：
 #   源码树、uv 二进制、Node.js 运行时、uv 管理版 CPython 3.12、
 #   后端全部依赖（uv 缓存形态，含 dev 组）、前端全部依赖（npm 缓存形态）、
-#   图形渲染工具链（Temurin JRE 供 plantuml、mermaid-cli + chrome-headless-shell
-#   供 mermaid、Noto CJK 中文字体供两者渲染中文；字体为 SIL OFL 许可，可随包分发）。
+#   图形渲染工具链（Temurin JRE 供 plantuml，Noto CJK 中文字体供其渲染中文；字体为 SIL OFL 许可，
+#   可随包分发。mermaid 由浏览器渲染，不随包）。
 # 数据库不随本包：复用全量发布包（pack-full.sh 产物）装好的 db/redis 容器——
 # 安装器会停掉其 api/worker 业务容器、给 db/redis 加宿主端口发布、把旧库表
 # 增量迁移到本包代码的最新版本（详见 install-devkit.sh）。
@@ -96,27 +96,14 @@ curl -fL --retry 3 -o "$PKG/vendor/node/$NODE_TAR" "https://nodejs.org/dist/${NO
        "https://registry.npmmirror.com/-/binary/node/${NODE_VERSION}/${NODE_TAR}" \
   || die "Node.js 下载失败（nodejs.org 与 npmmirror 均不可达）"
 
-step "6/7 图形渲染工具链（JRE / mermaid-cli / chrome-headless-shell / 中文字体）"
+step "6/7 图形渲染工具链（JRE / 中文字体）"
 # plantuml 渲染引擎：Temurin 21 JRE（linux x64，解压即用；plantuml.jar 本就在源码树 backend/tools/）
 log '下载 Temurin 21 JRE'
 curl -fL --retry 3 -o "$PKG/vendor/jre.tar.gz" \
   "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse" \
   || die "Temurin JRE 下载失败（api.adoptium.net 不可达）"
-# mermaid-cli：装进临时前缀后整包收走（顺带把相关 npm 包预热进包内缓存）；
-# PUPPETEER_SKIP_DOWNLOAD：浏览器内核单独打包，不让 puppeteer 往本机缓存里下
-MMD_BUILD="$STAGE/mermaid-build"
-mkdir -p "$MMD_BUILD"
-(cd "$MMD_BUILD" && PUPPETEER_SKIP_DOWNLOAD=1 npm install "@mermaid-js/mermaid-cli" \
-    --cache "$PKG/vendor/npm-cache" --no-audit --no-fund --loglevel=error)
-tar -C "$MMD_BUILD" -czf "$PKG/vendor/mermaid.tar.gz" node_modules
-# mermaid 的浏览器内核：chrome-headless-shell（Chrome 官方无头精简版，与包内 puppeteer 版本配套）
-log '下载 chrome-headless-shell'
-CHROME_DL="$STAGE/chrome-dl"
-"$MMD_BUILD/node_modules/.bin/puppeteer" browsers install chrome-headless-shell --path "$CHROME_DL" >/dev/null
-CHROME_BIN="$(find "$CHROME_DL" -name chrome-headless-shell -type f | head -1)"
-[ -n "$CHROME_BIN" ] || die "chrome-headless-shell 下载失败"
-tar -C "$CHROME_DL" -czf "$PKG/vendor/chrome-headless-shell.tar.gz" .
-# 中文字体：plantuml 的 java2d 与无头 Chrome 渲染中文都靠它，离线机可能没有
+# mermaid 由用户浏览器渲染后随发布请求提交 SVG，包内不再带 mermaid-cli 与 chrome-headless-shell。
+# 中文字体：plantuml 的 java2d 渲染中文靠它，离线机可能没有
 FONT_SRC=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 [ -f "$FONT_SRC" ] || die "出包机缺 $FONT_SRC（apt install fonts-noto-cjk 后重跑）"
 mkdir -p "$PKG/vendor/fonts"
@@ -128,7 +115,7 @@ chmod +x "$PKG/install-devkit.sh"
 
 # 校验清单：普通文件逐个 sha256（缓存目录文件数以万计，整体校验交给 tar 的解压完整性）
 (cd "$PKG" && sha256sum repo.tar.gz vendor/uv/uv vendor/cpython.tar.gz "vendor/node/$NODE_TAR" \
-  vendor/jre.tar.gz vendor/mermaid.tar.gz vendor/chrome-headless-shell.tar.gz \
+  vendor/jre.tar.gz \
   vendor/fonts/NotoSansCJK-Regular.ttc > checksums.txt)
 
 python3 - "$PKG/manifest.json" <<EOF
@@ -142,7 +129,7 @@ json.dump({
     "uv_version": "$UV_VERSION",
     "node_version": "$NODE_VERSION",
     "cpython": "$PY_NAME",
-    "graphics": "Temurin21-JRE + mermaid-cli + chrome-headless-shell + NotoSansCJK",
+    "graphics": "Temurin21-JRE + NotoSansCJK",
     "database": "复用全量发布包的 db/redis 容器（install-devkit.sh --full-stack 对接）",
 }, open(sys.argv[1], "w"), ensure_ascii=False, indent=2)
 EOF
