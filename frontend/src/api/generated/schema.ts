@@ -3963,6 +3963,13 @@ export interface components {
             format: string;
             /** Source */
             source: string;
+            /**
+             * Output
+             * @description 输出格式；svg 仅 plantuml 支持
+             * @default png
+             * @enum {string}
+             */
+            output: "png" | "svg";
         };
         /**
          * DialogueMessageRead

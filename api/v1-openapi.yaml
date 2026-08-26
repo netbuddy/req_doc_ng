@@ -6908,6 +6908,14 @@ components:
         source:
           type: string
           title: Source
+        output:
+          type: string
+          enum:
+          - png
+          - svg
+          title: Output
+          description: 输出格式；svg 仅 plantuml 支持
+          default: png
       type: object
       required:
       - format

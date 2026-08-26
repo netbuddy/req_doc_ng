@@ -2,7 +2,7 @@ import { Alert, Empty, Spin } from 'antd';
 import { useEffect, useState } from 'react';
 import { diagramsApi } from '../api/diagrams';
 
-// PlantUML 无浏览器端渲染器：走后端本机 plantuml.jar 出 PNG（不出网）。
+// PlantUML 无浏览器端渲染器：走后端本机 plantuml.jar 出 SVG（不出网；矢量图，与发布产物同源）。
 // 渲染失败只影响预览，不影响已保存的事实源。
 export function PlantumlPreview({
   code,
@@ -25,7 +25,7 @@ export function PlantumlPreview({
     }
     setLoading(true);
     diagramsApi
-      .renderPng('plantuml', code)
+      .renderSvg(code)
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);

@@ -168,8 +168,8 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
             downstream="图表渲染适配器",
             fields=("renderer", "security_level"),
             secret_fields=(),
-            # 当前渲染由前端 mermaid 承接（04 §3.5：系统不实现渲染）；此处登记能力口径。
-            env_defaults=lambda s: {"renderer": "mermaid（前端内置渲染）", "security_level": "strict"},
+            # 说明性登记项（不是开关）：Mermaid 由浏览器渲染；PlantUML 由本机 Java 渲染（AppImage 单机模式方案 §3.1）。
+            env_defaults=lambda s: {"renderer": "Mermaid 由浏览器渲染；PlantUML 由本机 Java 渲染", "security_level": "strict"},
         ),
         DomainSpec(
             domain="requirement_convention",

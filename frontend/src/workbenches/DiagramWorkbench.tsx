@@ -17,6 +17,7 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { MermaidPreview } from '../ui/mermaid';
+import { PlantumlPreview } from '../ui/PlantumlPreview';
 import { WorkbenchFrame } from './WorkbenchFrame';
 import { useAgentRunWatcher, type RunPollTick } from '../hooks/useAgentRunWatcher';
 import { chartsApi } from '../api/charts';
@@ -107,14 +108,8 @@ function ChartPreview({ ws }: { ws: ChartWorkspaceRead }) {
   if (ws.format === 'markdown_table') {
     return <MarkdownTablePreview code={ws.source_code} />;
   }
-  return (
-    <Alert
-      title="PlantUML 源码已通过受控校验，当前不支持实时预览"
-      description="是否允许无预览进入核对由图表类型裁定；可继续编辑或直接发起核对。"
-      showIcon
-      type="info"
-    />
-  );
+  // plantuml：后端本机 plantuml.jar 出 SVG（AppImage 单机模式方案 §3.1，2026-08-26 接入）。
+  return <PlantumlPreview code={ws.source_code} />;
 }
 
 // ---- 右区·设计页：AI 对话时间线（复用需求管理工作台 az5 会话形态） ----
