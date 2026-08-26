@@ -81,3 +81,13 @@ def test_endpoint_rejects_unknown_output():
     r = client.post("/api/diagrams/render",
                     json={"format": "plantuml", "source": "x", "output": "pdf"})
     assert r.status_code == 422
+
+
+def test_plantuml_uses_smetana_layout_when_dot_missing(fake_plantuml, monkeypatch):
+    """没有 graphviz 的机器（AppImage 单机包）：自动加 -Playout=smetana，用纯 Java 布局。"""
+    monkeypatch.setattr(diagram_render, "_resolve_dot", lambda: None)
+    diagram_render.render_to_svg("@startuml\nclass A\n@enduml", "plantuml")
+    assert "-Playout=smetana" in fake_plantuml[-1]
+    monkeypatch.setattr(diagram_render, "_resolve_dot", lambda: "/usr/bin/dot")
+    diagram_render.render_to_svg("@startuml\nclass A\n@enduml", "plantuml")
+    assert "-Playout=smetana" not in fake_plantuml[-1]

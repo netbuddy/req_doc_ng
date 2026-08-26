@@ -39,6 +39,12 @@ def _resolve_java() -> str | None:
     return shutil.which("java")
 
 
+def _resolve_dot() -> str | None:
+    """定位 graphviz 的 dot（类图/对象图排版用）。找不到时 PlantUML 改用内置纯 Java 布局引擎 Smetana，
+    不需要任何外部程序（AppImage 单机包不带 graphviz，走的就是这条路）。"""
+    return shutil.which("dot")
+
+
 def resolve_tools() -> dict[str, str | None]:
     """本地图形渲染工具链的定位结果：{java, plantuml_jar} → 路径，None＝未找到。
 
@@ -69,6 +75,8 @@ def _render_plantuml(source: str, output: str = "png") -> bytes:
     if jar is None:
         raise DiagramRenderUnavailable("plantuml.jar 未就绪")
     cmd = [java, "-Djava.awt.headless=true", "-jar", jar, f"-t{output}", "-pipe", "-charset", "UTF-8"]
+    if _resolve_dot() is None:
+        cmd.append("-Playout=smetana")
     try:
         proc = subprocess.run(
             cmd, input=source.encode("utf-8"), capture_output=True,

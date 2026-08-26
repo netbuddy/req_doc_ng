@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ReqDoc 需求治理平台
+Comment=需求治理平台（单机模式）
+Exec=AppRun
+Icon=reqdoc
+Categories=Office;
+Terminal=true
