@@ -22,7 +22,9 @@ from app.adapters.diagram_render import (
     DiagramRenderUnavailable,
     png_size,
     render_to_png,
+    render_to_svg,
 )
+from app.adapters.docx_svg import add_svg_picture, svg_size_px
 
 FAIL_MARKER = "<!--convert-fail-->"
 # 正文可用宽度约 6 英寸（A4/Letter 默认页边距）；栅格图封顶到此宽，超宽等比缩放。
@@ -71,22 +73,37 @@ def _add_code_paragraph(doc, text: str, binding: dict):
     return p
 
 
-def _add_diagram_image(doc, source: str, fmt: str) -> bool:
-    """图形围栏渲染为居中图片；渲染不可用/失败返回 False，由调用方降级为源码块（绝不丢内容）。"""
-    try:
-        png = render_to_png(source, fmt)
-    except (DiagramRenderError, DiagramRenderUnavailable):
-        return False
-    w_px, _ = png_size(png)
-    # mermaid 以 -s 2 出图（2 倍像素），按 96dpi 反算原始宽度再封顶；plantuml 为原生像素。
-    css_px = (w_px / 2) if fmt == "mermaid" else w_px
-    native_in = (css_px / 96.0) if css_px else _MAX_IMG_WIDTH_INCHES
-    width = Inches(min(native_in, _MAX_IMG_WIDTH_INCHES))
+def _diagram_paragraph(doc):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_before = Pt(4)
     p.paragraph_format.space_after = Pt(4)
-    p.add_run().add_picture(BytesIO(png), width=width)
+    return p
+
+
+def _add_diagram_image(doc, source: str, fmt: str) -> bool:
+    """图形围栏渲染为居中图片；渲染不可用/失败返回 False，由调用方降级为源码块（绝不丢内容）。
+
+    plantuml：后端 Java 出 SVG，以矢量图嵌入（附 resvg 转出的 PNG 备用，见 docx_svg）。
+    mermaid：暂仍走 render_to_png（待发布请求携带浏览器预渲染 SVG 后并入同一条 SVG 路径）。
+    """
+    try:
+        if fmt == "plantuml":
+            svg = render_to_svg(source, fmt)
+            w_px, _ = svg_size_px(svg)
+            native_in = (w_px / 96.0) if w_px else _MAX_IMG_WIDTH_INCHES
+            add_svg_picture(_diagram_paragraph(doc), svg, min(native_in, _MAX_IMG_WIDTH_INCHES))
+            return True
+        png = render_to_png(source, fmt)
+    except (DiagramRenderError, DiagramRenderUnavailable):
+        return False
+    except Exception:  # resvg 转位图或写包失败：同样降级为源码块，不让单张图拖垮整份文档
+        return False
+    w_px, _ = png_size(png)
+    # mermaid 以 -s 2 出图（2 倍像素），按 96dpi 反算原始宽度再封顶。
+    css_px = w_px / 2
+    native_in = (css_px / 96.0) if css_px else _MAX_IMG_WIDTH_INCHES
+    _diagram_paragraph(doc).add_run().add_picture(BytesIO(png), width=Inches(min(native_in, _MAX_IMG_WIDTH_INCHES)))
     return True
 
 

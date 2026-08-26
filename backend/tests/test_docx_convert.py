@@ -69,3 +69,44 @@ def test_list_form_heading_sizes_deeper_level_falls_back(tmp_path):
     doc = DocxDocument(str(out))
     h3 = [p for p in doc.paragraphs if p.style.name == "Heading 3"]
     assert h3 and h3[0].runs[0].font.size.pt == 13.0
+
+
+def test_plantuml_embeds_svg_with_png_fallback(tmp_path, monkeypatch):
+    """PlantUML 图以 SVG 嵌入 docx：包内有 image/svg+xml 部件，图片的 blip 挂 svgBlip 扩展并指向它；
+    位图主体（PNG 备用）仍存在。子进程用替身，不依赖本机 Java。"""
+    import zipfile
+
+    from app.adapters import diagram_render
+
+    svg = (b'<svg xmlns="http://www.w3.org/2000/svg" width="200px" height="80px">'
+           b'<rect width="200" height="80" fill="#fff" stroke="#000"/></svg>')
+    monkeypatch.setattr(diagram_render, "resolve_tools",
+                        lambda: {"mmdc": None, "java": "/fake/java", "plantuml_jar": "/fake/p.jar"})
+
+    def _run(cmd, **kwargs):
+        import subprocess
+        assert "-tsvg" in cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout=svg, stderr=b"")
+
+    monkeypatch.setattr(diagram_render.subprocess, "run", _run)
+    md = "# 1\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n"
+    doc = _convert(md, tmp_path)
+    assert doc.inline_shapes
+    out = next(tmp_path.rglob("*.docx"))
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+        assert any(n.endswith(".svg") for n in names), names
+        assert any(n.endswith(".png") for n in names), names
+        document_xml = z.read("word/document.xml").decode()
+        assert "svgBlip" in document_xml
+        assert "96DAC541-7B7A-43D3-8B79-37D633B846F1" in document_xml
+        assert "image/svg+xml" in z.read("[Content_Types].xml").decode()
+
+
+def test_svg_size_px_parses_px_pt_and_viewbox():
+    from app.adapters.docx_svg import svg_size_px
+
+    assert svg_size_px(b'<svg width="300px" height="100px"/>') == (300.0, 100.0)
+    assert svg_size_px(b'<svg width="72pt" height="36pt"/>') == (96.0, 48.0)
+    assert svg_size_px(b'<svg viewBox="0 0 640 480"/>') == (640.0, 480.0)
+    assert svg_size_px(b'<svg/>') == (0.0, 0.0)
