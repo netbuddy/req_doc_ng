@@ -24,7 +24,15 @@ from app.adapters.doc_template import (
     TemplateSection,
     parse_template,
 )
+from app.adapters.diagram_assets import build_diagram_assets
 from app.adapters.docx_convert import ConversionError, convert_markdown_to_docx
+from app.adapters.export_bundle import (
+    bundle_zip_path,
+    load_prerendered,
+    read_diagram_failures,
+    save_prerendered,
+    write_markdown_bundle,
+)
 from app.api.schemas import (
     AssetFragmentRead,
     CandidateAssetsRead,
@@ -1454,11 +1462,16 @@ class DocumentOrchestrationService:
             self._repo.commit()
 
     def _export_read(self, x) -> DocxExportRead:
+        from app.services.config_registry import resolve_export_dir
+
+        export_dir = resolve_export_dir(self._repo.session)
         return DocxExportRead(
             export_ref=str(x.id), draft_ref=str(x.draft_ref), status=x.status,
             failure_reason=x.failure_reason, manual_fallback=x.manual_fallback,
             check_note=x.check_note,
             file_available=bool(x.file_path and Path(x.file_path).exists()),
+            markdown_available=bundle_zip_path(export_dir, str(x.id)).exists(),
+            diagram_failures=read_diagram_failures(export_dir, str(x.id)),
             created_at=x.created_at.isoformat() if x.created_at else "",
         )
 
@@ -1556,6 +1569,13 @@ class ExportExecutionService:
         doc = self._repo.get_document_by_ref(str(draft.document_ref))
         export = self._repo.create_export(
             str(doc.id), str(draft.id), "converting", command.operator_ref, command.idempotency_key,
+        )
+        # 浏览器预渲染的 mermaid SVG 先落导出目录，转换任务（可能在另一进程）从目录读回。
+        from app.services.config_registry import resolve_export_dir
+
+        save_prerendered(
+            resolve_export_dir(self._repo.session), str(export.id),
+            {d.fence_index: d.svg.encode("utf-8") for d in command.prerendered_diagrams if d.svg},
         )
         run_ref = None
         if self._agent_runs is not None and self._enqueue is not None:
@@ -1661,11 +1681,17 @@ def run_docx_export_judgement(repo: SqlPublicationRepository, export_ref: str) -
         if row is None:
             raise TemplateError(f"文档绑定的模板登记行不存在：{doc.template_id}")
         template = parse_template(row.content, row.template_key)
-        out = Path(resolve_export_dir(repo.session)) / f"{export.id}.docx"
+        export_dir = resolve_export_dir(repo.session)
+        # 图形围栏 → SVG 文件（mermaid 取浏览器预渲染，plantuml 后端 Java 出图）；
+        # Markdown 产物与 docx 消费同一组 SVG，失败清单随产物落盘供界面展示。
+        assets = build_diagram_assets(draft.content, load_prerendered(export_dir, str(export.id)))
+        write_markdown_bundle(export_dir, str(export.id), assets.markdown, assets.assets, assets.failures)
+        out = Path(export_dir) / f"{export.id}.docx"
         convert_markdown_to_docx(
-            draft.content, out, template.export_binding,
+            assets.markdown, out, template.export_binding,
             {"title": doc.title, "project_name": doc.coverage_scope or "",
              "version": f"V1.{draft.version_no}"},
+            assets=assets.assets,
         )
         export.status = "succeeded"
         export.file_path = str(out)

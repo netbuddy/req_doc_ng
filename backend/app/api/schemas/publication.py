@@ -244,6 +244,8 @@ class DocxExportRead(BaseModel):
     manual_fallback: bool = False
     check_note: str | None = None
     file_available: bool = False
+    markdown_available: bool = False          # Markdown 发布产物（document.md + assets/*.svg 压缩包）可下载
+    diagram_failures: list[str] = Field(default_factory=list)  # 图形处理失败清单（源码块已保留）
     created_at: str
 
 
@@ -406,6 +408,17 @@ class ReopenIndexCommand(BaseModel):
     operator_ref: str
 
 
+class PrerenderedDiagram(BaseModel):
+    """浏览器预渲染的图形（AppImage 单机模式方案 §3.2 第 3 项）：
+    前端在发起导出前把正文里的 mermaid 围栏逐个渲染成 SVG 随请求提交，服务器不跑浏览器。
+    fence_index＝该围栏在正文中的序号（从 0 计，所有语言的围栏都计数），后端据此对号入座。"""
+
+    fence_index: int
+    format: str = "mermaid"
+    svg: str | None = None       # 渲染成功：SVG 文本
+    error: str | None = None     # 渲染失败：原因（后端保留源码块并报告）
+
+
 class StartDocxExportCommand(BaseModel):
     """P03 发起 docx 导出（只能从可导出的 Markdown 定稿版本进入）。"""
 
@@ -413,6 +426,7 @@ class StartDocxExportCommand(BaseModel):
     draft_ref: str
     operator_ref: str
     idempotency_key: str
+    prerendered_diagrams: list[PrerenderedDiagram] = Field(default_factory=list)
 
 
 class StartDocxExportResult(BaseModel):

@@ -9,21 +9,13 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from io import BytesIO
 from pathlib import Path
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Pt, RGBColor
 
-from app.adapters.diagram_render import (
-    DiagramRenderError,
-    DiagramRenderUnavailable,
-    png_size,
-    render_to_png,
-    render_to_svg,
-)
 from app.adapters.docx_svg import add_svg_picture, svg_size_px
 
 FAIL_MARKER = "<!--convert-fail-->"
@@ -81,36 +73,26 @@ def _diagram_paragraph(doc):
     return p
 
 
-def _add_diagram_image(doc, source: str, fmt: str) -> bool:
-    """图形围栏渲染为居中图片；渲染不可用/失败返回 False，由调用方降级为源码块（绝不丢内容）。
+_IMAGE_LINE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<path>[^)\s]+)\)$")
 
-    plantuml：后端 Java 出 SVG，以矢量图嵌入（附 resvg 转出的 PNG 备用，见 docx_svg）。
-    mermaid：暂仍走 render_to_png（待发布请求携带浏览器预渲染 SVG 后并入同一条 SVG 路径）。
-    """
-    try:
-        if fmt == "plantuml":
-            svg = render_to_svg(source, fmt)
+
+def _add_asset_image(doc, alt: str, path: str, assets: dict[str, bytes], binding: dict) -> None:
+    """图片引用行：路径命中资产表且为 SVG → 以矢量图嵌入（docx_svg）；否则以说明文字替代，不丢信息。"""
+    svg = assets.get(path)
+    if svg is not None and path.lower().endswith(".svg"):
+        try:
             w_px, _ = svg_size_px(svg)
             native_in = (w_px / 96.0) if w_px else _MAX_IMG_WIDTH_INCHES
             add_svg_picture(_diagram_paragraph(doc), svg, min(native_in, _MAX_IMG_WIDTH_INCHES))
-            return True
-        png = render_to_png(source, fmt)
-    except (DiagramRenderError, DiagramRenderUnavailable):
-        return False
-    except Exception:  # resvg 转位图或写包失败：同样降级为源码块，不让单张图拖垮整份文档
-        return False
-    w_px, _ = png_size(png)
-    # mermaid 以 -s 2 出图（2 倍像素），按 96dpi 反算原始宽度再封顶。
-    css_px = w_px / 2
-    native_in = (css_px / 96.0) if css_px else _MAX_IMG_WIDTH_INCHES
-    _diagram_paragraph(doc).add_run().add_picture(BytesIO(png), width=Inches(min(native_in, _MAX_IMG_WIDTH_INCHES)))
-    return True
+            return
+        except Exception:  # resvg 转位图或写包失败：降级为说明文字，不让单张图拖垮整份文档
+            pass
+    _add_body_paragraph(doc, f"[图片：{alt or path}]", binding, indent=False)
 
 
 def _emit_fence(doc, lang: str, lines: list[str], binding: dict) -> None:
-    """闭合围栏出块：mermaid/plantuml 优先渲染为图片，其余（或渲染失败）逐行等宽源码。"""
-    if lang in ("mermaid", "plantuml") and _add_diagram_image(doc, "\n".join(lines), lang):
-        return
+    """闭合围栏出块：逐行等宽源码。图形围栏在进入本函数之前已由 diagram_assets 换成 SVG 图片引用；
+    仍以围栏形态到达这里的图形（预渲染缺失或渲染失败）按源码保留，绝不丢内容。"""
     for text in lines:
         _add_code_paragraph(doc, text, binding)
 
@@ -206,8 +188,15 @@ def _add_cover(doc, meta: dict, binding: dict) -> None:
     doc.add_page_break()
 
 
-def convert_markdown_to_docx(markdown: str, out_path: Path, binding: dict, meta: dict) -> Path:
-    """把 Markdown 定稿内容渲染为 docx。标题→Heading 样式；正文段→首行缩进 2 字符。"""
+def convert_markdown_to_docx(
+    markdown: str, out_path: Path, binding: dict, meta: dict,
+    assets: dict[str, bytes] | None = None,
+) -> Path:
+    """把 Markdown 定稿内容渲染为 docx。标题→Heading 样式；正文段→首行缩进 2 字符。
+
+    assets：图片引用行（![图 N](assets/diagram-N.svg)）的文件表，相对路径 → SVG 字节。
+    """
+    assets = assets or {}
     if FAIL_MARKER in markdown:
         raise ConversionError("文档转换失败：内容包含失败注入标记（演示/验收用）")
     if not markdown.strip():
@@ -251,6 +240,10 @@ def convert_markdown_to_docx(markdown: str, out_path: Path, binding: dict, meta:
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if m:
             _add_heading(doc, m.group(2).strip(), len(m.group(1)), binding)
+            continue
+        img = _IMAGE_LINE.match(stripped)
+        if img:
+            _add_asset_image(doc, img.group("alt"), img.group("path"), assets, binding)
             continue
         if re.match(r"^[-*]\s+", stripped):
             p = _add_body_paragraph(doc, re.sub(r"^[-*]\s+", "", stripped), binding, indent=False)

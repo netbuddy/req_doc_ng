@@ -1521,6 +1521,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/publication/exports/{export_ref}/markdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Export Markdown Bundle
+         * @description P03：Markdown 发布产物下载（document.md + assets/*.svg 压缩包；只读）。
+         */
+        get: operations["download_export_markdown_bundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/publication/exports/{export_ref}/pdf": {
         parameters: {
             query?: never;
@@ -4082,6 +4102,13 @@ export interface components {
              * @default false
              */
             file_available: boolean;
+            /**
+             * Markdown Available
+             * @default false
+             */
+            markdown_available: boolean;
+            /** Diagram Failures */
+            diagram_failures?: string[];
             /** Created At */
             created_at: string;
         };
@@ -6290,6 +6317,25 @@ export interface components {
             structure_review?: components["schemas"]["ItemStructureReviewRead"] | null;
         };
         /**
+         * PrerenderedDiagram
+         * @description 浏览器预渲染的图形（AppImage 单机模式方案 §3.2 第 3 项）：
+         *     前端在发起导出前把正文里的 mermaid 围栏逐个渲染成 SVG 随请求提交，服务器不跑浏览器。
+         *     fence_index＝该围栏在正文中的序号（从 0 计，所有语言的围栏都计数），后端据此对号入座。
+         */
+        PrerenderedDiagram: {
+            /** Fence Index */
+            fence_index: number;
+            /**
+             * Format
+             * @default mermaid
+             */
+            format: string;
+            /** Svg */
+            svg?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
          * ProjectDeletionReport
          * @description 删除清点回执（级联删净摘要；逐表明细走结构化日志）。
          */
@@ -7448,6 +7494,8 @@ export interface components {
             operator_ref: string;
             /** Idempotency Key */
             idempotency_key: string;
+            /** Prerendered Diagrams */
+            prerendered_diagrams?: components["schemas"]["PrerenderedDiagram"][];
         };
         /**
          * StartDocxExportResult
@@ -10940,6 +10988,38 @@ export interface operations {
         };
     };
     download_export_file_api_projects__project_id__publication_exports__export_ref__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                export_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_export_markdown_bundle: {
         parameters: {
             query?: never;
             header?: never;

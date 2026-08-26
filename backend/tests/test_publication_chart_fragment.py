@@ -338,10 +338,18 @@ def test_docx_renders_mermaid_fence_as_image(session, tmp_path):
     ))
     assert fin.status == "finalized"
     session.commit()
+    # mermaid 的 SVG 由浏览器预渲染后随请求提交（服务器不装浏览器）；这里按围栏序号构造预渲染结果
+    from app.adapters.diagram_assets import iter_fences
+    from app.api.schemas.publication import PrerenderedDiagram
+    content = SqlPublicationRepository(session).get_draft(draft.draft_ref).content
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200px" height="60px"><rect width="200" height="60"/></svg>'
+    prerendered = [PrerenderedDiagram(fence_index=f.index, svg=svg)
+                   for f in iter_fences(content) if f.lang == "mermaid"]
+    assert prerendered, "定稿正文应含 mermaid 围栏"
     exp = ExportExecutionService(SqlPublicationRepository(session))
     result = exp.start_export(StartDocxExportCommand(
         project_ref=w["project"], draft_ref=draft.draft_ref,
-        operator_ref="U1", idempotency_key="e-c1",
+        operator_ref="U1", idempotency_key="e-c1", prerendered_diagrams=prerendered,
     ))
     session.commit()
     repo = SqlPublicationRepository(session)
@@ -350,7 +358,7 @@ def test_docx_renders_mermaid_fence_as_image(session, tmp_path):
     doc = DocxDocument(export.file_path)
     texts = [p.text for p in doc.paragraphs]
     assert not any("```" in t for t in texts)  # 围栏行不输出
-    # 图形围栏本地栅格化为内嵌图片：源码不再作为文本外泄
+    # 图形围栏以预渲染 SVG 嵌入为图片：源码不再作为文本外泄
     assert not any("A[接收材料] --> B[知识抽取]" in t for t in texts)
     assert doc.inline_shapes, "mermaid 图形应渲染为内嵌图片"
     assert any("PICTURE" in str(s.type) for s in doc.inline_shapes)

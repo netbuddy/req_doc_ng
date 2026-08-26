@@ -2727,6 +2727,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/publication/exports/{export_ref}/markdown:
+    get:
+      tags:
+      - publication
+      summary: Download Export Markdown Bundle
+      description: P03：Markdown 发布产物下载（document.md + assets/*.svg 压缩包；只读）。
+      operationId: download_export_markdown_bundle
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: export_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Export Ref
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/projects/{project_id}/publication/exports/{export_ref}/pdf:
     head:
       tags:
@@ -7072,6 +7104,15 @@ components:
           type: boolean
           title: File Available
           default: false
+        markdown_available:
+          type: boolean
+          title: Markdown Available
+          default: false
+        diagram_failures:
+          items:
+            type: string
+          type: array
+          title: Diagram Failures
         created_at:
           type: string
           title: Created At
@@ -10771,6 +10812,34 @@ components:
 
 
         structure_review 为条目档案陈述达标投影（格式化 LDM-015 派生，不落 LDM-007）。'
+    PrerenderedDiagram:
+      properties:
+        fence_index:
+          type: integer
+          title: Fence Index
+        format:
+          type: string
+          title: Format
+          default: mermaid
+        svg:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Svg
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - fence_index
+      title: PrerenderedDiagram
+      description: '浏览器预渲染的图形（AppImage 单机模式方案 §3.2 第 3 项）：
+
+        前端在发起导出前把正文里的 mermaid 围栏逐个渲染成 SVG 随请求提交，服务器不跑浏览器。
+
+        fence_index＝该围栏在正文中的序号（从 0 计，所有语言的围栏都计数），后端据此对号入座。'
     ProjectDeletionReport:
       properties:
         project_id:
@@ -12558,6 +12627,11 @@ components:
         idempotency_key:
           type: string
           title: Idempotency Key
+        prerendered_diagrams:
+          items:
+            $ref: '#/components/schemas/PrerenderedDiagram'
+          type: array
+          title: Prerendered Diagrams
       type: object
       required:
       - project_ref

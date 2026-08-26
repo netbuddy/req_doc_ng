@@ -35,6 +35,8 @@ import type {
 } from '../api/publication';
 import type { ProjectRead } from '../api/projects';
 import { MarkdownPreview } from '../ui/MarkdownPreview';
+import { prerenderMermaidFences } from '../ui/mermaid';
+import { useTheme } from '../ui/theme';
 import { CodeMirrorEditor } from '../ui/CodeMirrorEditor';
 import type { CodeMirrorEditorHandle } from '../ui/CodeMirrorEditor';
 import {
@@ -272,6 +274,7 @@ export function PublicationWorkbench({
   // 口径「距上次保存」——保存后 refresh 会把它重置为新内容，diff 归空）。
   const [baselineText, setBaselineText] = useState('');
   const [busy, setBusy] = useState(false);
+  const { themeKey } = useTheme();
   const [pendingReflow, setPendingReflow] = useState<MarkdownPatchRead[] | null>(null);
   const [checkTarget, setCheckTarget] = useState<string | null>(null);
   const [checkNote, setCheckNote] = useState('');
@@ -724,8 +727,10 @@ export function PublicationWorkbench({
     if (!workspace.markdown) return;
     setBusy(true);
     try {
+      // 服务器不装浏览器：正文里的 mermaid 图在这里（用户浏览器）先渲染成 SVG，随请求一并提交
+      const prerendered = await prerenderMermaidFences(workspace.markdown.content, themeKey);
       const result = await publicationApi.startExport(
-        projectId!, workspace.markdown.draft_ref, operatorRef, newKey('exp'),
+        projectId!, workspace.markdown.draft_ref, operatorRef, newKey('exp'), prerendered,
       );
       if (result.status === 'submitted') {
         void message.success('候选 docx 导出已受理');
@@ -889,6 +894,7 @@ export function PublicationWorkbench({
           onConfirmBaseline={confirmBaseline}
           onOpenFallback={() => setFallbackOpen(true)}
           exportFileUrl={(ref) => publicationApi.exportFileUrl(projectId!, ref)}
+          exportMarkdownUrl={(ref) => publicationApi.exportMarkdownUrl(projectId!, ref)}
           onPreviewDocx={(ref, title) => setDocxPreview({ ref, title })}
           onViewTrace={viewPublishedTrace}
         />
@@ -1249,6 +1255,7 @@ function MainPublicationView(props: {
   onConfirmBaseline: (exportRef: string) => void;
   onOpenFallback: () => void;
   exportFileUrl: (exportRef: string) => string;
+  exportMarkdownUrl: (exportRef: string) => string;
   onPreviewDocx: (exportRef: string, title: string) => void;
   onViewTrace: (documentRef: string, title: string) => void;
 }) {
@@ -1256,7 +1263,7 @@ function MainPublicationView(props: {
     workspace, mdState, markdownText, baselineText, busy,
     onMarkdownChange, onSubmitEdit, onRegenerate, onFinalize, onReopenIndex,
     onGoIndex, onGoTemplate, onRefresh,
-    onStartExport, onOpenCheck, onConfirmBaseline, onOpenFallback, exportFileUrl,
+    onStartExport, onOpenCheck, onConfirmBaseline, onOpenFallback, exportFileUrl, exportMarkdownUrl,
     onPreviewDocx, onViewTrace,
   } = props;
 
@@ -1710,12 +1717,20 @@ function MainPublicationView(props: {
                               {latestCandidate.check_note ? (
                                 <div className="pub-vstep__note">{latestCandidate.check_note}</div>
                               ) : null}
+                              {latestCandidate.diagram_failures && latestCandidate.diagram_failures.length > 0 ? (
+                                <div className="pub-vstep__note" data-testid="pub-diagram-failures">
+                                  {latestCandidate.diagram_failures.map((text) => <div key={text}>图形未能成图：{text}</div>)}
+                                </div>
+                              ) : null}
                               <div className="pub-vstep__actions">
                                 {latestCandidate.file_available ? (
                                   <>
                                     <Button size="small" type="primary" ghost onClick={() => onPreviewDocx(latestCandidate.export_ref, '候选 docx 预览')}>预览</Button>
                                     <Button size="small" href={exportFileUrl(latestCandidate.export_ref)} target="_blank">下载检查</Button>
                                   </>
+                                ) : null}
+                                {latestCandidate.markdown_available ? (
+                                  <Button size="small" href={exportMarkdownUrl(latestCandidate.export_ref)} target="_blank">下载 Markdown</Button>
                                 ) : null}
                                 {actionable ? (
                                   <>

@@ -431,6 +431,50 @@ def test_export_succeeds_and_docx_format_correct(session, tmp_path):
     assert replay.export_ref == result.export_ref
 
 
+def test_export_writes_markdown_bundle_with_prerendered_mermaid(session, tmp_path, monkeypatch):
+    """发布产物：浏览器预渲染的 mermaid SVG 随请求提交 → document.md 引用 assets/diagram-1.svg，
+    压缩包可下载，docx 嵌同一张 SVG，读视图报告 markdown_available 与失败清单。"""
+    import zipfile
+
+    from app import config
+    from app.api.schemas.publication import PrerenderedDiagram
+    object.__setattr__(config.settings, "export_dir", str(tmp_path))
+    w = _seed(session)
+    svc, draft = _finalized_draft(session, w)
+    # 定稿正文里补一段 mermaid 围栏（走仓储直接改内容，只为构造图形围栏）
+    repo = SqlPublicationRepository(session)
+    row = repo.get_draft(draft.draft_ref)
+    row.content = row.content + "\n```mermaid\nflowchart LR\n A --> B\n```\n```mermaid\ngraph TD\n X\n```\n"
+    session.commit()
+    fences = [f for f in __import__("app.adapters.diagram_assets", fromlist=["iter_fences"]).iter_fences(row.content)
+              if f.lang == "mermaid"]
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120px" height="40px"><rect width="120" height="40"/></svg>'
+    exp = _export_svc(session)
+    result = exp.start_export(StartDocxExportCommand(
+        project_ref=w["project"], draft_ref=draft.draft_ref,
+        operator_ref="U1", idempotency_key="e-md",
+        prerendered_diagrams=[PrerenderedDiagram(fence_index=fences[0].index, svg=svg),
+                              PrerenderedDiagram(fence_index=fences[1].index, error="syntax error")],
+    ))
+    session.commit()
+    export = repo.get_export(result.export_ref)
+    assert export.status == "succeeded"
+    zip_path = tmp_path / f"{export.id}-markdown.zip"
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as z:
+        names = set(z.namelist())
+        assert {"document.md", "assets/diagram-1.svg", "render-report.json"} <= names
+        md = z.read("document.md").decode()
+        assert "![图 1](assets/diagram-1.svg)" in md
+        assert "graph TD" in md  # 第二个围栏没有预渲染结果：源码保留
+    with zipfile.ZipFile(export.file_path) as d:
+        assert any(n.endswith(".svg") for n in d.namelist())
+        assert "svgBlip" in d.read("word/document.xml").decode()
+    read = DocumentOrchestrationService(repo)._export_read(export)
+    assert read.markdown_available is True
+    assert len(read.diagram_failures) == 1 and "mermaid" in read.diagram_failures[0]
+
+
 def test_export_conversion_failure_docks(session, tmp_path):
     from app import config
     object.__setattr__(config.settings, "export_dir", str(tmp_path))  # frozen dataclass 测试注入

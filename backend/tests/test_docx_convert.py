@@ -19,29 +19,61 @@ def _convert(md: str, tmp_path: Path):
     return DocxDocument(str(out))
 
 
+def _convert_with_assets(md: str, tmp_path: Path, prerendered: dict[int, bytes] | None = None):
+    """走真实发布流程的图形处理：围栏 → SVG 资产表 → docx。"""
+    from app.adapters.diagram_assets import build_diagram_assets
+
+    assets = build_diagram_assets(md, prerendered or {})
+    out = docx_convert.convert_markdown_to_docx(
+        assets.markdown, tmp_path / "d.docx", _BINDING, _META, assets=assets.assets,
+    )
+    return DocxDocument(str(out)), assets
+
+
 def test_plantuml_and_plain_code_coexist(tmp_path):
     md = (
         "# 1 概述\n\n正文一段。\n\n"
         "```plantuml\n@startuml\nAlice -> Bob: 下单\n@enduml\n```\n\n"
         "```python\nprint('hello')\n```\n"
     )
-    doc = _convert(md, tmp_path)
+    doc, assets = _convert_with_assets(md, tmp_path)
+    assert not assets.failures
     texts = [p.text for p in doc.paragraphs]
     assert doc.inline_shapes and any("PICTURE" in str(s.type) for s in doc.inline_shapes)
     assert not any("startuml" in t for t in texts)  # 图形源码不外泄
     assert any("print('hello')" in t for t in texts)  # 普通代码仍作源码保留
 
 
-def test_render_failure_falls_back_to_source(tmp_path, monkeypatch):
+def test_mermaid_without_prerender_falls_back_to_source(tmp_path):
+    """mermaid 没有浏览器预渲染结果：不产图、源码保留、失败清单有记录。"""
+    md = "# 1\n\n```mermaid\nflowchart LR\n A --> B\n```\n"
+    doc, assets = _convert_with_assets(md, tmp_path)
+    texts = [p.text for p in doc.paragraphs]
+    assert not doc.inline_shapes
+    assert any("flowchart LR" in t for t in texts)
+    assert assets.failures and "mermaid" in assets.failures[0]
+
+
+def test_plantuml_render_failure_falls_back_to_source(tmp_path, monkeypatch):
+    from app.adapters import diagram_assets
+
     def _boom(source: str, fmt: str):
         raise DiagramRenderUnavailable("tool missing")
 
-    monkeypatch.setattr(docx_convert, "render_to_png", _boom)
-    md = "# 1\n\n```mermaid\nflowchart LR\n A --> B\n```\n"
+    monkeypatch.setattr(diagram_assets, "render_to_svg", _boom)
+    md = "# 1\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n"
+    doc, assets = _convert_with_assets(md, tmp_path)
+    assert not doc.inline_shapes
+    assert any("A -> B" in p.text for p in doc.paragraphs)
+    assert assets.failures
+
+
+def test_unknown_image_reference_becomes_caption(tmp_path):
+    """图片引用指向资产表之外：以说明文字替代，不报错不丢信息。"""
+    md = "# 1\n\n![外部图](http://example.com/a.png)\n"
     doc = _convert(md, tmp_path)
-    texts = [p.text for p in doc.paragraphs]
-    assert not doc.inline_shapes  # 渲染失败：不产图
-    assert any("flowchart LR" in t for t in texts)  # 降级为源码，内容不丢
+    assert not doc.inline_shapes
+    assert any("[图片：外部图]" in p.text for p in doc.paragraphs)
 
 
 def test_list_form_heading_sizes_convert_without_error(tmp_path):
@@ -90,7 +122,9 @@ def test_plantuml_embeds_svg_with_png_fallback(tmp_path, monkeypatch):
 
     monkeypatch.setattr(diagram_render.subprocess, "run", _run)
     md = "# 1\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n"
-    doc = _convert(md, tmp_path)
+    doc, assets = _convert_with_assets(md, tmp_path)
+    assert list(assets.assets) == ["assets/diagram-1.svg"]
+    assert "![图 1](assets/diagram-1.svg)" in assets.markdown
     assert doc.inline_shapes
     out = next(tmp_path.rglob("*.docx"))
     with zipfile.ZipFile(out) as z:

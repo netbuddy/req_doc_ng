@@ -26,7 +26,7 @@
 以下为可选依赖，缺失时对应功能自动降级、不影响其它开发调试：
 
 - **LibreOffice**（`soffice` 在 PATH 上）：发布环节 docx→PDF 精确预览。
-- **Node 包 `@mermaid-js/mermaid-cli`**（`mmdc` 在 PATH 上）与 **Java 运行时**：图形源码（mermaid/plantuml）本地栅格化；`plantuml.jar` 已随仓库放在 `backend/tools/`，不需要另外下载。mmdc 依赖本机浏览器：`backend/tools/puppeteer.json` 钉的是 `/usr/bin/google-chrome`，机器上浏览器在别的路径时改这个文件或用 `PUPPETEER_CONFIG` 指到自己的配置。注意：后端测试里有一个用例（`tests/test_publication_chart_fragment.py` 的 docx 渲染 mermaid 用例）会真实调用 mmdc，没装 mermaid-cli 时该用例失败，其余用例不受影响。
+- **Java 运行时**：PlantUML 图形源码本地渲染为 SVG（界面预览与发布产物共用）；`plantuml.jar` 已随仓库放在 `backend/tools/`，不需要另外下载。Mermaid 图形由用户浏览器里的前端渲染，发起导出时随请求提交 SVG，服务器不需要浏览器，也不再需要 `@mermaid-js/mermaid-cli`（mmdc）；设置页里的 mmdc 探针项是历史遗留，退役中。
 - **本地 LLM 服务**（llama.cpp/ollama 等 OpenAI 兼容接口）：AI 识别、起草、评审等功能。不配置时平台其余功能照常可用。
 
 ## 二、Linux / macOS 快速开始
@@ -113,7 +113,7 @@ powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 help
 
 | 目的 | 命令 |
 | --- | --- |
-| 后端全量测试（内存 SQLite，不需要 Postgres 在跑；个别用例例外——1 例需要能连上 `DATABASE_URL` 的 Postgres，连不上自动跳过；1 例需要 mmdc，见上文可选依赖） | `cd backend && uv run pytest` |
+| 后端全量测试（内存 SQLite，不需要 Postgres 在跑；个别用例例外——1 例需要能连上 `DATABASE_URL` 的 Postgres，连不上自动跳过；PlantUML 相关的少数用例需要本机 Java） | `cd backend && uv run pytest` |
 | 后端坏味道门禁（ruff 等） | `cd backend && bash tools/smell_check.sh`（Windows 原生用 `uv run ruff check .`） |
 | 前端测试 | `cd frontend && npm test` |
 | 前端类型检查 + 生产构建 | `cd frontend && npm run build` |

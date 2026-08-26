@@ -210,6 +210,10 @@ export interface DocxExportRead {
   manual_fallback: boolean;
   check_note?: string | null;
   file_available: boolean;
+  /** Markdown 发布产物（document.md + assets/*.svg 压缩包）可下载 */
+  markdown_available?: boolean;
+  /** 图形处理失败清单（对应源码块已保留在产物里） */
+  diagram_failures?: string[];
   created_at: string;
 }
 
@@ -352,6 +356,14 @@ export interface FinalizeMarkdownResult {
   next_action?: string | null;
 }
 
+/** 浏览器预渲染的图形（随发起导出请求提交）；与后端 PrerenderedDiagram 同形。 */
+export interface PrerenderedDiagramIn {
+  fence_index: number;
+  format: 'mermaid';
+  svg?: string;
+  error?: string;
+}
+
 export interface StartDocxExportResult {
   status: 'submitted' | 'rejected_precheck';
   export_ref?: string | null;
@@ -459,12 +471,17 @@ export const publicationApi = {
     });
   },
 
-  startExport(projectId: string, draftRef: string, operatorRef: string, idempotencyKey: string): Promise<StartDocxExportResult> {
+  /** 发起导出；prerendered＝浏览器预渲染的 mermaid SVG（服务器不装浏览器，图只能从这里出）。 */
+  startExport(
+    projectId: string, draftRef: string, operatorRef: string, idempotencyKey: string,
+    prerendered: PrerenderedDiagramIn[] = [],
+  ): Promise<StartDocxExportResult> {
     return apiPost<StartDocxExportResult>(`${base(projectId)}/exports`, {
       project_ref: projectId,
       draft_ref: draftRef,
       operator_ref: operatorRef,
       idempotency_key: idempotencyKey,
+      prerendered_diagrams: prerendered,
     });
   },
 
@@ -500,6 +517,11 @@ export const publicationApi = {
 
   exportFileUrl(projectId: string, exportRef: string): string {
     return `/api${base(projectId)}/exports/${encodeURIComponent(exportRef)}/file`;
+  },
+
+  /** Markdown 发布产物压缩包（document.md + assets/*.svg）下载地址。 */
+  exportMarkdownUrl(projectId: string, exportRef: string): string {
+    return `/api${base(projectId)}/exports/${encodeURIComponent(exportRef)}/markdown`;
   },
 
   /** 取生成好的候选/基线 docx 字节流（供在线预览渲染）；与 exportFileUrl 同源。 */

@@ -256,6 +256,25 @@ def download_export_file(
     )
 
 
+@router.get(_PREFIX + "/exports/{export_ref}/markdown", operation_id="download_export_markdown_bundle")
+def download_export_markdown_bundle(
+    project_id: str,
+    export_ref: str,
+    service: DocumentOrchestrationService = Depends(get_publication_service),
+):
+    """P03：Markdown 发布产物下载（document.md + assets/*.svg 压缩包；只读）。"""
+    from app.adapters.export_bundle import bundle_zip_path
+    from app.services.config_registry import resolve_export_dir
+
+    export = service._repo.get_export(export_ref)
+    if export is None:
+        raise NotFound("导出件不存在")
+    zip_path = bundle_zip_path(resolve_export_dir(service._repo.session), str(export.id))
+    if not zip_path.exists():
+        raise NotFound("Markdown 发布产物不存在或尚未生成")
+    return FileResponse(zip_path, media_type="application/zip", filename="需求规格说明-markdown.zip")
+
+
 # GET+HEAD 拆为两个显式路由并各带唯一 operation_id：单一 api_route(methods=[GET,HEAD])
 # 会让两个方法共用同一 operationId，openapi-typescript 生成重复标识符（tsc 报错）。
 @router.get(_PREFIX + "/exports/{export_ref}/pdf", operation_id="preview_export_pdf")
