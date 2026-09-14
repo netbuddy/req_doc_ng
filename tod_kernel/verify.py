@@ -27,8 +27,11 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tod_kernel import kernel, task_travel
+import hashlib
+
+from tod_kernel import kernel, task_intake, task_travel
 from tod_kernel.tools import build_table
+from tod_kernel.tools import set_at as tools_set_at
 from tod_kernel.kernel import (
     ACTION_PROPOSED,
     ACTION_STATUS_CHANGED,
@@ -120,9 +123,46 @@ class Run:
     outbox_closed: bool = False
     host_thread: int = 0
     kernel_thread: int = 0
+    tools_spec: dict = field(default_factory=dict)  # 本场景工具表：工具名 → 参数名清单
+    writable: dict = field(default_factory=dict)  # 本场景工具表：工具名 → 可写槽位（没有声明时为空）
 
 
-def run_scenario(task_id: str, task_def, answers: dict) -> Run:
+def target_key(target: dict) -> tuple:
+    """答案表的键：（槽位名, 路径元组）。宿主按写入目标查答案，不读问题里的话。"""
+    return (target["slot"], tuple(target.get("path", [])))
+
+
+def slot_answers(by_slot: dict) -> dict:
+    """出差申请单的答案表：写入目标都是整个槽位（空路径）。"""
+    return {(slot, ()): value for slot, value in by_slot.items()}
+
+
+def get_at(value, path):
+    """按路径取值，路径为空时就是 value 本身。"""
+    for step in path:
+        value = value[step]
+    return value
+
+
+# 话语的预期句：按写入目标逐条写死的完整句子，不调用话语生成、也不读模板，用来逐字比对问题里的话。
+EXPECTED_UTTERANCES = {
+    ("目的地", ()): "请提供出差目的地。",
+    ("日期", ()): "请提供出差日期。",
+    ("事由", ()): "请提供出差事由。",
+    ("材料清单", (0, "是否纳入")): "请确认是否把文件 a.docx 纳入项目。",
+    ("材料清单", (1, "是否纳入")): "请确认是否把文件 b.pdf 纳入项目。",
+    ("材料清单", (2, "是否纳入")): "请确认是否把文件 c.xlsx 纳入项目。",
+}
+
+# 第一步验证目标一：内核三个文件在提交 9472ac5 里的 sha256，写死在这里。改了一个字节，本步即不通过。
+KERNEL_SHA256 = {
+    "kernel.py": "b28cb651f1ab500cee7306a891b42417f6063897fc4cfb2d6743f65a917974e2",
+    "observe.py": "12f7168bfb27a2318cc5e2771adbd7b55e441a07f192a6dfb4bcdaf42999c570",
+    "view.py": "958e62c499ce7771316d2a40d9188208b0678c429e43ee975ea7ddb74cebd651",
+}
+
+
+def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",)) -> Run:
     run = Run(task_id=task_id, task_def=task_def, host_thread=threading.get_ident())
 
     # 宿主：事件流、订阅者、邮箱。
@@ -173,7 +213,7 @@ def run_scenario(task_id: str, task_def, answers: dict) -> Run:
 
     def kernel_main():
         try:
-            run.task = kernel.start_task(task_id, task_def, build_table(), inbox, outbox, stream)
+            run.task = kernel.start_task(task_id, task_def, table, inbox, outbox, stream)
         except BaseException as exc:  # 内核错误与意外异常都交给主线程断言
             run.error = exc
         finally:
@@ -183,6 +223,9 @@ def run_scenario(task_id: str, task_def, answers: dict) -> Run:
 
     kernel.update_state, kernel.execute, kernel.select_action = update_probe, execute_probe, select_probe
     kernel.register_action = register_probe
+    table = build_table(task_def, tool_names)
+    run.tools_spec = {name: list(tool.param_names) for name, tool in table.items()}
+    run.writable = {name: tool.writable_slots for name, tool in table.items()}
     try:
         thread = threading.Thread(target=kernel_main, name=KERNEL_THREAD_PREFIX + task_id)
         thread.start()
@@ -191,11 +234,11 @@ def run_scenario(task_id: str, task_def, answers: dict) -> Run:
             question = outbox.take(match=lambda m: m.kind == "question", block=True)
             if question is None:  # 发件箱已关闭：不会再有问题
                 break
-            slot = question.content["slot"]
-            if slot in answers:
+            key = target_key(question.content["params"]["target"])
+            if key in answers:
                 inbox.put(Message(
                     kind="answer", sender="user", recipient=question.action_id,
-                    in_reply_to=question.seq, content=answers[slot], action_id=question.action_id,
+                    in_reply_to=question.seq, content=answers[key], action_id=question.action_id,
                 ))
             else:
                 inbox.close("host")
@@ -345,7 +388,7 @@ def check_trace_shape(c: Checker, run: Run, loops: int) -> None:
             "槽位表、规则清单、工具清单、任务定义名与任务定义和工具表一致",
             first is not None and first.name == TASK_STARTED
             and first.payload == {"slots": dict(task_def.SLOTS), "rules": dict(task_def.RULES),
-                                  "tools": {"ask": ["slot"]}, "task_def_name": task_def.NAME},
+                                  "tools": run.tools_spec, "task_def_name": task_def.NAME},
             first.payload if first else None)
     loop_nos = [e.payload["loop_no"] for e in trace if e.name == LOOP_STARTED]
     c.check(f"追踪：恰好 {loops} 个「一圈开始」，圈序号从 1 起连续", loop_nos == list(range(1, loops + 1)), loop_nos)
@@ -365,6 +408,10 @@ def check_trace_shape(c: Checker, run: Run, loops: int) -> None:
         c.check(f"追踪：行动 {aid} 的「行动执行调用」依次是 enter、return，线程是内核线程",
                 [e.payload["phase"] for e in calls] == ["enter", "return"]
                 and all(e.payload["thread"] == KERNEL_THREAD_PREFIX + run.task_id for e in calls))
+        if proposed.payload["tool"] != "ask":
+            c.check(f"追踪：行动 {aid}（工具 {proposed.payload['tool']}）不碰邮箱，没有邮箱等待",
+                    not waits and not [e for e in mine if e.name in (MESSAGE_PUT, MESSAGE_TAKEN)])
+            continue
         c.check(f"追踪：行动 {aid} 在收件箱上的「邮箱等待」恰好两条，依次是 begin、end，end 带非负毫秒数，线程是内核线程",
                 [e.payload["phase"] for e in waits] == ["begin", "end"]
                 and isinstance(waits[1].payload.get("wait_ms"), (int, float)) and waits[1].payload["wait_ms"] >= 0
@@ -399,8 +446,10 @@ def check_sources_and_senders(c: Checker, run: Run, closed_before_failure_of: in
             "工具实现记的状态 tool.<工具名>，其余 kernel.loop）", not wrong, wrong)
     status_sources = sorted({(e.payload["new_status"].value, e.source) for e in all_events if e.name == ACTION_STATUS_CHANGED})
     if run.events and any(e.name == ACTION_PROPOSED for e in run.events):
-        c.check("记录方：同一个事件名「行动状态变化」来自不同记录方（已提出、已获准是 kernel.loop，其余是 tool.ask）",
-                {src for _, src in status_sources} == {SOURCE_LOOP, TOOL_SOURCE_PREFIX + "ask"}, status_sources)
+        expected_sources = {SOURCE_LOOP} | {TOOL_SOURCE_PREFIX + name for name in set(tool_of.values())}
+        c.check("记录方：同一个事件名「行动状态变化」来自不同记录方（已提出、已获准是 kernel.loop，"
+                f"其余是所用工具的 tool.<工具名>：{sorted(expected_sources - {SOURCE_LOOP})}）",
+                {src for _, src in status_sources} == expected_sources, status_sources)
 
     def on(box, name):
         return [e for e in all_events if e.name == name and e.payload["box"] == box]
@@ -469,11 +518,17 @@ def check_waiting_then_success(c: Checker, run: Run, action_id: int) -> None:
     puts = [e for e in mine if e.name == MESSAGE_PUT and e.payload["box"] == INBOX]
     takes = [e for e in mine if e.name == MESSAGE_TAKEN and e.payload["box"] == INBOX]
     proposed = of_action(events, ACTION_PROPOSED, action_id)
-    c.check(f"目标二：行动 {action_id} 恰有一条问题（发件箱放入），内容是行动参数原样，且在「等待中」之前",
-            len(questions) == 1 and proposed and questions[0].payload["content"] == proposed[0].payload["params"]
+    c.check(f"目标二：行动 {action_id} 恰有一条问题（发件箱放入），内容是 {{话, 参数}}，参数是行动参数原样，且在「等待中」之前",
+            len(questions) == 1 and proposed and list(questions[0].payload["content"]) == ["utterance", "params"]
+            and questions[0].payload["content"]["params"] == proposed[0].payload["params"]
             and questions[0].seq < waiting.seq)
     if len(questions) != 1:
         return
+    target = proposed[0].payload["params"]["target"]
+    expected_utterance = EXPECTED_UTTERANCES.get(target_key(target))
+    c.check(f"第一步目标三：行动 {action_id} 问题里的话逐字等于预期句「{expected_utterance}」",
+            expected_utterance is not None and questions[0].payload["content"]["utterance"] == expected_utterance,
+            questions[0].payload["content"]["utterance"])
     c.check(f"目标二：行动 {action_id} 的「等待中」说明写明了问题的到达序号",
             waiting.payload["note"] == f"已向使用者提问，问题 {questions[0].payload['seq']}", waiting.payload["note"])
     c.check(f"目标二：行动 {action_id} 在收件箱恰有一条回答放入和一条取出", len(puts) == 1 and len(takes) == 1)
@@ -487,8 +542,12 @@ def check_waiting_then_success(c: Checker, run: Run, action_id: int) -> None:
     c.check(f"目标二：行动 {action_id} 的问题与回答，内容里的所属行动都是 {action_id}",
             questions[0].payload["action_id"] == puts[0].payload["action_id"] == takes[0].payload["action_id"] == action_id)
     changes = of_action(events, DATA_CHANGED, action_id)
-    c.check(f"目标二：行动 {action_id} 的数据变更新值 = 取出的消息内容 = 「已成功」事件的返回值",
-            len(changes) == 1 and changes[0].payload["new"] == takes[0].payload["content"] == succeeded.payload["result"])
+    path = target["path"]
+    c.check(f"目标二：行动 {action_id} 的数据变更新值按写入目标路径 {path} 取出的值 = 取出的回答 = 「已成功」事件的返回值；"
+            "槽位是写入目标的槽位，除该路径外新旧值相同",
+            len(changes) == 1 and changes[0].payload["slot"] == target["slot"]
+            and get_at(changes[0].payload["new"], path) == takes[0].payload["content"] == succeeded.payload["result"]
+            and (not path or tools_set_at(changes[0].payload["old"], path, takes[0].payload["content"]) == changes[0].payload["new"]))
 
 
 def check_explainable(c: Checker, run: Run) -> None:
@@ -532,13 +591,17 @@ def check_kernel_is_task_agnostic(c: Checker) -> None:
 FULL_ANSWERS = {"目的地": "上海", "日期": "9 月 20 日", "事由": "客户拜访"}
 
 
+def travel_params(slot: str) -> dict:
+    return {"target": {"slot": slot, "path": []}, "hint": {}}
+
+
 def banner(text: str) -> None:
     print(f"\n{'═' * 12} {text} {'═' * 12}", flush=True)
 
 
 def scenario_one() -> Checker:
     banner("场景一：正常流程")
-    run = run_scenario("T-scenario-1", task_travel, FULL_ANSWERS)
+    run = run_scenario("T-scenario-1", task_travel, slot_answers(FULL_ANSWERS))
     c = Checker("场景一：正常流程")
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
@@ -551,7 +614,7 @@ def scenario_one() -> Checker:
     c.check("目标一：恰好三个「行动提出」", len(proposed) == 3, len(proposed))
     c.check("目标一：三个行动的工具名都是 ask", [e.payload["tool"] for e in proposed] == ["ask"] * 3)
     c.check("目标一：参数依次是目的地、日期、事由",
-            [e.payload["params"] for e in proposed] == [{"slot": "目的地"}, {"slot": "日期"}, {"slot": "事由"}])
+            [e.payload["params"] for e in proposed] == [travel_params("目的地"), travel_params("日期"), travel_params("事由")])
     done = [e for e in named(events, TASK_STATUS_CHANGED) if e.payload["new_status"] == TaskStatus.DONE]
     c.check("目标一：「已完成」状态变化恰好一次", len(done) == 1)
     ended = named(events, TASK_ENDED)
@@ -594,7 +657,7 @@ def scenario_two() -> Checker:
 def scenario_three() -> Checker:
     banner("场景三：回答缺失")
     answers = {"目的地": "上海", "日期": "9 月 20 日"}
-    run = run_scenario("T-scenario-3", task_travel, answers)
+    run = run_scenario("T-scenario-3", task_travel, slot_answers(answers))
     c = Checker("场景三：回答缺失")
     print("── 断言 ──")
     c.check("内核线程以内核错误结束", isinstance(run.error, KernelError), repr(run.error))
@@ -633,7 +696,7 @@ def scenario_three() -> Checker:
 def scenario_four() -> Checker:
     banner("场景四：部分预填")
     answers = {"目的地": "上海", "事由": "客户拜访"}
-    run = run_scenario("T-scenario-4", task_travel.DATE_FILLED, answers)
+    run = run_scenario("T-scenario-4", task_travel.DATE_FILLED, slot_answers(answers))
     c = Checker("场景四：部分预填")
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
@@ -643,7 +706,7 @@ def scenario_four() -> Checker:
     proposed = named(events, ACTION_PROPOSED)
     c.check("恰好两个「行动提出」", len(proposed) == 2, len(proposed))
     c.check("参数依次是目的地、事由",
-            [e.payload["params"] for e in proposed] == [{"slot": "目的地"}, {"slot": "事由"}])
+            [e.payload["params"] for e in proposed] == [travel_params("目的地"), travel_params("事由")])
     date_changes = [e for e in named(events, DATA_CHANGED) if e.payload["slot"] == "日期"]
     c.check("除初始化那一条外，没有针对日期的数据变更事件",
             [e.payload["source"] for e in date_changes] == [kernel.INIT_SOURCE])
@@ -662,8 +725,173 @@ def scenario_four() -> Checker:
     return c
 
 
+# ───────────────────────── 第一步：材料接入登记的三个场景 ─────────────────────────
+
+INTAKE_TOOLS = ("ask", "list_dir", "register_file", "generate_manifest")
+INTAKE_ANSWERS = {
+    ("材料清单", (0, "是否纳入")): "是",
+    ("材料清单", (1, "是否纳入")): "否",
+    ("材料清单", (2, "是否纳入")): "是",
+}
+INTAKE_FINAL_DATA = {
+    "目录": "样例材料",
+    "文件总表": ["a.docx", "b.pdf", "c.xlsx"],
+    "材料清单": [
+        {"文件名": "a.docx", "类型": "docx", "大小": 20480, "页数": 3, "是否纳入": "是"},
+        {"文件名": "b.pdf", "类型": "pdf", "大小": 51200, "页数": 5, "是否纳入": "否"},
+        {"文件名": "c.xlsx", "类型": "xlsx", "大小": 10240, "页数": 1, "是否纳入": "是"},
+    ],
+    "登记进度": 3,
+    "清单文件路径": "样例材料/材料清单.txt",
+}
+
+
+def check_kernel_unchanged(c: Checker) -> None:
+    """第一步验证目标一：内核三个文件的内容哈希等于提交 9472ac5 里的值。"""
+    here = Path(kernel.__file__).resolve().parent
+    actual = {name: hashlib.sha256((here / name).read_bytes()).hexdigest() for name in KERNEL_SHA256}
+    for name, expected in KERNEL_SHA256.items():
+        c.check(f"第一步目标一：{name} 的 sha256 等于提交 9472ac5 里的值", actual[name] == expected,
+                f"写死 {expected}，实际 {actual[name]}")
+    source = (here / "kernel.py").read_text(encoding="utf-8")
+    words = ("目录", "文件总表", "材料清单", "登记进度", "清单文件路径", "list_dir", "register_file", "generate_manifest")
+    hits = {word: source.count(word) for word in words}
+    c.check("第一步目标一（附加）：内核文件里不出现材料接入登记的槽位名与工具名", sum(hits.values()) == 0, hits)
+
+
+def check_other_tool_actions(c: Checker, run: Run) -> None:
+    """非询问行动：状态经过是已提出、已获准、已成功；变更只写该工具声明的可写槽位。"""
+    events, task = run.events, run.task
+    for action in task.actions.values():
+        if action.tool == "ask":
+            continue
+        history = status_values(action_history(events, action.action_id))
+        slots = {e.payload["slot"] for e in of_action(events, DATA_CHANGED, action.action_id)}
+        c.check(f"行动 {action.action_id}（{action.tool}）的状态经过是 已提出、已获准、已成功，"
+                f"变更只写可写槽位 {sorted(run.writable.get(action.tool) or [])}",
+                history == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.SUCCEEDED]
+                and slots and slots <= set(run.writable.get(action.tool) or ()),
+                (history, slots))
+
+
+def intake_common(c: Checker, run: Run, loops: int, closed_before_failure_of=None) -> None:
+    check_integrity(c, run)
+    check_trace_shape(c, run, loops=loops)
+    check_sources_and_senders(c, run, closed_before_failure_of=closed_before_failure_of)
+    check_run_file(c, run)
+
+
+def rule_numbers(proposed_events) -> list:
+    return [e.payload["basis"][0] for e in proposed_events]
+
+
+def intake_scenario_one() -> Checker:
+    banner("材料接入登记·场景一：正常流程")
+    run = run_scenario("T-intake-1", task_intake, INTAKE_ANSWERS, INTAKE_TOOLS)
+    c = Checker("材料接入登记·场景一：正常流程")
+    print("── 断言 ──")
+    check_kernel_unchanged(c)
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    if run.task is None:
+        return c
+    events, task = run.events, run.task
+    proposed = named(events, ACTION_PROPOSED)
+    tools = [e.payload["tool"] for e in proposed]
+    c.check("第一步目标二：恰好八个行动（九圈里最后一圈结果检查为真，不提行动）", len(proposed) == 8, len(proposed))
+    c.check("第一步目标二：工具依次是 列目录、登记文件×3、询问×3、生成清单文件",
+            tools == ["list_dir", "register_file", "register_file", "register_file", "ask", "ask", "ask", "generate_manifest"], tools)
+    c.check("第一步目标二：依据里的规则序号依次是 一、二、二、二、三、三、三、四",
+            rule_numbers(proposed) == [1, 2, 2, 2, 3, 3, 3, 4], rule_numbers(proposed))
+    c.check("第一步目标二：登记文件的参数序号依次是 0、1、2",
+            [e.payload["params"] for e in proposed if e.payload["tool"] == "register_file"] == [{"index": 0}, {"index": 1}, {"index": 2}])
+    c.check("第一步目标二：询问的写入目标依次是 材料清单 [0/1/2, 是否纳入]，提示是文件名",
+            [e.payload["params"] for e in proposed if e.payload["tool"] == "ask"]
+            == [{"target": {"slot": "材料清单", "path": [i, "是否纳入"]}, "hint": {"file": f}}
+                for i, f in enumerate(["a.docx", "b.pdf", "c.xlsx"])])
+    c.check("任务状态是已完成，终态数据与预期完全相同", task.status == TaskStatus.DONE and task.data == INTAKE_FINAL_DATA, task.data)
+    c.check("终态材料清单三项的是否纳入依次是 是、否、是",
+            [item["是否纳入"] for item in task.data["材料清单"]] == ["是", "否", "是"])
+    manifest = [a for a in task.actions.values() if a.tool == "generate_manifest"]
+    text = manifest[0].result if manifest else ""
+    c.check("生成清单文件的返回值含 a.docx 与 c.xlsx、不含 b.pdf",
+            manifest and "a.docx" in text and "c.xlsx" in text and "b.pdf" not in text, text)
+    for action in task.actions.values():
+        if action.tool == "ask":
+            check_waiting_then_success(c, run, action.action_id)
+    check_other_tool_actions(c, run)
+    check_explainable(c, run)
+    intake_common(c, run, loops=9)
+    return c
+
+
+def intake_scenario_two() -> Checker:
+    banner("材料接入登记·场景二：规则互换变体")
+    run = run_scenario("T-intake-2", task_intake.SWAPPED, INTAKE_ANSWERS, INTAKE_TOOLS)
+    c = Checker("材料接入登记·场景二：规则互换变体")
+    print("── 断言 ──")
+    check_kernel_unchanged(c)
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    if run.task is None:
+        return c
+    events, task = run.events, run.task
+    proposed = named(events, ACTION_PROPOSED)
+    tools = [e.payload["tool"] for e in proposed]
+    c.check("第一步目标二：工具依次是 列目录、登记文件、询问、登记文件、询问、登记文件、询问、生成清单文件",
+            tools == ["list_dir", "register_file", "ask", "register_file", "ask", "register_file", "ask", "generate_manifest"], tools)
+    c.check("第一步目标二：依据里的规则序号依次是 一、二、三、二、三、二、三、四（规则保留原序号，只改检查顺序）",
+            rule_numbers(proposed) == [1, 2, 3, 2, 3, 2, 3, 4], rule_numbers(proposed))
+    c.check("第一步目标二：终态数据与场景一相同", task.status == TaskStatus.DONE and task.data == INTAKE_FINAL_DATA, task.data)
+    for action in task.actions.values():
+        if action.tool == "ask":
+            check_waiting_then_success(c, run, action.action_id)
+    check_other_tool_actions(c, run)
+    check_explainable(c, run)
+    intake_common(c, run, loops=9)
+    return c
+
+
+def intake_scenario_three() -> Checker:
+    banner("材料接入登记·场景三：回答缺失")
+    answers = {key: value for key, value in INTAKE_ANSWERS.items() if key[1][0] in (0, 1)}
+    run = run_scenario("T-intake-3", task_intake, answers, INTAKE_TOOLS)
+    c = Checker("材料接入登记·场景三：回答缺失")
+    print("── 断言 ──")
+    check_kernel_unchanged(c)
+    c.check("内核线程以内核错误结束", isinstance(run.error, KernelError), repr(run.error))
+    if isinstance(run.error, KernelError):
+        c.check("内核错误携带的是行动 7", run.error.action is not None and run.error.action.action_id == 7)
+    events = run.events
+    proposed = named(events, ACTION_PROPOSED)
+    c.check("恰好七个「行动提出」，工具依次是 列目录、登记文件×3、询问×3",
+            [e.payload["tool"] for e in proposed] == ["list_dir", "register_file", "register_file", "register_file", "ask", "ask", "ask"],
+            [e.payload["tool"] for e in proposed])
+    for action_id in (5, 6):
+        check_waiting_then_success(c, run, action_id)
+    history = action_history(events, 7)
+    c.check("行动 7 的状态序列是 已提出、已获准、等待中、已失败，最后一条说明是「没有可用的回答」",
+            status_values(history) == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.WAITING, ActionStatus.FAILED]
+            and history[-1].payload["note"] == "没有可用的回答",
+            [(e.payload["new_status"].value, e.payload["note"]) for e in history])
+    failed_seq = history[-1].seq if history else 0
+    c.check("行动 7 在「已失败」之前发出过问题（发件箱放入），没有收件箱的「消息取出」",
+            [e for e in of_action(events, MESSAGE_PUT, 7) if e.payload["box"] == OUTBOX and e.seq < failed_seq]
+            and not [e for e in of_action(events, MESSAGE_TAKEN, 7) if e.payload["box"] == INBOX])
+    c.check("最后一个状态事件是内核关闭发件箱",
+            events and events[-1].name == MAILBOX_CLOSED and events[-1].payload == {"box": OUTBOX, "sender": SOURCE_LOOP},
+            events[-1].name if events else None)
+    c.check("任务没有结束：没有「任务结束」事件，任务状态仍是执行中；c.xlsx 的是否纳入仍为 None",
+            not named(events, TASK_ENDED) and run.task is not None and run.task.status == TaskStatus.RUNNING
+            and [item["是否纳入"] for item in run.task.data["材料清单"]] == ["是", "否", None])
+    c.check("失败的行动在行动表里：行动表的编号是 1 到 7，行动 7 的状态是已失败",
+            run.task is not None and list(run.task.actions) == list(range(1, 8))
+            and run.task.actions[7].status == ActionStatus.FAILED)
+    intake_common(c, run, loops=7, closed_before_failure_of=7)
+    return c
+
+
 def main() -> int:
-    checkers = [scenario_one(), scenario_two(), scenario_three(), scenario_four()]
+    checkers = [scenario_one(), scenario_two(), scenario_three(), scenario_four(),
+                intake_scenario_one(), intake_scenario_two(), intake_scenario_three()]
     banner("汇总")
     all_ok = True
     for c in checkers:
