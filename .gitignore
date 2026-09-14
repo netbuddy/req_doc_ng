@@ -49,3 +49,6 @@ temp/
 # 注意：图形渲染构件 plantuml.jar / puppeteer.json 在 backend/tools/ 并入库——
 # 它们是构建镜像的必需输入，不入库会让换机器构建出的镜像静默缺图形功能。
 backend/var/
+
+# tod_kernel run records (JSONL and generated HTML)
+/runs/
