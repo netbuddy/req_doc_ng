@@ -1,7 +1,11 @@
 """工具与工具表。
 
-工具是「能做什么」的静态定义，行动是工具的一次调用。工具表独立于任务定义；
-任务定义只用工具名引用工具，不导入本模块。
+工具是「能做什么」的静态定义，行动是工具的一次调用。工具表分两层：
+- 静态工具表（STATIC_TOOLS）：每个工具的工具名、参数名清单、前置条件、可写槽位，不依赖任何任务定义；
+  任务定义加载器（taskdef.py）导入它，用来校验工具名与参数名、求前置条件、拼依据说明。
+- 运行工具表（build_table 按任务建）：在静态表之上配好工具实现，询问工具绑定任务定义的话语模板，交给内核。
+任务定义数据文件里只有工具名，不含任何代码。
+工具放进变更组的新值必须是新构造的对象，内核不再复制。
 """
 
 from __future__ import annotations
@@ -20,10 +24,10 @@ class Tool:
     name: str
     param_names: tuple
     impl: Callable[[Any], None]
-    # 以下三项本步只预留，不参与核验。
-    writable_slots: frozenset | None = None  # 可写槽位：槽位名的集合
-    preconditions: Any = None  # 前置条件：函数（只读数据, 参数）→（成立与否, 说明）
-    required_auth: Any = None
+    # 可写槽位与前置条件由静态工具表填上；执行控制本步不核验它们，前置条件只在行动选择时用。
+    writable_slots: frozenset | None = None  # 可写槽位：槽位名的集合；None 表示由参数决定（询问写入目标所指的槽位）
+    preconditions: Any = None  # 前置条件：函数（只读数据, 已求值的参数）→（成立与否, 说明, 命中值）
+    required_auth: Any = None  # 本步只预留
 
 
 class ToolTable:
@@ -167,40 +171,187 @@ def generate_manifest(ctx) -> None:
     ctx.set_status(ActionStatus.SUCCEEDED, f"清单含 {len(included)} 项，写到 {MANIFEST_PATH}")
 
 
-# 可写槽位与前置条件：按第一步文档填上，本步没有代码读它们，留给执行控制的真实核验。
-# 前置条件是函数，接收只读数据与参数，返回（成立与否, 说明）。
+# ───────────────────────── 告知异常 ─────────────────────────
+# 通用工具，对所有任务都登记，不是某个任务的领域工具。行动选择在三种情形下直接构造它的候选，它不走前置条件：
+# 一趟走完阶段目标仍未达成；步骤组轮数到「最多」仍未满足「重复直到」；阶段游标越过最后一个阶段而任务未完成。
+
+EXCEPTION_TOOL = "告知异常"
+EXCEPTION_PARAM_NAMES = ("阶段", "未达成目标", "步骤现况", "游标", "可选措施")
+CURSOR_SLOT = "游标"  # 任务定义加载器加进槽位表的保留槽位；重做本阶段时本工具把它写回
+REDO = "重做本阶段"
+ABORT_BY_USER = "主动终止"
+ABORT_UNABLE = "被动终止"
+EXCEPTION_OPTIONS = (REDO, ABORT_BY_USER, ABORT_UNABLE)
+# 使用者的选择 → （行动终态, 返回值, 说明）
+EXCEPTION_OUTCOMES = {
+    REDO: (ActionStatus.SUCCEEDED, "重做", "使用者选择重做本阶段"),
+    ABORT_BY_USER: (ActionStatus.FAILED, "主动终止", "使用者主动终止"),
+    ABORT_UNABLE: (ActionStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
+}
+
+
+def exception_utterance(params: dict) -> str:
+    """告知异常的话：只拼接参数里现成的内容，不经话语生成。
+
+    参数「游标」是 {阶段, 已完成步骤, 说明, 已完成轮数, 是组尾}：游标的三项加上已完成步骤的说明与分组信息。
+    句式：阶段『<阶段>』目标未达成：<各未达成目标的文字，以「；」连接>；已完成『<游标所在阶段>』阶段第 <已完成步骤> 步『<说明>』<轮数半句>。
+    可选措施：<以「、」连接>。轮数半句：不在组里（已完成轮数为 null）时不写；是组尾写「，该组已完成 r 轮」；
+    在组内但不是组尾写「，该组已完成 r 轮，第 r+1 轮进行中」，r 为 0 时写「，该组第 1 轮进行中」。
+    游标那一句带阶段名，因为第三种异常里报告的阶段与游标所在的阶段不是同一个；游标所在阶段不是报告的阶段时，
+    是阶段游标越过最后一个阶段、报告的阶段被后续阶段破坏，开头改为「阶段『<阶段>』的目标在后续阶段被破坏：」。
+    已完成步骤为 null 时：已完成轮数也为 null 是阶段起点，写「在『<游标所在阶段>』阶段起点，尚未执行步骤」；
+    已完成轮数不为 null 只有自主规划阶段（没有步骤，轮数是回合数），写「在『<游标所在阶段>』阶段已进行 <已完成轮数> 回合」。
+    """
+    stage, at = params["阶段"], params["游标"]
+    goals = "；".join(goal["文字"] for goal in params["未达成目标"])
+    head = f"阶段『{stage}』目标未达成：" if at.get("阶段") == stage else f"阶段『{stage}』的目标在后续阶段被破坏："
+    if at.get("已完成步骤") is not None:
+        where = f"已完成『{at.get('阶段')}』阶段第 {at.get('已完成步骤')} 步『{at.get('说明')}』"
+        where += _rounds_clause(at.get("已完成轮数"), at.get("是组尾"))
+    elif at.get("已完成轮数") is None:
+        where = f"在『{at.get('阶段')}』阶段起点，尚未执行步骤"
+    else:
+        where = f"在『{at.get('阶段')}』阶段已进行 {at.get('已完成轮数')} 回合"
+    options = "、".join(params["可选措施"])
+    return f"{head}{goals}；{where}。可选措施：{options}。"
+
+
+def _rounds_clause(rounds, group_last) -> str:
+    """游标那一句的轮数半句。"""
+    if rounds is None:
+        return ""
+    if group_last:
+        return f"，该组已完成 {rounds} 轮"
+    if rounds == 0:
+        return "，该组第 1 轮进行中"
+    return f"，该组已完成 {rounds} 轮，第 {rounds + 1} 轮进行中"
+
+
+def report_exception(ctx) -> None:
+    """告知异常：与询问同族，走发件箱与收件箱。
+
+    往发件箱放问题（内容 = {话, 参数}）→ 记等待中 → 在收件箱阻塞取回复这条问题的回答 → 按选择定终态：
+    重做本阶段记已成功（返回值「重做」），变更组把游标写回参数里的阶段起点（已完成步骤与已完成轮数都是 null）；
+    主动终止、被动终止记已失败，说明区分两种终止，由循环抛内核错误。
+    取不到回答（收件箱已关闭）记已失败；回答不是三个可选措施之一，也记已失败并写明回答原文。
+    """
+    action = ctx.action
+    params = action.params
+    question = ctx.outbox.put(Message(
+        kind="question",
+        sender=TOOL_SOURCE_PREFIX + action.tool,
+        recipient="user",
+        in_reply_to=None,
+        content={"utterance": exception_utterance(params), "params": copy.deepcopy(params)},
+        action_id=action.action_id,
+    ))
+    ctx.set_status(ActionStatus.WAITING, f"已向使用者告知异常，问题 {question.seq}")
+    message = ctx.inbox.take(
+        match=lambda m: m.kind == "answer" and m.in_reply_to == question.seq,
+        block=True,
+        waiter=action.action_id,
+    )
+    if message is None:
+        ctx.set_status(ActionStatus.FAILED, "没有可用的回答")
+        return
+    outcome = EXCEPTION_OUTCOMES.get(message.content) if isinstance(message.content, str) else None
+    if outcome is None:
+        ctx.set_status(ActionStatus.FAILED, f"回答不是可选措施之一：{message.content}")
+        return
+    status, result, note = outcome
+    action.result = result
+    if message.content == REDO:
+        old = copy.deepcopy(ctx.data_view.get(CURSOR_SLOT))
+        action.changes = [Change(CURSOR_SLOT, old, {"阶段": params["阶段"], "已完成步骤": None, "已完成轮数": None}, action.action_id)]
+    # 终态事件带返回值，所以先填返回值再记状态。
+    ctx.set_status(status, note)
+
+
+# ───────────────────────── 前置条件 ─────────────────────────
+# 前置条件是函数，接收只读数据与已求值的参数，返回（成立与否, 说明, 命中值）。
+# 说明是与数据无关的固定文字（依据说明在任务开始前就要拼好），动态内容放命中值。
+# 前置条件只写「这个工具此刻调用会不会出错」，不写任务要达成什么。
+
+ASK_NOTE = "写入目标指向的位置为 None"
+LIST_DIR_NOTE = "文件总表为 None"
+REGISTER_FILE_NOTE = "序号等于登记进度且小于文件总数"
+GENERATE_MANIFEST_NOTE = "每项是否纳入都不为 None"
+
+
+def _ask_precondition(data, params):
+    target = params.get("target") or {}
+    slot, path = target.get("slot"), list(target.get("path") or [])
+    node, reachable = data.get(slot), True
+    for step in path:
+        if isinstance(node, list) and isinstance(step, int) and not isinstance(step, bool) and 0 <= step < len(node):
+            node = node[step]
+        elif isinstance(node, dict):
+            node = node.get(step)
+        else:
+            node, reachable = None, False
+            break
+    return reachable and node is None, ASK_NOTE, {"槽位": slot, "路径": path, "当前值": node}
+
+
 def _list_dir_precondition(data, params):
-    return data.get("文件总表") is None, "文件总表为 None"
+    return data.get("文件总表") is None, LIST_DIR_NOTE, {"文件总表": data.get("文件总表")}
 
 
 def _register_file_precondition(data, params):
     files = data.get("文件总表")
     ok = files is not None and params.get("index") == data.get("登记进度") and params.get("index") < len(files)
-    return ok, "序号等于登记进度且小于文件总数"
+    hit = {"登记进度": data.get("登记进度"), "文件总数": None if files is None else len(files)}
+    return ok, REGISTER_FILE_NOTE, hit
 
 
 def _generate_manifest_precondition(data, params):
     items = data.get("材料清单") or []
-    return all(item["是否纳入"] is not None for item in items), "每项是否纳入都不为 None"
+    confirmed = sum(1 for item in items if item["是否纳入"] is not None)
+    return all(item["是否纳入"] is not None for item in items), GENERATE_MANIFEST_NOTE, {"已确认项数": confirmed}
+
+
+# ───────────────────────── 静态工具表与运行工具表 ─────────────────────────
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """静态工具表的一项：工具名、参数名清单、前置条件、可写槽位。不含实现，不依赖任务定义。"""
+
+    name: str
+    param_names: tuple
+    preconditions: Any = None
+    writable_slots: frozenset | None = None
+
+
+STATIC_TOOLS = {
+    "ask": ToolSpec("ask", ("target", "hint"), _ask_precondition, None),
+    "list_dir": ToolSpec("list_dir", (), _list_dir_precondition, frozenset({"文件总表"})),
+    "register_file": ToolSpec("register_file", ("index",), _register_file_precondition,
+                              frozenset({"材料清单", "登记进度"})),
+    "generate_manifest": ToolSpec("generate_manifest", (), _generate_manifest_precondition,
+                                  frozenset({"清单文件路径"})),
+    EXCEPTION_TOOL: ToolSpec(EXCEPTION_TOOL, EXCEPTION_PARAM_NAMES, None, frozenset()),  # 不走前置条件
+}
+
+# 工具实现：工具名 → 函数（任务定义）→ 实现。只有询问要绑定任务定义（读话语模板）。
+_IMPLS = {
+    "ask": lambda task_def: functools.partial(ask, task_def=task_def),
+    "list_dir": lambda task_def: list_dir,
+    "register_file": lambda task_def: register_file,
+    "generate_manifest": lambda task_def: generate_manifest,
+    EXCEPTION_TOOL: lambda task_def: report_exception,
+}
 
 
 def build_table(task_def, tool_names=("ask",)) -> ToolTable:
-    """按任务建工具表：只登记给定名字的工具。询问工具用 partial 绑定任务定义，
-    所以工具表与任务绑定，每个任务各建一张。"""
-    available = {
-        "ask": lambda: Tool(name="ask", param_names=("target", "hint"), impl=functools.partial(ask, task_def=task_def)),
-        "list_dir": lambda: Tool(name="list_dir", param_names=(), impl=list_dir,
-                                 writable_slots=frozenset({"文件总表"}), preconditions=_list_dir_precondition),
-        "register_file": lambda: Tool(name="register_file", param_names=("index",), impl=register_file,
-                                      writable_slots=frozenset({"材料清单", "登记进度"}),
-                                      preconditions=_register_file_precondition),
-        "generate_manifest": lambda: Tool(name="generate_manifest", param_names=(), impl=generate_manifest,
-                                          writable_slots=frozenset({"清单文件路径"}),
-                                          preconditions=_generate_manifest_precondition),
-    }
+    """按任务建运行工具表：登记给定名字的工具，另外恒登记「告知异常」。
+    工具名、参数名清单、前置条件、可写槽位从静态工具表取；询问工具用 partial 绑定任务定义，
+    所以运行工具表与任务绑定，每个任务各建一张。"""
     table = ToolTable()
-    for name in tool_names:
-        if name not in available:
+    names = list(tool_names) + ([] if EXCEPTION_TOOL in tool_names else [EXCEPTION_TOOL])
+    for name in names:
+        if name not in STATIC_TOOLS:
             raise KernelError(f"没有这个工具：{name!r}")
-        table.register(available[name]())
+        spec = STATIC_TOOLS[name]
+        table.register(Tool(name=spec.name, param_names=spec.param_names, impl=_IMPLS[name](task_def),
+                            writable_slots=spec.writable_slots, preconditions=spec.preconditions))
     return table

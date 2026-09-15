@@ -27,11 +27,12 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import copy as copy_module
 import dataclasses
 import hashlib
 
-from tod_kernel import kernel, task_intake, task_travel
-from tod_kernel.tools import build_table
+from tod_kernel import kernel, taskdef
+from tod_kernel.tools import CURSOR_SLOT, EXCEPTION_OPTIONS, EXCEPTION_TOOL, build_table
 from tod_kernel.tools import set_at as tools_set_at
 from tod_kernel.kernel import (
     ACTION_PROPOSED,
@@ -79,6 +80,33 @@ from tod_kernel.observe import (
 )
 
 KERNEL_THREAD_PREFIX = "kernel-"
+TASK_DEFS_DIR = Path(__file__).resolve().parent / "task_defs"  # 任务定义数据文件
+
+
+# ───────────────────────── 任务定义：经加载器从数据文件取 ─────────────────────────
+# 每次调用都重新加载，得到新对象。材料接入登记的「目录」与出差申请单的预填都作为一次任务的初始输入给出。
+
+SAMPLE_DIR_INPUT = {"目录": "样例材料"}
+
+
+def travel_def(name=None, initial=None):
+    return taskdef.load(TASK_DEFS_DIR / "travel.json", name=name, initial=initial)
+
+
+def travel_all_filled_def():
+    return travel_def("出差申请单（三项预填）", {"目的地": "上海", "日期": "9 月 20 日", "事由": "客户拜访"})
+
+
+def travel_date_filled_def():
+    return travel_def("出差申请单（日期预填）", {"日期": "9 月 20 日"})
+
+
+def intake_def(file="intake.json", name=None):
+    return taskdef.load(TASK_DEFS_DIR / file, name=name, initial=dict(SAMPLE_DIR_INPUT))
+
+
+def intake_swapped_def():
+    return intake_def("intake_interleaved.json", "材料接入登记（规则二三互换）")
 RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"  # 仓根下的 runs/，不入版本库
 HOST_JOIN_SECONDS = 30  # 收内核线程时最多等多久，只防验证脚本在缺陷下挂死，不参与邮箱语义
 
@@ -147,6 +175,31 @@ def get_at(value, path):
     return value
 
 
+# 第三步：「游标」是加载器加进槽位表的保留槽位。既有断言里「工具写了什么」「某行动有几条数据变更」
+# 与终态数据比对只看业务槽位（2026-09-14 用户裁定）；游标的终态值另用一条断言核对。
+def is_business_slot(slot) -> bool:
+    return slot != CURSOR_SLOT
+
+
+def business_data(data) -> dict:
+    return {slot: value for slot, value in data.items() if is_business_slot(slot)}
+
+
+def business_changes(events, action_id):
+    return [e for e in of_action(events, DATA_CHANGED, action_id) if is_business_slot(e.payload["slot"])]
+
+
+def cursor(stage, done, rounds) -> dict:
+    """游标的值：阶段、已完成步骤（全局步骤号或 None）、已完成轮数（步骤组里的轮数或 None）。"""
+    return {"阶段": stage, "已完成步骤": done, "已完成轮数": rounds}
+
+
+def check_cursor_final(c, run, expected: dict) -> None:
+    """第三步：游标的终态值。"""
+    actual = run.task.data.get(CURSOR_SLOT) if run.task is not None else None
+    c.check(f"第三步：游标的终态值是 {expected}", actual == expected, actual)
+
+
 # 话语的预期句：按写入目标逐条写死的完整句子，不调用话语生成、也不读模板，用来逐字比对问题里的话。
 EXPECTED_UTTERANCES = {
     ("目的地", ()): "请提供出差目的地。",
@@ -157,19 +210,19 @@ EXPECTED_UTTERANCES = {
     ("材料清单", (2, "是否纳入")): "请确认是否把文件 c.xlsx 纳入项目。",
 }
 
-# 零差异断言：第二步只允许改 observe.py、verify.py、__init__.py 与新增观测台页面，
-# 下面五个模块必须与提交 185c6d7 逐字节相同。
+# 零差异断言：第三步起 kernel.py、tools.py 允许授权范围内的改动（差异全文人工确认）；
+# observe.py 第三步第九项只改命令行打印的一行，解除哈希锁（差异附进实施报告）。下面的模块必须与提交 01de6ab 逐字节相同。
+KERNEL_SHA256_COMMIT = "01de6ab"
 KERNEL_SHA256 = {
-    "kernel.py": "b28cb651f1ab500cee7306a891b42417f6063897fc4cfb2d6743f65a917974e2",
-    "tools.py": "3c01943df0635ffba4b54eca21686750172881e2c0f597b232cc216b131ed12e",
     "dialogue.py": "0a7a6509581ba96cf6da573362b4d2e4992a962a1287f8f3105ca12102297d7e",
-    "task_travel.py": "7f17f631329154be071388cd851cb4526872df6ef9ad47059f5e2b5eaa62a71e",
-    "task_intake.py": "7db9d0c42e30c5d38c48448e979e07f42abde3fe7062de8f3c7d3ab8c734cfa1",
 }
 
 
-def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), runs_dir=None, console=True) -> Run:
+def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), runs_dir=None, console=True,
+                 exception_answers=None) -> Run:
+    """跑一个场景。exception_answers：第三步新增，使用者对「告知异常」依次给的回答；用完后再来告知异常就关闭收件箱。"""
     run = Run(task_id=task_id, task_def=task_def, host_thread=threading.get_ident())
+    exception_answers = list(exception_answers or [])
 
     # 宿主：事件流、订阅者、邮箱。
     stream = EventStream(task_id)
@@ -240,6 +293,15 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
             question = outbox.take(match=lambda m: m.kind == "question", block=True)
             if question is None:  # 发件箱已关闭：不会再有问题
                 break
+            if "target" not in question.content["params"]:  # 第三步：告知异常的问题没有写入目标，按回答表依次回答
+                if exception_answers:
+                    inbox.put(Message(
+                        kind="answer", sender="user", recipient=question.action_id,
+                        in_reply_to=question.seq, content=exception_answers.pop(0), action_id=question.action_id,
+                    ))
+                else:
+                    inbox.close("host")
+                continue
             key = target_key(question.content["params"]["target"])
             if key in answers:
                 inbox.put(Message(
@@ -382,7 +444,19 @@ def check_run_file(c: Checker, run: Run) -> None:
                     history == [s.value for s in status_values(action_history(run.events, action.action_id))], history)
 
 
-def check_trace_shape(c: Checker, run: Run, loops: int) -> None:
+def check_selection_trail(c: Checker, run: Run, expected: dict) -> None:
+    """第三步第十四项：依据命中值里的「选择经过」（前进过的阶段、跳过的阶段与原因、跳过的步骤与原因）；告知异常的命中值不带它。"""
+    for proposed in named(run.events, ACTION_PROPOSED):
+        hit = proposed.payload["basis"][2]
+        aid = proposed.action_id
+        if proposed.payload["tool"] == EXCEPTION_TOOL:
+            c.check(f"行动 {aid} 是告知异常，命中值是异常报告，不带「选择经过」", isinstance(hit, dict) and "选择经过" not in hit, hit)
+        elif aid in expected:
+            c.check(f"行动 {aid} 的依据命中值里「选择经过」是 {expected[aid]}",
+                    isinstance(hit, dict) and hit.get("选择经过") == expected[aid], hit)
+
+
+def check_trace_shape(c: Checker, run: Run, loops: int, mailbox_tools=("ask",)) -> None:
     """追踪事件的形状：位置、数量与内容。只作诊断信息的检查，不参与前五条目标。"""
     all_events, events, task_def = run.all_events, run.events, run.task_def
     trace = [e for e in all_events if e.kind == TRACE]
@@ -392,16 +466,17 @@ def check_trace_shape(c: Checker, run: Run, loops: int) -> None:
     kernel_side = [e for e in all_events if not is_external(e.name, e.payload)]
     first = kernel_side[0] if kernel_side else None
     c.check("追踪：内核一侧发出的第一个事件是「任务开始」（宿主在发件箱上的等待不算），"
-            "槽位表、规则清单、工具清单、任务定义名与任务定义和工具表一致",
+            "槽位表、任务定义结构、工具清单、任务定义名与任务定义和工具表一致",
             first is not None and first.name == TASK_STARTED
-            and first.payload == {"slots": dict(task_def.SLOTS), "rules": dict(task_def.RULES),
+            and first.payload == {"slots": dict(task_def.SLOTS), "definition": task_def.DEFINITION,
                                   "tools": run.tools_spec, "task_def_name": task_def.NAME},
             first.payload if first else None)
     loop_nos = [e.payload["loop_no"] for e in trace if e.name == LOOP_STARTED]
-    c.check(f"追踪：恰好 {loops} 个「一圈开始」，圈序号从 1 起连续", loop_nos == list(range(1, loops + 1)), loop_nos)
+    c.check(f"追踪：恰好 {loops} 个「一次迭代开始」，迭代序号从 1 起连续", loop_nos == list(range(1, loops + 1)), loop_nos)
     done_flags = [e.payload["done"] for e in trace if e.name == CHECK_DONE_RESULT]
-    expected_done = [False] * loops if run.error else [False] * (loops - 1) + [True]
-    c.check("追踪：每圈一个「结果检查结论」，只有完成的最后一圈为真", done_flags == expected_done, done_flags)
+    # 结果检查在进循环前一次、每次迭代末尾一次；以内核错误结束的那次迭代在检查之前就抛错，没有末尾那次。
+    expected_done = [False] * loops if run.error else [False] * loops + [True]
+    c.check("追踪：「结果检查结论」循环前一次、每次迭代末尾一次，只有最后那次为真", done_flags == expected_done, done_flags)
     c.check("追踪：没有「任务定义错误」", not [e for e in trace if e.name == TASK_DEFINITION_ERROR])
 
     for proposed in [e for e in events if e.name == ACTION_PROPOSED]:
@@ -415,7 +490,7 @@ def check_trace_shape(c: Checker, run: Run, loops: int) -> None:
         c.check(f"追踪：行动 {aid} 的「行动执行调用」依次是 enter、return，线程是内核线程",
                 [e.payload["phase"] for e in calls] == ["enter", "return"]
                 and all(e.payload["thread"] == KERNEL_THREAD_PREFIX + run.task_id for e in calls))
-        if proposed.payload["tool"] != "ask":
+        if proposed.payload["tool"] not in mailbox_tools:  # 第三步起告知异常也走邮箱，由新场景传入
             c.check(f"追踪：行动 {aid}（工具 {proposed.payload['tool']}）不碰邮箱，没有邮箱等待",
                     not waits and not [e for e in mine if e.name in (MESSAGE_PUT, MESSAGE_TAKEN)])
             continue
@@ -548,7 +623,7 @@ def check_waiting_then_success(c: Checker, run: Run, action_id: int) -> None:
             puts[0].payload["in_reply_to"] == takes[0].payload["in_reply_to"] == questions[0].payload["seq"])
     c.check(f"目标二：行动 {action_id} 的问题与回答，内容里的所属行动都是 {action_id}",
             questions[0].payload["action_id"] == puts[0].payload["action_id"] == takes[0].payload["action_id"] == action_id)
-    changes = of_action(events, DATA_CHANGED, action_id)
+    changes = business_changes(events, action_id)  # 第三步：只看业务槽位
     path = target["path"]
     c.check(f"目标二：行动 {action_id} 的数据变更新值按写入目标路径 {path} 取出的值 = 取出的回答 = 「已成功」事件的返回值；"
             "槽位是写入目标的槽位，除该路径外新旧值相同",
@@ -593,6 +668,38 @@ def check_kernel_is_task_agnostic(c: Checker) -> None:
     c.check("目标四：内核模块的导入语句里没有工具表模块、任务模块和观测模块", not forbidden, sorted(imported))
 
 
+# 第三步目标一：七个既有场景在第二步提交 01de6ab 前最后一次全量运行留下的运行文件。runs/ 不入版本库，
+# 所以这条断言只在留有这些文件的机器上成立；文件缺失判失败，不跳过。
+STEP_TWO_RUN_FILES = {
+    "T-scenario-1": "T-scenario-1_20260914T165954567.jsonl",
+    "T-scenario-2": "T-scenario-2_20260914T165954587.jsonl",
+    "T-scenario-3": "T-scenario-3_20260914T165954590.jsonl",
+    "T-scenario-4": "T-scenario-4_20260914T165954599.jsonl",
+    "T-intake-1": "T-intake-1_20260914T165954608.jsonl",
+    "T-intake-2": "T-intake-2_20260914T165954629.jsonl",
+    "T-intake-3": "T-intake-3_20260914T165954649.jsonl",
+}
+
+
+def action_sequence(events) -> list:
+    """行动序列：每个「行动提出」的（工具名, 参数实际值, 依据序号），经 JSON 往返统一元组与列表。"""
+    import json as json_module
+
+    rows = [(e.payload["tool"], e.payload["params"], e.payload["basis"][0]) for e in events if e.name == ACTION_PROPOSED]
+    return json_module.loads(json_module.dumps(rows, ensure_ascii=False))
+
+
+def check_matches_step_two(c: Checker, run: Run) -> None:
+    """第三步目标一：行动序列与第二步留下的旧运行文件逐位相等。"""
+    old_path = RUNS_DIR / STEP_TWO_RUN_FILES[run.task_id]
+    c.check(f"第三步目标一：第二步的旧运行文件 {old_path.name} 存在（只在本机成立）", old_path.is_file(), old_path)
+    if not old_path.is_file():
+        return
+    old, new = action_sequence(read_events(old_path)), action_sequence(run.events)
+    c.check(f"第三步目标一：行动序列（工具名、参数实际值、依据序号）与 {old_path.name} 逐位相等，共 {len(old)} 个行动",
+            old == new, f"旧 {old}；新 {new}")
+
+
 # ───────────────────────── 四个场景 ─────────────────────────
 
 FULL_ANSWERS = {"目的地": "上海", "日期": "9 月 20 日", "事由": "客户拜访"}
@@ -608,7 +715,7 @@ def banner(text: str) -> None:
 
 def scenario_one() -> Checker:
     banner("场景一：正常流程")
-    run = run_scenario("T-scenario-1", task_travel, slot_answers(FULL_ANSWERS))
+    run = run_scenario("T-scenario-1", travel_def(), slot_answers(FULL_ANSWERS))
     c = Checker("场景一：正常流程")
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
@@ -627,7 +734,9 @@ def scenario_one() -> Checker:
     ended = named(events, TASK_ENDED)
     c.check("目标一：「任务结束」恰好一次，原因是完成条件成立",
             len(ended) == 1 and ended[0].payload["reason"] == "完成条件成立")
-    c.check("目标一：终态数据是三条回答", task.data == FULL_ANSWERS, task.data)
+    c.check("目标一：终态数据是三条回答", business_data(task.data) == FULL_ANSWERS, task.data)  # 第三步：只比业务槽位
+    check_cursor_final(c, run, cursor("收集", 3, None))
+    check_matches_step_two(c, run)
 
     for action in task.actions.values():
         check_waiting_then_success(c, run, action.action_id)
@@ -635,7 +744,7 @@ def scenario_one() -> Checker:
     check_kernel_is_task_agnostic(c)
     c.check("内核已删去 record 函数，第 5 步只剩状态更新", not hasattr(kernel, "record"))
     check_integrity(c, run)
-    check_trace_shape(c, run, loops=4)
+    check_trace_shape(c, run, loops=3)
     check_sources_and_senders(c, run, closed_before_failure_of=None)
     check_run_file(c, run)
     return c
@@ -643,7 +752,7 @@ def scenario_one() -> Checker:
 
 def scenario_two() -> Checker:
     banner("场景二：初始即完成")
-    run = run_scenario("T-scenario-2", task_travel.ALL_FILLED, {})
+    run = run_scenario("T-scenario-2", travel_all_filled_def(), {})
     c = Checker("场景二：初始即完成")
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
@@ -654,8 +763,10 @@ def scenario_two() -> Checker:
     c.check("任务状态是已完成", run.task.status == TaskStatus.DONE, run.task.status)
     c.check("最后一个状态事件是「任务结束」", events and events[-1].name == TASK_ENDED, events[-1].name if events else None)
     c.check("行动表为空，只有结束记录", run.task.actions == {} and run.task.end_record is not None)
+    check_cursor_final(c, run, cursor("收集", None, None))
+    check_matches_step_two(c, run)
     check_integrity(c, run)
-    check_trace_shape(c, run, loops=1)
+    check_trace_shape(c, run, loops=0)
     check_sources_and_senders(c, run, closed_before_failure_of=None)
     check_run_file(c, run)
     return c
@@ -664,7 +775,7 @@ def scenario_two() -> Checker:
 def scenario_three() -> Checker:
     banner("场景三：回答缺失")
     answers = {"目的地": "上海", "日期": "9 月 20 日"}
-    run = run_scenario("T-scenario-3", task_travel, slot_answers(answers))
+    run = run_scenario("T-scenario-3", travel_def(), slot_answers(answers))
     c = Checker("场景三：回答缺失")
     print("── 断言 ──")
     c.check("内核线程以内核错误结束", isinstance(run.error, KernelError), repr(run.error))
@@ -687,7 +798,9 @@ def scenario_three() -> Checker:
             [e for e in of_action(events, MESSAGE_PUT, 3) if e.payload["box"] == OUTBOX and e.seq < failed_seq])
     c.check("行动 3 在「已失败」之前没有收件箱的「消息取出」",
             not [e for e in of_action(events, MESSAGE_TAKEN, 3) if e.payload["box"] == INBOX and e.seq < failed_seq])
-    c.check("行动 3 没有数据变更", not of_action(events, DATA_CHANGED, 3))
+    c.check("行动 3 没有数据变更", not business_changes(events, 3))  # 第三步：只看业务槽位
+    check_cursor_final(c, run, cursor("收集", 2, None))  # 失败的行动 3 不写游标，停在行动 2 之后
+    check_matches_step_two(c, run)
     c.check("任务没有结束：没有「任务结束」事件，任务状态仍是执行中",
             not named(events, TASK_ENDED) and run.task is not None and run.task.status == TaskStatus.RUNNING)
     c.check("失败的行动在行动表里：行动表的编号是 1、2、3，行动 3 的状态是已失败",
@@ -703,7 +816,7 @@ def scenario_three() -> Checker:
 def scenario_four() -> Checker:
     banner("场景四：部分预填")
     answers = {"目的地": "上海", "事由": "客户拜访"}
-    run = run_scenario("T-scenario-4", task_travel.DATE_FILLED, slot_answers(answers))
+    run = run_scenario("T-scenario-4", travel_date_filled_def(), slot_answers(answers))
     c = Checker("场景四：部分预填")
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
@@ -721,12 +834,18 @@ def scenario_four() -> Checker:
     running_index = next(i for i, e in enumerate(events) if e.name == TASK_STATUS_CHANGED)
     c.check("日期的值全程未变：置执行中之后每个事件时刻重放出的日期都是 9 月 20 日",
             all(replay_data(events[:n]).get("日期") == init_date for n in range(running_index + 1, len(events) + 1)))
-    c.check("任务状态是已完成，数据完整", run.task.status == TaskStatus.DONE
-            and run.task.data == {"目的地": "上海", "日期": init_date, "事由": "客户拜访"}, run.task.data)
+    c.check("任务状态是已完成，数据完整", run.task.status == TaskStatus.DONE  # 第三步：只比业务槽位
+            and business_data(run.task.data) == {"目的地": "上海", "日期": init_date, "事由": "客户拜访"}, run.task.data)
+    check_cursor_final(c, run, cursor("收集", 3, None))
+    check_matches_step_two(c, run)
     for action in run.task.actions.values():
         check_waiting_then_success(c, run, action.action_id)
     check_integrity(c, run)
-    check_trace_shape(c, run, loops=3)
+    check_selection_trail(c, run, {
+        1: {"前进": [], "跳过阶段": [], "跳过步骤": []},
+        2: {"前进": [], "跳过阶段": [], "跳过步骤": [[2, "前置条件不成立：写入目标指向的位置为 None"]]},
+    })
+    check_trace_shape(c, run, loops=2)
     check_sources_and_senders(c, run, closed_before_failure_of=None)
     check_run_file(c, run)
     return c
@@ -754,11 +873,12 @@ INTAKE_FINAL_DATA = {
 
 
 def check_kernel_unchanged(c: Checker) -> None:
-    """零差异断言：五个模块的内容哈希等于提交 185c6d7 里的值（第一步是三个内核文件对 9472ac5，第二步起改为这五个）。"""
+    """零差异断言：模块的内容哈希等于写死的值（第一步是三个内核文件对 9472ac5，第二步是五个模块对 185c6d7，
+    第三步是 dialogue.py 对 01de6ab）。"""
     here = Path(kernel.__file__).resolve().parent
     actual = {name: hashlib.sha256((here / name).read_bytes()).hexdigest() for name in KERNEL_SHA256}
     for name, expected in KERNEL_SHA256.items():
-        c.check(f"零差异：{name} 的 sha256 等于提交 185c6d7 里的值", actual[name] == expected,
+        c.check(f"零差异：{name} 的 sha256 等于提交 {KERNEL_SHA256_COMMIT} 里的值", actual[name] == expected,
                 f"写死 {expected}，实际 {actual[name]}")
     source = (here / "kernel.py").read_text(encoding="utf-8")
     words = ("目录", "文件总表", "材料清单", "登记进度", "清单文件路径", "list_dir", "register_file", "generate_manifest")
@@ -773,7 +893,7 @@ def check_other_tool_actions(c: Checker, run: Run) -> None:
         if action.tool == "ask":
             continue
         history = status_values(action_history(events, action.action_id))
-        slots = {e.payload["slot"] for e in of_action(events, DATA_CHANGED, action.action_id)}
+        slots = {e.payload["slot"] for e in business_changes(events, action.action_id)}  # 第三步：只看业务槽位
         c.check(f"行动 {action.action_id}（{action.tool}）的状态经过是 已提出、已获准、已成功，"
                 f"变更只写可写槽位 {sorted(run.writable.get(action.tool) or [])}",
                 history == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.SUCCEEDED]
@@ -794,7 +914,7 @@ def rule_numbers(proposed_events) -> list:
 
 def intake_scenario_one() -> Checker:
     banner("材料接入登记·场景一：正常流程")
-    run = run_scenario("T-intake-1", task_intake, INTAKE_ANSWERS, INTAKE_TOOLS)
+    run = run_scenario("T-intake-1", intake_def(), INTAKE_ANSWERS, INTAKE_TOOLS)
     c = Checker("材料接入登记·场景一：正常流程")
     print("── 断言 ──")
     check_kernel_unchanged(c)
@@ -804,7 +924,7 @@ def intake_scenario_one() -> Checker:
     events, task = run.events, run.task
     proposed = named(events, ACTION_PROPOSED)
     tools = [e.payload["tool"] for e in proposed]
-    c.check("第一步目标二：恰好八个行动（九圈里最后一圈结果检查为真，不提行动）", len(proposed) == 8, len(proposed))
+    c.check("第一步目标二：恰好八个行动（八次迭代每次一个行动，第八次迭代末尾的结果检查为真）", len(proposed) == 8, len(proposed))
     c.check("第一步目标二：工具依次是 列目录、登记文件×3、询问×3、生成清单文件",
             tools == ["list_dir", "register_file", "register_file", "register_file", "ask", "ask", "ask", "generate_manifest"], tools)
     c.check("第一步目标二：依据里的规则序号依次是 一、二、二、二、三、三、三、四",
@@ -815,7 +935,10 @@ def intake_scenario_one() -> Checker:
             [e.payload["params"] for e in proposed if e.payload["tool"] == "ask"]
             == [{"target": {"slot": "材料清单", "path": [i, "是否纳入"]}, "hint": {"file": f}}
                 for i, f in enumerate(["a.docx", "b.pdf", "c.xlsx"])])
-    c.check("任务状态是已完成，终态数据与预期完全相同", task.status == TaskStatus.DONE and task.data == INTAKE_FINAL_DATA, task.data)
+    c.check("任务状态是已完成，终态数据与预期完全相同", task.status == TaskStatus.DONE  # 第三步：只比业务槽位
+            and business_data(task.data) == INTAKE_FINAL_DATA, task.data)
+    check_cursor_final(c, run, cursor("生成清单", 4, None))
+    check_matches_step_two(c, run)
     c.check("终态材料清单三项的是否纳入依次是 是、否、是",
             [item["是否纳入"] for item in task.data["材料清单"]] == ["是", "否", "是"])
     manifest = [a for a in task.actions.values() if a.tool == "generate_manifest"]
@@ -827,13 +950,13 @@ def intake_scenario_one() -> Checker:
             check_waiting_then_success(c, run, action.action_id)
     check_other_tool_actions(c, run)
     check_explainable(c, run)
-    intake_common(c, run, loops=9)
+    intake_common(c, run, loops=8)
     return c
 
 
 def intake_scenario_two() -> Checker:
     banner("材料接入登记·场景二：规则互换变体")
-    run = run_scenario("T-intake-2", task_intake.SWAPPED, INTAKE_ANSWERS, INTAKE_TOOLS)
+    run = run_scenario("T-intake-2", intake_swapped_def(), INTAKE_ANSWERS, INTAKE_TOOLS)
     c = Checker("材料接入登记·场景二：规则互换变体")
     print("── 断言 ──")
     check_kernel_unchanged(c)
@@ -847,20 +970,23 @@ def intake_scenario_two() -> Checker:
             tools == ["list_dir", "register_file", "ask", "register_file", "ask", "register_file", "ask", "generate_manifest"], tools)
     c.check("第一步目标二：依据里的规则序号依次是 一、二、三、二、三、二、三、四（规则保留原序号，只改检查顺序）",
             rule_numbers(proposed) == [1, 2, 3, 2, 3, 2, 3, 4], rule_numbers(proposed))
-    c.check("第一步目标二：终态数据与场景一相同", task.status == TaskStatus.DONE and task.data == INTAKE_FINAL_DATA, task.data)
+    c.check("第一步目标二：终态数据与场景一相同", task.status == TaskStatus.DONE  # 第三步：只比业务槽位
+            and business_data(task.data) == INTAKE_FINAL_DATA, task.data)
+    check_cursor_final(c, run, cursor("生成清单", 4, None))
+    check_matches_step_two(c, run)
     for action in task.actions.values():
         if action.tool == "ask":
             check_waiting_then_success(c, run, action.action_id)
     check_other_tool_actions(c, run)
     check_explainable(c, run)
-    intake_common(c, run, loops=9)
+    intake_common(c, run, loops=8)
     return c
 
 
 def intake_scenario_three() -> Checker:
     banner("材料接入登记·场景三：回答缺失")
     answers = {key: value for key, value in INTAKE_ANSWERS.items() if key[1][0] in (0, 1)}
-    run = run_scenario("T-intake-3", task_intake, answers, INTAKE_TOOLS)
+    run = run_scenario("T-intake-3", intake_def(), answers, INTAKE_TOOLS)
     c = Checker("材料接入登记·场景三：回答缺失")
     print("── 断言 ──")
     check_kernel_unchanged(c)
@@ -892,6 +1018,8 @@ def intake_scenario_three() -> Checker:
     c.check("失败的行动在行动表里：行动表的编号是 1 到 7，行动 7 的状态是已失败",
             run.task is not None and list(run.task.actions) == list(range(1, 8))
             and run.task.actions[7].status == ActionStatus.FAILED)
+    check_cursor_final(c, run, cursor("确认", 3, 2))  # 失败的行动 7 不写游标，停在行动 6（第 2 轮）之后
+    check_matches_step_two(c, run)
     intake_common(c, run, loops=7, closed_before_failure_of=7)
     return c
 
@@ -901,24 +1029,25 @@ def intake_scenario_three() -> Checker:
 # 七个场景的运行参数：（任务标识, 任务定义, 答案表, 工具名）。
 def all_scenarios():
     return [
-        ("T-scenario-1", task_travel, slot_answers(FULL_ANSWERS), ("ask",)),
-        ("T-scenario-2", task_travel.ALL_FILLED, {}, ("ask",)),
-        ("T-scenario-3", task_travel, slot_answers({"目的地": "上海", "日期": "9 月 20 日"}), ("ask",)),
-        ("T-scenario-4", task_travel.DATE_FILLED, slot_answers({"目的地": "上海", "事由": "客户拜访"}), ("ask",)),
-        ("T-intake-1", task_intake, INTAKE_ANSWERS, INTAKE_TOOLS),
-        ("T-intake-2", task_intake.SWAPPED, INTAKE_ANSWERS, INTAKE_TOOLS),
-        ("T-intake-3", task_intake, {k: v for k, v in INTAKE_ANSWERS.items() if k[1][0] in (0, 1)}, INTAKE_TOOLS),
+        ("T-scenario-1", travel_def(), slot_answers(FULL_ANSWERS), ("ask",)),
+        ("T-scenario-2", travel_all_filled_def(), {}, ("ask",)),
+        ("T-scenario-3", travel_def(), slot_answers({"目的地": "上海", "日期": "9 月 20 日"}), ("ask",)),
+        ("T-scenario-4", travel_date_filled_def(), slot_answers({"目的地": "上海", "事由": "客户拜访"}), ("ask",)),
+        ("T-intake-1", intake_def(), INTAKE_ANSWERS, INTAKE_TOOLS),
+        ("T-intake-2", intake_swapped_def(), INTAKE_ANSWERS, INTAKE_TOOLS),
+        ("T-intake-3", intake_def(), {k: v for k, v in INTAKE_ANSWERS.items() if k[1][0] in (0, 1)}, INTAKE_TOOLS),
     ]
 
 
-# 摘要预期表：任务标识 → （任务定义名, 终态, 圈数, 行动数），来自第零步、第一步文档。
+# 摘要预期表：任务标识 → （任务定义名, 终态, 迭代数, 行动数），来自第零步、第一步文档。
+# 第三步第十二项起结果检查挪到迭代末尾，正常完成的运行迭代数减一，等于行动数；以内核错误结束的不变。
 EXPECTED_SUMMARIES = {
-    "T-scenario-1": ("出差申请单", "已完成", 4, 3),
-    "T-scenario-2": ("出差申请单（三项预填）", "已完成", 1, 0),
+    "T-scenario-1": ("出差申请单", "已完成", 3, 3),
+    "T-scenario-2": ("出差申请单（三项预填）", "已完成", 0, 0),
     "T-scenario-3": ("出差申请单", "内核错误", 3, 3),
-    "T-scenario-4": ("出差申请单（日期预填）", "已完成", 3, 2),
-    "T-intake-1": ("材料接入登记", "已完成", 9, 8),
-    "T-intake-2": ("材料接入登记（规则二三互换）", "已完成", 9, 8),
+    "T-scenario-4": ("出差申请单（日期预填）", "已完成", 2, 2),
+    "T-intake-1": ("材料接入登记", "已完成", 8, 8),
+    "T-intake-2": ("材料接入登记（规则二三互换）", "已完成", 8, 8),
     "T-intake-3": ("材料接入登记", "内核错误", 7, 7),
 }
 
@@ -969,7 +1098,7 @@ def observatory_checks() -> Checker:
             actual = (summary.task_def_name, summary.final_status, summary.loops, summary.actions)
             if EXPECTED_SUMMARIES.get(summary.task_id) != actual:
                 wrong.append((f.name, actual))
-        c.check("第二步目标一：每份文件的摘要（任务定义名、终态、圈数、行动数）与预期表逐行相等", not wrong, wrong)
+        c.check("第二步目标一：每份文件的摘要（任务定义名、终态、迭代数、行动数）与预期表逐行相等", not wrong, wrong)
         c.check("第二步目标一：每个任务标识恰有两份文件", per_task == {task_id: 2 for task_id in EXPECTED_SUMMARIES}, per_task)
         c.check("第二步目标一：每份文件的事件序号从 1 起连续，且含「任务开始」",
                 all([e.seq for e in read_events(f)] == list(range(1, len(read_events(f)) + 1))
@@ -1047,10 +1176,489 @@ def observatory_checks() -> Checker:
     return c
 
 
+# ───────────────────────── 第三步：加载错误 ─────────────────────────
+
+def _drop_top_key(definition):
+    del definition["阶段列表"]
+
+
+def _type_mismatch(definition):
+    definition["阶段列表"][0]["类型"] = "自主规划"  # 内容仍是步骤列表
+
+
+def _unknown_slot(definition):
+    definition["阶段列表"][1]["步骤"][0]["参数"]["index"] = {"槽位": "登记序号"}
+
+
+def _unknown_tool(definition):
+    definition["阶段列表"][0]["步骤"][0]["工具"] = "list_directory"
+
+
+def _repeat_without_max(definition):
+    del definition["阶段列表"][1]["步骤"][0]["最多"]  # 登记步骤只写「重复直到」不写「最多」
+
+
+def _repeat_keys_in_group(definition):
+    # 「登记一个问一个」步骤组里的登记步骤带上重复键
+    definition["阶段列表"][1]["步骤"][0]["步骤组"][0]["重复直到"] = [{"谓词": "不为空", "槽位": "文件总表"}]
+    definition["阶段列表"][1]["步骤"][0]["步骤组"][0]["最多"] = 3
+
+
+def _slot_without_type(definition):
+    del definition["槽位"]["目录"]["类型"]
+
+
+def _deliverable_source_missing(definition):
+    definition["交付物"][0]["来源"] = "登记表"
+
+
+def _step_without_note(definition):
+    definition["阶段列表"][0]["步骤"][0]["说明"] = ""
+
+
+# 九份写坏的定义：（场景标题, 从哪份正确文件复制, 怎么改坏, 错误位置, 错误原因里应含的文字）。
+BAD_DEFINITIONS = [
+    ("缺顶层键", "intake.json", _drop_top_key, "顶层", "缺少键「阶段列表」"),
+    ("类型与内容不符", "travel.json", _type_mismatch, "阶段列表[0]（收集）.类型", "类型与内容不符"),
+    ("引用不存在的槽位", "intake.json", _unknown_slot, "阶段列表[1]（登记）.步骤[0].参数.index.槽位", "不存在的槽位「登记序号」"),
+    ("工具名不在静态表", "intake.json", _unknown_tool, "阶段列表[0]（列目录）.步骤[0].工具", "不在静态工具表"),
+    ("步骤只写重复直到不写最多", "intake.json", _repeat_without_max, "阶段列表[1]（登记）.步骤[0]", "要么都写要么都不写，缺少「最多」"),
+    ("组内步骤带重复键", "intake_interleaved.json", _repeat_keys_in_group, "阶段列表[1]（登记与确认）.步骤[0].步骤组[0]", "组内步骤不得带「重复直到」「最多」"),
+    ("槽位缺类型", "intake.json", _slot_without_type, "槽位.目录", "缺少键「类型」"),
+    ("交付物来源槽位不存在", "intake.json", _deliverable_source_missing, "交付物[0]（材料清单）.来源", "不存在的槽位「登记表」"),
+    ("步骤缺说明", "intake.json", _step_without_note, "阶段列表[0]（列目录）.步骤[0].说明", "步骤的说明应当是一句非空的话"),
+]
+
+
+def load_error_scenario(title: str, source: str, breaker, where: str, reason_part: str) -> Checker:
+    """第三步目标三：写坏的定义在启动任务之前被加载器挡住，不写出任何事件。
+
+    在临时目录里从正确文件复制一份再改坏；宿主照常先建事件流、挂订阅者，再加载，加载成功才启动任务。
+    """
+    import json as json_module
+    import shutil
+    import tempfile
+
+    banner(f"第三步·加载错误：{title}")
+    c = Checker(f"第三步·加载错误：{title}")
+    print("── 断言 ──")
+    work = Path(tempfile.mkdtemp(prefix="tod-load-error-"))
+    try:
+        original = TASK_DEFS_DIR / source
+        taskdef.load(original)  # 正确文件本身能加载，否则下面的错误说明不了问题
+        definition = json_module.loads(original.read_text(encoding="utf-8"))
+        breaker(definition)
+        path = work / f"bad_{source}"
+        path.write_text(json_module.dumps(definition, ensure_ascii=False, indent=2), encoding="utf-8")
+        c.check(f"写坏的定义文件真实存在：从 {source} 复制后改坏", path.is_file(), path)
+
+        task_id = "T-load-error"
+        stream = EventStream(task_id)
+        collector = MemoryCollector()
+        stream.subscribe(collector)
+        runs_dir = work / "runs"
+        stream.subscribe(FileWriter(runs_dir))
+        error = None
+        try:
+            task_def = taskdef.load(path, initial=dict(SAMPLE_DIR_INPUT) if source.startswith("intake") else None)
+            inbox, outbox = Mailbox(stream, task_id, INBOX), Mailbox(stream, task_id, OUTBOX)
+            kernel.start_task(task_id, task_def, build_table(task_def, INTAKE_TOOLS), inbox, outbox, stream)
+        except BaseException as exc:  # 加载错误与意外异常都交给断言
+            error = exc
+        c.check("加载抛出加载错误（LoadError）", isinstance(error, taskdef.LoadError), repr(error))
+        if isinstance(error, taskdef.LoadError):
+            c.check("加载错误的 path 属性是写坏的文件路径，错误信息里含该路径",
+                    error.path == str(path) and str(path) in str(error), (error.path, str(error)))
+            c.check(f"加载错误的 where 属性是「{where}」，错误信息里含该位置",
+                    error.where == where and where in str(error), (error.where, str(error)))
+            c.check(f"错误信息写明原因，含「{reason_part}」", reason_part in str(error), str(error))
+        c.check("没有任何事件写出：内存收集器为空", collector.events == [], [e.name for e in collector.events])
+        c.check("没有任何事件写出：运行目录里没有文件",
+                not runs_dir.exists() or not any(runs_dir.iterdir()),
+                sorted(p.name for p in runs_dir.iterdir()) if runs_dir.exists() else None)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return c
+
+
+# 九份写坏的定义里属于结构错误、应当被 JSON Schema 拦下的；其余三份是语义错误（槽位不存在、工具不在表里、交付物来源槽位不存在），schema 管不了。
+SCHEMA_STRUCTURAL = {"缺顶层键", "类型与内容不符", "步骤只写重复直到不写最多", "组内步骤带重复键", "槽位缺类型", "步骤缺说明"}
+SCHEMA_FILE = "任务定义.schema.json"
+
+
+def schema_checks() -> Checker:
+    """第三步第九项：任务定义文件的 JSON Schema。五份好文件通过；九份写坏的定义里结构错误被拦下，语义错误放行。
+    用本机的 jsonschema 库；没装时这组不做断言，打印提示。"""
+    import json as json_module
+
+    title = "第三步·任务定义 JSON Schema"
+    banner(title)
+    c = Checker(title)
+    try:
+        import jsonschema
+    except ImportError:
+        print("提示：本机没有安装 jsonschema，这组断言跳过（pip install jsonschema 后重跑）")
+        return c
+    print("── 断言 ──")
+    schema = json_module.loads((TASK_DEFS_DIR / SCHEMA_FILE).read_text(encoding="utf-8"))
+    schema_error = None
+    try:
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except jsonschema.SchemaError as exc:
+        schema_error = exc
+    c.check("schema 文件本身是合法的 JSON Schema 2020-12", schema_error is None, repr(schema_error))
+    if schema_error is not None:
+        return c
+    validator = jsonschema.Draft202012Validator(schema)
+    good = sorted(path for path in TASK_DEFS_DIR.glob("*.json") if path.name != SCHEMA_FILE)
+    for path in good:
+        errors = [e.message for e in validator.iter_errors(json_module.loads(path.read_text(encoding="utf-8")))]
+        c.check(f"好文件 {path.name} 通过 schema", not errors, errors)
+    c.check("好文件恰好五份", len(good) == 5, [path.name for path in good])
+    for bad_title, source, breaker, _, _ in BAD_DEFINITIONS:
+        definition = json_module.loads((TASK_DEFS_DIR / source).read_text(encoding="utf-8"))
+        breaker(definition)
+        errors = [e.message for e in validator.iter_errors(definition)]
+        if bad_title in SCHEMA_STRUCTURAL:
+            c.check(f"写坏的定义「{bad_title}」是结构错误，被 schema 拦下", bool(errors), errors)
+        else:
+            c.check(f"写坏的定义「{bad_title}」是语义错误，schema 放行、由加载器拦下", not errors, errors)
+    return c
+
+
+def utterance_round_clause_checks() -> Checker:
+    """告知异常的话里游标那一句的写法：组尾、组内（第 r+1 轮进行中）、第 1 轮进行中、不在组里、阶段起点、自主规划阶段。
+    现有异常场景只经过组尾与阶段起点，其余写法直接调工具的拼话函数核对。"""
+    from tod_kernel.tools import exception_utterance
+
+    title = "第三步·告知异常话的轮数写法"
+    banner(title)
+    c = Checker(title)
+    print("── 断言 ──")
+    base = {"阶段": "登记与确认", "未达成目标": [{"文字": "登记进度 等于 99，当前值 1"}], "步骤现况": [], "可选措施": list(EXCEPTION_OPTIONS)}
+    head = "阶段『登记与确认』目标未达成：登记进度 等于 99，当前值 1；"
+    cases = [
+        ("组尾", position("登记与确认", 3, "询问", 2, True), "已完成『登记与确认』阶段第 3 步『询问』，该组已完成 2 轮"),
+        ("组内、已完成 1 轮", position("登记与确认", 2, "登记", 1, False), "已完成『登记与确认』阶段第 2 步『登记』，该组已完成 1 轮，第 2 轮进行中"),
+        ("组内、已完成 0 轮", position("登记与确认", 2, "登记", 0, False), "已完成『登记与确认』阶段第 2 步『登记』，该组第 1 轮进行中"),
+        ("不在组里", position("登记与确认", 1, "列目录", None, None), "已完成『登记与确认』阶段第 1 步『列目录』"),
+        ("阶段起点", position("登记与确认", None, None, None, None), "在『登记与确认』阶段起点，尚未执行步骤"),
+        ("自主规划阶段", position("登记与确认", None, None, 4, None), "在『登记与确认』阶段已进行 4 回合"),
+    ]
+    for name, at, where in cases:
+        expected = f"{head}{where}。{OPTIONS_TEXT}"
+        actual = exception_utterance({**base, "游标": at})
+        c.check(f"{name}：话逐字等于「{expected}」", actual == expected, actual)
+    return c
+
+
+def runtime_limit_error_scenario() -> Checker:
+    """第三步：「最多」写成引用却指向一个列表。加载通过（加载器只查引用形状与槽位存在），
+    运行到这个步骤组时行动选择返回空，内核报任务定义错误；不得让 Python 的类型错误穿透内核。"""
+    import json as json_module
+    import shutil
+    import tempfile
+
+    title = "第三步·运行期任务定义错误：步骤组「最多」引用指向列表"
+    banner(title)
+    c = Checker(title)
+    work = Path(tempfile.mkdtemp(prefix="tod-limit-error-"))
+    try:
+        definition = json_module.loads((TASK_DEFS_DIR / "intake.json").read_text(encoding="utf-8"))
+        definition["阶段列表"][1]["步骤"][0]["最多"] = {"槽位": "文件总表"}  # 文件总表是个列表，不是数
+        path = work / "bad_limit_intake.json"
+        path.write_text(json_module.dumps(definition, ensure_ascii=False, indent=2), encoding="utf-8")
+        load_error = None
+        try:
+            task_def = taskdef.load(path, initial=dict(SAMPLE_DIR_INPUT))
+        except taskdef.LoadError as exc:
+            load_error = exc
+        run = None if load_error else run_scenario("T-limit-error", task_def, INTAKE_ANSWERS, INTAKE_TOOLS)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print("── 断言 ──")
+    c.check("写坏的定义加载通过（加载器不求引用的值）", load_error is None, repr(load_error))
+    if run is None:
+        return c
+    c.check("内核线程以内核错误结束，不是 Python 的类型错误", isinstance(run.error, KernelError), repr(run.error))
+    errors = named(run.all_events, TASK_DEFINITION_ERROR)
+    c.check("恰好一条「任务定义错误」，原因是选择规则返回空",
+            len(errors) == 1 and errors[0].payload["reason"] == "选择规则返回空", [e.payload for e in errors])
+    proposed = named(run.events, ACTION_PROPOSED)
+    c.check("只提出过一个行动：列目录（第 1 次迭代）；第 2 次迭代进登记组时求「最多」出错，未提出行动",
+            [e.payload["tool"] for e in proposed] == ["list_dir"], [e.payload["tool"] for e in proposed])
+    loops = [e.payload["loop_no"] for e in run.all_events if e.name == LOOP_STARTED]
+    c.check("恰好两次迭代", loops == [1, 2], loops)
+    c.check("任务没有结束：没有「任务结束」事件", not named(run.events, TASK_ENDED))
+    summary = summarize(run.run_file) if run.run_file is not None and run.run_file.exists() else None
+    c.check("运行索引的摘要：终态「内核错误」，原因「选择规则返回空」",
+            summary is not None and summary.final_status == "内核错误" and summary.reason == "选择规则返回空",
+            (summary.final_status, summary.reason) if summary else None)
+    return c
+
+
+# ───────────────────────── 第三步：同一份定义连跑两次 ─────────────────────────
+
+
+def event_signature(event) -> tuple:
+    """事件去掉时刻与序号后的内容。「邮箱等待」结束时的等待毫秒数由时刻算出，一并去掉。
+
+    序号也去掉：宿主线程在发件箱上的等待、取出与内核线程的事件共用序号，两条线程的交错次序取决于调度，
+    每次运行可能不同，这不是运行之间互相影响。所以按发布线程分成两列，各自逐条比对。
+    """
+    payload = {key: value for key, value in event.payload.items() if key != "wait_ms"}
+    return (event.task_id, event.action_id, event.kind, event.source, event.name, payload)
+
+
+def events_by_thread(run: Run) -> tuple:
+    kernel_side = [event_signature(e) for e in run.all_events if run.thread_of_seq[e.seq] == run.kernel_thread]
+    host_side = [event_signature(e) for e in run.all_events if run.thread_of_seq[e.seq] != run.kernel_thread]
+    return kernel_side, host_side
+
+
+def run_twice_checks() -> Checker:
+    """第三步目标二：材料接入登记的同一个加载结果连跑两次，互不影响。"""
+    banner("第三步·同一份定义连跑两次")
+    c = Checker("第三步·同一份定义连跑两次")
+    print("── 断言 ──")
+    task_def = intake_def()  # 只加载一次，两次运行用同一个对象
+    slots_before = copy_module.deepcopy(task_def.SLOTS)
+    first = run_scenario("T-intake-twice", task_def, INTAKE_ANSWERS, INTAKE_TOOLS, console=False)
+    second = run_scenario("T-intake-twice", task_def, INTAKE_ANSWERS, INTAKE_TOOLS, console=False)
+    c.check("两次运行都正常完成", first.error is None and second.error is None
+            and first.task.status == second.task.status == TaskStatus.DONE, (repr(first.error), repr(second.error)))
+    started = [next((e for e in run.all_events if e.name == TASK_STARTED), None) for run in (first, second)]
+    c.check("第二次「任务开始」事件里的初始槽位与第一次相同",
+            started[0] is not None and started[1] is not None and started[0].payload["slots"] == started[1].payload["slots"],
+            [e.payload["slots"] if e else None for e in started])
+    c.check("第二次运行的材料清单初始为空（初始化变更组里材料清单的新值是空列表）",
+            [ch.new for ch in second.task.init_changes if ch.slot == "材料清单"] == [[]],
+            [(ch.slot, ch.new) for ch in second.task.init_changes])
+    c.check("两次运行后，任务定义对象上的槽位表没有被运行改动", task_def.SLOTS == slots_before, task_def.SLOTS)
+    (first_kernel, first_host), (second_kernel, second_host) = events_by_thread(first), events_by_thread(second)
+    c.check(f"两次运行由内核线程发出的事件（共 {len(first_kernel)} 条）除时刻、序号与等待毫秒数外逐条相同",
+            first_kernel and first_kernel == second_kernel, (len(first_kernel), len(second_kernel)))
+    c.check(f"两次运行由宿主线程发出的事件（共 {len(first_host)} 条）除时刻、序号与等待毫秒数外逐条相同",
+            first_host and first_host == second_host, (len(first_host), len(second_host)))
+    c.check("两次运行的事件总数相同", len(first.all_events) == len(second.all_events),
+            (len(first.all_events), len(second.all_events)))
+    c.check("两次运行写出了两份不同的运行文件",
+            first.run_file is not None and second.run_file is not None and first.run_file != second.run_file,
+            (first.run_file, second.run_file))
+    return c
+
+
+# ───────────────────────── 第三步：异常告知使用者 ─────────────────────────
+
+EXCEPTION_TOOLS = INTAKE_TOOLS + (EXCEPTION_TOOL,)
+BAD_GOAL_NAME = "材料接入登记（登记目标写错）"
+BROKEN_GOAL_NAME = "材料接入登记（登记破坏确认目标）"
+OPTIONS_TEXT = "可选措施：重做本阶段、主动终止、被动终止。"
+
+# 登记目标写错的样例：登记阶段目标是「相等：登记进度 与 99」，告知异常的依据序号是 6（四个步骤号之后，第二个阶段）。
+BAD_GOAL_PREDICATE = {"谓词": "相等", "左": {"槽位": "登记进度"}, "右": 99}
+BAD_GOAL_EXCEPTION_NUMBER = 6
+
+
+REGISTER_NOTE = "登记下一个文件的名字、类型、大小、页数"
+
+
+def position(stage, done, note, rounds, group_last) -> dict:
+    """告知异常参数「游标」：游标的三项加上已完成步骤的说明与「是组尾」。"""
+    return {"阶段": stage, "已完成步骤": done, "说明": note, "已完成轮数": rounds, "是组尾": group_last}
+
+
+def bad_goal_params(at: dict) -> dict:
+    return {
+        "阶段": "登记",
+        "未达成目标": [{"谓词": BAD_GOAL_PREDICATE, "当前值": {"左": 3, "右": 99}, "文字": "登记进度 等于 99，当前值 3"}],
+        "步骤现况": [{"步骤": 2, "工具": "register_file", "成立": False, "说明": "序号等于登记进度且小于文件总数",
+                   "命中值": {"登记进度": 3, "文件总数": 3}}],
+        "游标": at,
+        "可选措施": list(EXCEPTION_OPTIONS),
+    }
+
+
+BAD_GOAL_AT_END = position("登记", 2, REGISTER_NOTE, 3, True)  # 登记三轮后：已完成第 2 步，该组已完成 3 轮
+BAD_GOAL_AT_START = position("登记", None, None, None, None)  # 重做写回阶段起点
+BAD_GOAL_UTTERANCE_END = (f"阶段『登记』目标未达成：登记进度 等于 99，当前值 3；已完成『登记』阶段第 2 步『{REGISTER_NOTE}』，该组已完成 3 轮。"
+                          f"{OPTIONS_TEXT}")
+BAD_GOAL_UTTERANCE_START = f"阶段『登记』目标未达成：登记进度 等于 99，当前值 3；在『登记』阶段起点，尚未执行步骤。{OPTIONS_TEXT}"
+
+
+# 登记破坏确认目标的样例：阶段顺序是 列目录、确认、登记；确认阶段的告知异常依据序号是 5（三个步骤号之后，第二个阶段）。
+BROKEN_GOAL_PARAMS = {
+    "阶段": "确认",
+    "未达成目标": [{"谓词": {"谓词": "列表无项为空", "槽位": "材料清单", "字段": "是否纳入"}, "当前值": [0, 1, 2],
+                "文字": "材料清单 里没有 是否纳入 为空的项，当前为空项的下标 [0, 1, 2]"}],
+    "步骤现况": [{"步骤": 2, "工具": "ask", "成立": True, "说明": "写入目标指向的位置为 None",
+               "命中值": {"槽位": "材料清单", "路径": [0, "是否纳入"], "当前值": None}}],
+    "游标": position("登记", 3, REGISTER_NOTE, 3, True),
+    "可选措施": list(EXCEPTION_OPTIONS),
+}
+BROKEN_GOAL_UTTERANCE = ("阶段『确认』的目标在后续阶段被破坏：材料清单 里没有 是否纳入 为空的项，当前为空项的下标 [0, 1, 2]；"
+                         f"已完成『登记』阶段第 3 步『{REGISTER_NOTE}』，该组已完成 3 轮。{OPTIONS_TEXT}")
+BROKEN_GOAL_EXCEPTION_NUMBER = 5
+
+
+def check_exception_action(c: Checker, run: Run, action_id: int, number: int, stage: str,
+                           params: dict, utterance: str, answer: str, kind: str = "一趟走完") -> None:
+    """一条告知异常行动：候选内容、发出的问题、状态经过、返回值、变更组。"""
+    events = run.events
+    proposed = of_action(events, ACTION_PROPOSED, action_id)
+    c.check(f"行动 {action_id} 是告知异常，提出者是行动选择，依据序号 {number}、说明「{stage} › 告知异常」，"
+            f"命中值是这份异常报告外加异常种类「{kind}」",
+            len(proposed) == 1 and proposed[0].payload["tool"] == EXCEPTION_TOOL and proposed[0].payload["proposer"] == "selector"
+            and list(proposed[0].payload["basis"]) == [number, f"{stage} › {EXCEPTION_TOOL}", {**params, "异常种类": kind}],
+            proposed[0].payload if proposed else None)
+    c.check(f"行动 {action_id} 的五个参数与预期逐项相等",
+            proposed and proposed[0].payload["params"] == params, proposed[0].payload["params"] if proposed else None)
+    questions = [e for e in of_action(events, MESSAGE_PUT, action_id) if e.payload["box"] == OUTBOX]
+    c.check(f"行动 {action_id} 恰发出一条问题，类型 question，内容是 {{话, 参数}}，参数与行动参数相同",
+            len(questions) == 1 and questions[0].payload["kind"] == "question"
+            and list(questions[0].payload["content"]) == ["utterance", "params"]
+            and questions[0].payload["content"]["params"] == params,
+            [e.payload for e in questions])
+    if len(questions) == 1:
+        c.check(f"行动 {action_id} 的话逐字等于「{utterance}」",
+                questions[0].payload["content"]["utterance"] == utterance, questions[0].payload["content"]["utterance"])
+    history = action_history(events, action_id)
+    terminal, result, note = {
+        "重做本阶段": (ActionStatus.SUCCEEDED, "重做", "使用者选择重做本阶段"),
+        "主动终止": (ActionStatus.FAILED, "主动终止", "使用者主动终止"),
+        "被动终止": (ActionStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
+    }[answer]
+    c.check(f"行动 {action_id} 的状态经过是 已提出、已获准、等待中、{terminal.value}，最后一条说明「{note}」，返回值「{result}」",
+            status_values(history) == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.WAITING, terminal]
+            and history[-1].payload["note"] == note and history[-1].payload.get("result") == result,
+            [(e.payload["new_status"].value, e.payload["note"], e.payload.get("result")) for e in history])
+    changes = of_action(events, DATA_CHANGED, action_id)
+    if answer == "重做本阶段":
+        c.check(f"行动 {action_id} 选重做：变更组只有一条，把游标写回「{stage}」阶段起点",
+                len(changes) == 1 and changes[0].payload["slot"] == CURSOR_SLOT and changes[0].payload["new"] == cursor(stage, None, None),
+                [e.payload for e in changes])
+    else:
+        c.check(f"行动 {action_id} 选终止：没有数据变更，游标也不写", not changes, [e.payload for e in changes])
+
+
+def exception_common(c: Checker, run: Run, loops: int) -> None:
+    check_integrity(c, run)
+    check_trace_shape(c, run, loops=loops, mailbox_tools=("ask", EXCEPTION_TOOL))
+    check_sources_and_senders(c, run, closed_before_failure_of=None)
+    check_run_file(c, run)
+    check_explainable(c, run)
+
+
+def check_registered_three(c: Checker, run: Run) -> None:
+    proposed = named(run.events, ACTION_PROPOSED)[:4]
+    c.check("前四个行动依次是 列目录、登记文件×3，依据序号 1、2、2、2",
+            [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
+            == [("list_dir", 1), ("register_file", 2), ("register_file", 2), ("register_file", 2)],
+            [(e.payload["tool"], e.payload["basis"][0]) for e in proposed])
+
+
+def check_terminated(c: Checker, run: Run, action_id: int, note: str) -> None:
+    c.check(f"内核错误携带行动 {action_id}", isinstance(run.error, KernelError) and run.error.action is not None
+            and run.error.action.action_id == action_id, repr(run.error))
+    c.check("任务没有结束：没有「任务结束」事件，任务状态仍是执行中",
+            not named(run.events, TASK_ENDED) and run.task is not None and run.task.status == TaskStatus.RUNNING)
+    summary = summarize(run.run_file) if run.run_file is not None and run.run_file.exists() else None
+    c.check(f"运行索引的摘要：终态「内核错误」，原因「{note}」",
+            summary is not None and summary.final_status == "内核错误" and summary.reason == note,
+            (summary.final_status, summary.reason) if summary else None)
+
+
+def exception_redo_scenario() -> Checker:
+    banner("第三步·异常场景甲：重做两次后被动终止")
+    run = run_scenario("T-exception-1", intake_def("intake_bad_goal.json"), INTAKE_ANSWERS, EXCEPTION_TOOLS,
+                       exception_answers=["重做本阶段", "重做本阶段", "被动终止"])
+    c = Checker("第三步·异常场景甲：重做两次后被动终止")
+    print("── 断言 ──")
+    c.check("任务定义名是数据文件里的名字", run.task_def.NAME == BAD_GOAL_NAME, run.task_def.NAME)
+    check_registered_three(c, run)
+    proposed = named(run.events, ACTION_PROPOSED)
+    c.check("恰好七个行动：列目录、登记文件×3、告知异常×3（第五、六、七次迭代）",
+            [e.payload["tool"] for e in proposed] == ["list_dir"] + ["register_file"] * 3 + [EXCEPTION_TOOL] * 3,
+            [e.payload["tool"] for e in proposed])
+    check_exception_action(c, run, 5, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_END),
+                           BAD_GOAL_UTTERANCE_END, "重做本阶段")
+    check_exception_action(c, run, 6, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_START),
+                           BAD_GOAL_UTTERANCE_START, "重做本阶段")
+    check_exception_action(c, run, 7, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_START),
+                           BAD_GOAL_UTTERANCE_START, "被动终止")
+    c.check("告知异常三条行动里，两条返回值是「重做」", [run.task.actions[i].result for i in (5, 6)] == ["重做", "重做"])
+    check_terminated(c, run, 7, "任务无法继续，使用者确认终止")
+    check_cursor_final(c, run, cursor("登记", None, None))
+    exception_common(c, run, loops=7)
+    return c
+
+
+def exception_abort_scenario(task_id: str, answer: str, note: str, title: str) -> Checker:
+    banner(f"第三步·{title}")
+    run = run_scenario(task_id, intake_def("intake_bad_goal.json"), INTAKE_ANSWERS, EXCEPTION_TOOLS, exception_answers=[answer])
+    c = Checker(f"第三步·{title}")
+    print("── 断言 ──")
+    check_registered_three(c, run)
+    proposed = named(run.events, ACTION_PROPOSED)
+    c.check("恰好五个行动，第五个（第五次迭代）是告知异常",
+            [e.payload["tool"] for e in proposed] == ["list_dir"] + ["register_file"] * 3 + [EXCEPTION_TOOL],
+            [e.payload["tool"] for e in proposed])
+    check_exception_action(c, run, 5, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_END),
+                           BAD_GOAL_UTTERANCE_END, answer)
+    check_terminated(c, run, 5, note)
+    check_cursor_final(c, run, cursor("登记", 2, 3))
+    exception_common(c, run, loops=5)
+    return c
+
+
+def exception_broken_goal_scenario() -> Checker:
+    banner("第三步·异常场景丁：后面阶段破坏前面阶段的目标，重做后完成")
+    run = run_scenario("T-exception-4", intake_def("intake_broken_goal.json"), INTAKE_ANSWERS, EXCEPTION_TOOLS,
+                       exception_answers=["重做本阶段"])
+    c = Checker("第三步·异常场景丁：后面阶段破坏前面阶段的目标，重做后完成")
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    if run.task is None:
+        return c
+    c.check("任务定义名是数据文件里的名字", run.task_def.NAME == BROKEN_GOAL_NAME, run.task_def.NAME)
+    proposed = named(run.events, ACTION_PROPOSED)
+    nothing = {"前进": [], "跳过阶段": [], "跳过步骤": []}
+    check_selection_trail(c, run, {1: nothing, 2: {"前进": ["列目录"], "跳过阶段": [["确认", "目标成立"]], "跳过步骤": []},
+                                   3: nothing, 4: nothing, 6: nothing, 7: nothing, 8: nothing})
+    c.check("八个行动：列目录、登记文件×3、告知异常、询问×3；依据序号 1、3、3、3、5、2、2、2",
+            [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
+            == [("list_dir", 1), ("register_file", 3), ("register_file", 3), ("register_file", 3),
+                (EXCEPTION_TOOL, 5), ("ask", 2), ("ask", 2), ("ask", 2)],
+            [(e.payload["tool"], e.payload["basis"][0]) for e in proposed])
+    check_exception_action(c, run, 5, BROKEN_GOAL_EXCEPTION_NUMBER, "确认", BROKEN_GOAL_PARAMS, BROKEN_GOAL_UTTERANCE, "重做本阶段", "后续破坏")
+    cursors = [e.payload["new"] for e in named(run.events, DATA_CHANGED) if e.payload["slot"] == CURSOR_SLOT]
+    c.check("游标的变化：初始在列目录，跳过已成立的确认进入登记，登记三轮后因重做退回确认，确认三轮后停住",
+            cursors == [cursor("列目录", None, None), cursor("列目录", 1, None), cursor("登记", 3, 1), cursor("登记", 3, 2),
+                        cursor("登记", 3, 3), cursor("确认", None, None), cursor("确认", 2, 1), cursor("确认", 2, 2), cursor("确认", 2, 3)],
+            cursors)
+    for action_id in (6, 7, 8):
+        check_waiting_then_success(c, run, action_id)
+    expected = {**INTAKE_FINAL_DATA, "清单文件路径": None}  # 这份定义没有生成清单阶段
+    c.check("任务状态是已完成，业务槽位的终态数据与预期相同",
+            run.task.status == TaskStatus.DONE and business_data(run.task.data) == expected, run.task.data)
+    check_cursor_final(c, run, cursor("确认", 2, 3))
+    ended = named(run.events, TASK_ENDED)
+    c.check("「任务结束」恰好一次，原因是完成条件成立", len(ended) == 1 and ended[0].payload["reason"] == "完成条件成立")
+    exception_common(c, run, loops=8)
+    return c
+
+
 def main() -> int:
     checkers = [scenario_one(), scenario_two(), scenario_three(), scenario_four(),
                 intake_scenario_one(), intake_scenario_two(), intake_scenario_three(),
                 observatory_checks()]
+    checkers += [load_error_scenario(*bad) for bad in BAD_DEFINITIONS]
+    checkers += [schema_checks(), utterance_round_clause_checks(), runtime_limit_error_scenario()]
+    checkers += [run_twice_checks(),
+                 exception_redo_scenario(),
+                 exception_abort_scenario("T-exception-2", "主动终止", "使用者主动终止", "异常场景乙：主动终止"),
+                 exception_abort_scenario("T-exception-3", "被动终止", "任务无法继续，使用者确认终止", "异常场景丙：被动终止"),
+                 exception_broken_goal_scenario()]
     banner("汇总")
     all_ok = True
     for c in checkers:

@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tod-kernel:task-definition",
+  "title": "任务定义",
+  "description": "任务定义文件的权威格式。加载器只用标准库，结构检查是本 schema 的子集；引用的槽位是否存在、工具名是否在静态工具表里、参数名是否齐全、阶段是否重名这类语义检查本 schema 管不了，由加载器做。",
+  "type": "object",
+  "required": ["名字", "槽位", "阶段列表", "交付物"],
+  "additionalProperties": false,
+  "properties": {
+    "名字": {"type": "string", "minLength": 1},
+    "槽位": {
+      "description": "槽位名到槽位元数据。「游标」是加载器自动加入的保留槽位，不得出现。",
+      "type": "object",
+      "not": {"required": ["游标"]},
+      "additionalProperties": {"$ref": "#/$defs/槽位元数据"}
+    },
+    "阶段列表": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/阶段"}},
+    "交付物": {
+      "description": "任务完成后交出什么。来源槽位是否存在、形态与槽位类型是否匹配是语义检查，由加载器做。",
+      "type": "array",
+      "items": {"$ref": "#/$defs/交付物"}
+    }
+  },
+  "$defs": {
+    "交付物": {
+      "type": "object",
+      "required": ["名字", "说明", "来源", "形态"],
+      "additionalProperties": false,
+      "properties": {
+        "名字": {"type": "string", "pattern": "\\S"},
+        "说明": {"type": "string", "pattern": "\\S"},
+        "来源": true,
+        "形态": {"enum": ["表单", "表格", "文本", "文件"]}
+      },
+      "if": {"properties": {"形态": {"const": "表单"}}, "required": ["形态"]},
+      "then": {"properties": {"来源": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/名称"}}}},
+      "else": {"properties": {"来源": {"$ref": "#/$defs/名称"}}}
+    },
+    "槽位类型": {"enum": ["文本", "数字", "布尔", "列表", "对象", "枚举"]},
+    "枚举必须有取值": {
+      "if": {"properties": {"类型": {"const": "枚举"}}, "required": ["类型"]},
+      "then": {"required": ["取值"]}
+    },
+    "槽位元数据": {
+      "description": "说明与类型必填；默认值省略即 null；枚举型必须有取值；项是列表元素的字段表；提问是询问这个槽位时说的话（str.format 句式）。类型只做加载校验，不做运行时值检查。",
+      "type": "object",
+      "required": ["说明", "类型"],
+      "additionalProperties": false,
+      "properties": {
+        "说明": {"type": "string", "pattern": "\\S"},
+        "类型": {"$ref": "#/$defs/槽位类型"},
+        "默认值": true,
+        "取值": {"type": "array", "minItems": 1},
+        "项": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/项字段"}},
+        "提问": {"type": "string"}
+      },
+      "allOf": [{"$ref": "#/$defs/枚举必须有取值"}]
+    },
+    "项字段": {
+      "description": "列表元素的一个字段：说明与类型必填，枚举型必须有取值，可带提问。",
+      "type": "object",
+      "required": ["说明", "类型"],
+      "additionalProperties": false,
+      "properties": {
+        "说明": {"type": "string", "pattern": "\\S"},
+        "类型": {"$ref": "#/$defs/槽位类型"},
+        "取值": {"type": "array", "minItems": 1},
+        "提问": {"type": "string"}
+      },
+      "allOf": [{"$ref": "#/$defs/枚举必须有取值"}]
+    },
+    "阶段": {
+      "type": "object",
+      "required": ["名字", "类型", "目标"],
+      "additionalProperties": false,
+      "properties": {
+        "名字": {"type": "string", "minLength": 1, "not": {"pattern": " › "}},
+        "类型": {"enum": ["固定步骤", "自主规划"]},
+        "目标": {"$ref": "#/$defs/谓词列表"},
+        "步骤": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "if": {"type": "object", "required": ["步骤组"]},
+            "then": {"$ref": "#/$defs/步骤组"},
+            "else": {"$ref": "#/$defs/步骤"}
+          }
+        },
+        "可选工具集": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/工具名"}},
+        "最多": {"$ref": "#/$defs/上限"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"类型": {"const": "固定步骤"}}, "required": ["类型"]},
+          "then": {
+            "required": ["步骤"],
+            "not": {"anyOf": [{"required": ["可选工具集"]}, {"required": ["最多"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"类型": {"const": "自主规划"}}, "required": ["类型"]},
+          "then": {
+            "required": ["可选工具集", "最多"],
+            "not": {"required": ["步骤"]}
+          }
+        }
+      ]
+    },
+    "步骤": {
+      "description": "单个步骤要重复，直接写成对的「重复直到」「最多」，要么都写要么都不写。",
+      "type": "object",
+      "required": ["说明", "工具", "参数"],
+      "additionalProperties": false,
+      "properties": {
+        "说明": {"type": "string", "pattern": "\\S"},
+        "工具": {"$ref": "#/$defs/工具名"},
+        "参数": {"type": "object", "additionalProperties": {"$ref": "#/$defs/值"}},
+        "重复直到": {"$ref": "#/$defs/谓词列表"},
+        "最多": {"$ref": "#/$defs/上限"}
+      },
+      "dependentRequired": {"重复直到": ["最多"], "最多": ["重复直到"]}
+    },
+    "组内步骤": {
+      "description": "步骤组里的步骤：形状同步骤，但不得带重复键，重复由步骤组统一写。",
+      "allOf": [{"$ref": "#/$defs/步骤"}],
+      "not": {"anyOf": [{"required": ["重复直到"]}, {"required": ["最多"]}]}
+    },
+    "步骤组": {
+      "description": "多个步骤一起重复。组内只能是不带重复键的步骤，所以组不嵌套。",
+      "type": "object",
+      "required": ["步骤组", "重复直到", "最多"],
+      "additionalProperties": false,
+      "properties": {
+        "步骤组": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/组内步骤"}},
+        "重复直到": {"$ref": "#/$defs/谓词列表"},
+        "最多": {"$ref": "#/$defs/上限"}
+      }
+    },
+    "工具名": {
+      "description": "「告知异常」由行动选择自动构造，不能写进任务定义。",
+      "type": "string",
+      "minLength": 1,
+      "not": {"const": "告知异常"}
+    },
+    "上限": {
+      "description": "非负整数或引用。",
+      "anyOf": [{"type": "integer", "minimum": 0}, {"$ref": "#/$defs/引用"}]
+    },
+    "谓词列表": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/谓词"}},
+    "谓词": {
+      "type": "object",
+      "required": ["谓词"],
+      "properties": {"谓词": {"enum": ["不为空", "相等", "列表无项为空"]}},
+      "allOf": [
+        {
+          "if": {"properties": {"谓词": {"const": "不为空"}}},
+          "then": {
+            "required": ["槽位"],
+            "additionalProperties": false,
+            "properties": {"谓词": true, "槽位": {"$ref": "#/$defs/名称"}}
+          }
+        },
+        {
+          "if": {"properties": {"谓词": {"const": "相等"}}},
+          "then": {
+            "required": ["左", "右"],
+            "additionalProperties": false,
+            "properties": {"谓词": true, "左": {"$ref": "#/$defs/值"}, "右": {"$ref": "#/$defs/值"}}
+          }
+        },
+        {
+          "if": {"properties": {"谓词": {"const": "列表无项为空"}}},
+          "then": {
+            "required": ["槽位", "字段"],
+            "additionalProperties": false,
+            "properties": {"谓词": true, "槽位": {"$ref": "#/$defs/名称"}, "字段": {"$ref": "#/$defs/名称"}}
+          }
+        }
+      ]
+    },
+    "名称": {"type": "string", "minLength": 1},
+    "引用": {
+      "description": "四种引用之一，字典恰好一个键。",
+      "oneOf": [
+        {"type": "object", "required": ["槽位"], "additionalProperties": false, "properties": {"槽位": {"$ref": "#/$defs/名称"}}},
+        {"type": "object", "required": ["长度"], "additionalProperties": false, "properties": {"长度": {"$ref": "#/$defs/名称"}}},
+        {
+          "type": "object", "required": ["首个为空项"], "additionalProperties": false,
+          "properties": {"首个为空项": {"type": "array", "prefixItems": [{"$ref": "#/$defs/名称"}, {"$ref": "#/$defs/名称"}], "minItems": 2, "maxItems": 2}}
+        },
+        {
+          "type": "object", "required": ["首个为空项字段"], "additionalProperties": false,
+          "properties": {"首个为空项字段": {"type": "array", "prefixItems": [{"$ref": "#/$defs/名称"}, {"$ref": "#/$defs/名称"}, {"$ref": "#/$defs/名称"}], "minItems": 3, "maxItems": 3}}
+        }
+      ]
+    },
+    "值": {
+      "description": "参数值或谓词两侧的操作数：字面量或引用，可以逐层嵌套。字典只要带四种引用键之一，就必须整体是一个合法引用。",
+      "if": {
+        "type": "object",
+        "anyOf": [{"required": ["槽位"]}, {"required": ["长度"]}, {"required": ["首个为空项"]}, {"required": ["首个为空项字段"]}]
+      },
+      "then": {"$ref": "#/$defs/引用"},
+      "else": {
+        "if": {"type": "object"},
+        "then": {"additionalProperties": {"$ref": "#/$defs/值"}},
+        "else": {"if": {"type": "array"}, "then": {"items": {"$ref": "#/$defs/值"}}}
+      }
+    }
+  }
+}

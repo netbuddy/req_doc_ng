@@ -463,7 +463,7 @@ class ConsolePrinter:
             return f"终态 {_show(p['final_status'])}，原因：{p['reason']}"
         if event.name == TASK_STARTED:
             return (f"任务定义 {p['task_def_name']}，槽位表 {p['slots']}，"
-                    f"规则 {p['rules']}，工具 {p['tools']}")
+                    f"定义 {p['definition']}，工具 {p['tools']}")
         if event.name == CHECK_DONE_RESULT:
             return f"已完成={p['done']}"
         if event.name == CONTROL_RESULT:

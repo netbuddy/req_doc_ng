@@ -7,17 +7,27 @@
 <style>
 :root{--bg:#f7f7f5;--panel:#fff;--ink:#1d1f23;--muted:#62666d;--line:#e2e2de;--accent:#1f5fbf;--accent-bg:#e8f0fc;
 --trace:#6b5a2e;--trace-bg:#f3eedf;--hit:#eef6ee;--hit-ink:#1f6b3a;--wait:#8a4b08;--wait-bg:#fdf1e2;
---ext:#7a2e8f;--ext-bg:#f6ecf9;--ext-line:#c89bd6;--tool:#2f6f6a;--diff:#fff3b0;--diff-ink:#6b5400;--same:#f0f0ee;--bad:#b3261e}
-@media (prefers-color-scheme:dark){:root{--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
+--ext:#7a2e8f;--ext-bg:#f6ecf9;--ext-line:#c89bd6;--tool:#2f6f6a;--diff:#fff3b0;--diff-ink:#6b5400;--same:#f0f0ee;
+/* 运行路径（路线图、路径图、时间轴）的令牌，取自原型 v2 */
+--grid:#ececea;--ink2:#52514e;--ink3:#8a8985;--path:#2a78d6;--back:#eb6834;--good:#0ca30c;--bad:#d03b3b;
+--path-soft:#dce9f9;--back-soft:#fbe4da;--good-soft:#dff3df;--bad-soft:#f8dcdc;--hi:#fff3c4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
 --accent:#8db4f0;--accent-bg:#1d2a3d;--trace:#d8c38e;--trace-bg:#2e2a1f;--hit:#1c2b20;--hit-ink:#8fd1a4;--wait:#f0b46a;--wait-bg:#35281a;
---ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;--bad:#f2b8b5}}
+--ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;
+--grid:#2e2e2c;--ink2:#c3c2b7;--ink3:#8f8e86;--path:#3987e5;--back:#d95926;--good:#0ca30c;--bad:#e66767;
+--path-soft:#1f3556;--back-soft:#4a2717;--good-soft:#173a17;--bad-soft:#4a1f1f;--hi:#4a3f12}}
+:root[data-theme="dark"]{--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
+--accent:#8db4f0;--accent-bg:#1d2a3d;--trace:#d8c38e;--trace-bg:#2e2a1f;--hit:#1c2b20;--hit-ink:#8fd1a4;--wait:#f0b46a;--wait-bg:#35281a;
+--ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;
+--grid:#2e2e2c;--ink2:#c3c2b7;--ink3:#8f8e86;--path:#3987e5;--back:#d95926;--good:#0ca30c;--bad:#e66767;
+--path-soft:#1f3556;--back-soft:#4a2717;--good-soft:#173a17;--bad-soft:#4a1f1f;--hi:#4a3f12}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif}
 a{color:var(--accent)}
 header.page{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
 header.page h1{margin:0;font-size:18px}
 header.page nav{display:flex;gap:12px;flex-wrap:wrap}
-main{padding:0 24px 40px;max-width:1400px}
+main{padding:0 24px 40px}
 section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0;min-width:0}
 h2{margin:0 0 10px;font-size:16px}
 h3{margin:0;font-size:14px}
@@ -34,6 +44,7 @@ code,pre,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 details>summary{cursor:pointer;color:var(--muted)}
 ul.plain{list-style:none;margin:0;padding:0}
+ul.plain ul.plain{padding-left:1.5em;margin-bottom:.3em}
 /* 索引 */
 .toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:10px}
 .toolbar label{white-space:nowrap}
@@ -55,37 +66,7 @@ border-bottom:1px solid var(--line);padding:8px 24px}
 table.kv{border-collapse:collapse;width:100%}
 table.kv th{width:11em;text-align:left;vertical-align:top;color:var(--muted);font-weight:normal;padding:6px 12px 6px 0;border-top:1px solid var(--line)}
 table.kv td{padding:6px 0;border-top:1px solid var(--line);min-width:0;overflow-wrap:anywhere}
-.loop{border-top:1px solid var(--line);padding:10px 0}
-.step{display:grid;grid-template-columns:12em minmax(0,1fr);border-top:1px dashed var(--line);padding:6px 0}
-.step-name{color:var(--muted)}
-.step-name .wait{display:block;margin-top:4px;color:var(--wait);background:var(--wait-bg);border-radius:4px;padding:2px 6px;max-width:100%}
-.step-body{min-width:0}
-.lane-head{display:grid;grid-template-columns:12em minmax(0,1fr) minmax(13em,33%);gap:0 10px;color:var(--muted);font-size:12px;margin-bottom:6px}
-.lane-head span:first-child{grid-column:2}
-.lane-head span:last-child{border-left:3px solid var(--ext-line);padding-left:8px;color:var(--ext)}
-ol.events{list-style:none;margin:0;padding:0}
-.ev{display:grid;grid-template-columns:minmax(0,1fr) minmax(13em,33%);gap:0 10px}
-.ev .cell{min-width:0}
-.ext-cell{border-left:3px solid var(--ext-line);padding-left:8px}
-.ev.origin-external .ext-cell{background:var(--ext-bg);border-radius:0 4px 4px 0;padding:2px 8px}
-.ext-tag{display:block;font-size:12px;font-weight:600;color:var(--ext)}
-.blocked{display:block;color:var(--wait);background:var(--wait-bg);border-radius:4px;padding:2px 6px;margin:2px 0}
-.idle{display:block;color:var(--muted);padding:2px 0}
-.tool-impl{margin-left:1.2em;border-left:2px solid var(--tool);padding-left:8px;min-width:0}
-.tool-tag{display:block;font-size:12px;color:var(--tool)}
-.ask-out{border-left:2px dashed var(--ext-line);padding-left:8px;min-width:0}
-.ask-tag{display:block;font-size:12px;font-weight:600;color:var(--ext)}
-.line{display:grid;grid-template-columns:3.2em 4.2em 2.8em 7em minmax(0,1fr);gap:6px;padding:1px 0;align-items:baseline;min-width:0}
-.ext-cell .line{grid-template-columns:3.2em 4.2em 2.8em minmax(0,1fr)}
-.ext-cell .line .desc{grid-column:1/-1;padding-left:1em}
-.line .seq,.seq{color:var(--muted);font-variant-numeric:tabular-nums}
-.line .rel{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-.badge{font-size:12px;border-radius:3px;padding:0 4px;text-align:center}
-.badge.state{color:var(--accent);background:var(--accent-bg)}
-.badge.trace{color:var(--trace);background:var(--trace-bg)}
-.line.trace .label,.line.trace .desc{color:var(--muted)}
-.line.is-wait .desc{color:var(--wait)}
-.desc{min-width:0;overflow-wrap:anywhere}
+.seq{color:var(--muted);font-variant-numeric:tabular-nums}
 .src{margin-left:6px;font-size:12px;color:var(--muted)}
 .utterance{display:block;font-weight:600;color:var(--ink)}
 table.grid{border-collapse:collapse;font-variant-numeric:tabular-nums}
@@ -114,18 +95,179 @@ table.compare td.same{background:var(--same)}
 table.compare td.absent{background:var(--diff);color:var(--diff-ink);font-style:italic}
 table.compare td.no{color:var(--muted);text-align:right;white-space:nowrap}
 table.compare td[data-field=status]{white-space:nowrap}
+/* 运行路径：路线图、路径图、时间轴（样式依据原型 v2） */
+.tag{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;color:var(--ink2);margin-left:6px;font-weight:normal}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--ink2);font-size:13px;margin:6px 0 10px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.sw.path{background:var(--path)} .sw.back{background:var(--back)} .sw.good{background:var(--good-soft);border-color:var(--good)}
+.sw.bad{background:var(--bad-soft);border-color:var(--bad)} .sw.skip{background:transparent;border:1px dashed var(--ink3)} .sw.never{background:var(--grid)}
+svg.rp{display:block}
+svg.rp text{font-family:inherit}
+.rp-phase{fill:var(--panel);stroke:var(--line);stroke-width:1}
+.rp-phase.good{fill:var(--good-soft);stroke:var(--good)}
+.rp-phase.bad{fill:var(--bad-soft);stroke:var(--bad)}
+.rp-phase.hi{stroke-width:3}
+.rp-loop{fill:none;stroke:var(--ink3);stroke-width:1;stroke-dasharray:3 3}
+.rp-step{fill:var(--path-soft);stroke:var(--path);stroke-width:1.5;cursor:pointer}
+.rp-step.skip{fill:transparent;stroke:var(--ink3);stroke-dasharray:4 3}
+.rp-step.never{fill:var(--grid);stroke:var(--ink3);stroke-dasharray:4 3}
+.rp-step.hi{stroke-width:3.5}
+.rp-ttl{fill:var(--ink);font-size:13px;font-weight:600}
+.rp-lbl{fill:var(--ink2);font-size:12px}
+.rp-small{fill:var(--ink3);font-size:11px}
+.rp-count{fill:var(--path);font-size:11px;font-weight:600}
+.rp-good{fill:var(--good)} .rp-bad{fill:var(--bad)} .rp-back{fill:var(--back)}
+.rp-arrow-back{fill:none;stroke:var(--back);stroke-width:2}
+.rp-seq{stroke:var(--ink3);stroke-width:1.5}
+.rp-grid{stroke:var(--grid);stroke-width:1}
+.rp-axis{fill:var(--ink3);font-size:11px}
+.rp-rowlbl{fill:var(--ink2);font-size:12px}
+.rp-band{fill:var(--path-soft);opacity:.45}
+.rp-band2{fill:var(--grid);opacity:.7}
+.rp-bandlbl{fill:var(--ink2);font-size:12px;font-weight:600}
+.rp-rowlbl.never{fill:var(--ink3)}
+.rp-never{fill:none;stroke:var(--ink3);stroke-width:1.5}
+.rp-line{fill:none;stroke:var(--path);stroke-width:2}
+.rp-line.back{stroke:var(--back);stroke-dasharray:5 3}
+.rp-line.tail{stroke-dasharray:2 3}
+.rp-pt{fill:var(--path);stroke:var(--panel);stroke-width:2;cursor:pointer}
+.rp-pt.bad{fill:var(--bad)}
+.rp-pt.failed{fill:var(--panel);stroke:var(--bad);stroke-width:2.5}
+.rp-pt.hi{stroke:var(--ink);stroke-width:2.5}
+.rp-cursor{stroke:var(--ink2);stroke-width:1;stroke-dasharray:2 3}
+.rp-chip{fill:var(--path-soft);stroke:var(--path)}
+.tl{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-bottom:10px}
+.tl input[type=range]{flex:1 1 320px;min-width:160px}
+.tl .tl-val{font-weight:600;min-width:9em}
+.now{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.now-card{border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}
+.now-card.wide{grid-column:1/-1}
+.now-card h3{margin:0 0 4px;font-size:13px;color:var(--ink2);font-weight:500}
+.now-card .big{font-size:15px;font-weight:600}
+table.now-kv{width:100%;border-collapse:collapse;font-size:13px}
+table.now-kv td{padding:2px 4px;border-top:1px solid var(--grid);vertical-align:top;overflow-wrap:anywhere}
+table.now-kv td:first-child{color:var(--ink2);white-space:nowrap;width:8em}
+table.now-kv tr.changed td{background:var(--hi)}
+table.now-kv th{text-align:left;color:var(--ink2);font-weight:500;padding:2px 4px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.now-kv tr.sub td:first-child{padding-left:1.5em;color:var(--ink3)}
+details.tg[open] .tg-open,details.tg:not([open]) .tg-close{display:none}
+.pill{display:inline-block;border-radius:10px;padding:0 8px;font-size:12px;border:1px solid var(--line);color:var(--ink2);font-weight:normal}
+.pill.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--ink)}
+.pill.back{background:var(--back-soft);border-color:var(--back);color:var(--ink)}
+.pill.good{background:var(--good-soft);border-color:var(--good);color:var(--ink)}
+.card{cursor:pointer}
+.card.hi{outline:2px solid var(--path)}
+.card.bad{border-color:var(--bad)}
+/* 交付物（样式依据原型 v3 的交付物部分） */
+.dl-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin:6px 0 12px}
+.dl-head .dl-n{font-size:15px;font-weight:600}
+.dl-head .dl-st{border-radius:10px;padding:1px 10px;font-size:12px;border:1px solid var(--good);background:var(--good-soft);color:var(--ink)}
+.dl-head .dl-st.no{border-color:var(--bad);background:var(--bad-soft)}
+.dl-head .dl-k{color:var(--ink3);font-size:12px}
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px}
+.dl-card{border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden;min-width:0}
+.dl-card.wide{grid-column:1/-1}
+.dl-t{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg)}
+.dl-t b{font-size:14px}
+.dl-t .dl-k{color:var(--ink3);font-size:12px}
+.dl-t .dl-f{margin-left:auto;font-size:12px;color:var(--ink2);border:1px solid var(--line);border-radius:10px;padding:0 8px;white-space:nowrap}
+.dl-body{padding:12px 14px;min-width:0}
+.dl-form{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 18px;align-items:baseline}
+.dl-form .dl-lb{color:var(--ink2);font-size:13px}
+.dl-form .dl-v{font-size:16px;font-weight:600;border-bottom:1px dashed var(--line);padding-bottom:4px;overflow-wrap:anywhere}
+.dl-empty{color:var(--ink3);font-weight:400}
+table.dl-tb{border-collapse:collapse;width:100%;font-size:13px}
+table.dl-tb th{text-align:left;color:var(--ink2);font-weight:500;border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap}
+table.dl-tb td{padding:7px 8px;border-bottom:1px solid var(--grid)}
+table.dl-tb .num{text-align:right;font-variant-numeric:tabular-nums}
+table.dl-tb tbody tr:nth-child(even) td{background:var(--bg)}
+.dl-yes{color:var(--good);font-weight:600}
+.dl-no{color:var(--ink3)}
+.dl-foot{color:var(--ink3);font-size:12px;margin-top:8px}
+.dl-missing{color:var(--ink3);font-size:13px;padding:8px 0 0}
+.dl-file{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.dl-ico{width:38px;height:46px;border:1.5px solid var(--ink3);border-radius:3px;position:relative;flex:none}
+.dl-ico:after{content:"";position:absolute;right:-1px;top:-1px;width:12px;height:12px;background:var(--panel);border-left:1.5px solid var(--ink3);border-bottom:1.5px solid var(--ink3)}
+.dl-file .dl-nm{font-weight:600}
+.dl-file .dl-pth{color:var(--ink3);font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.dl-file details{margin-top:8px}
+.dl-file summary{cursor:pointer;color:var(--path);font-size:13px}
+.dl-file pre{margin:8px 0 0;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12.5px;line-height:1.6;white-space:pre-wrap}
+.dl-txt{border-left:3px solid var(--path);padding:6px 14px;font-size:15px;line-height:1.7;overflow-wrap:anywhere}
+.dl-txt .dl-src{color:var(--ink3);font-size:12px;margin-top:6px}
+.rp-link{cursor:pointer;text-decoration:underline}
+/* 迭代视图（样式依据原型 v3） */
+:root{--ext2:#7a3fb5;--ext2-soft:#efe5f8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ext2:#b48ae0;--ext2-soft:#33244a}}
+:root[data-theme="dark"]{--ext2:#b48ae0;--ext2-soft:#33244a}
+.iv-top{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:0 0 12px;font-size:13px}
+.iv-top label{display:inline-flex;gap:4px;align-items:center;cursor:pointer}
+.iv-card{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:14px;overflow:hidden}
+.iv-card.bad{border-color:var(--bad)}
+.iv-card.plain{border-style:dashed}
+.iv-card.hi{outline:2px solid var(--path)}
+.iv-hd{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--line)}
+.iv-hd .no{font-weight:700;font-size:15px}
+.iv-hd .where{color:var(--ink2)}
+.iv-hd .act{font-weight:600;overflow-wrap:anywhere}
+.iv-hd .res{margin-left:auto;font-size:12px;border-radius:10px;padding:0 9px;border:1px solid var(--good);background:var(--good-soft)}
+.iv-hd .res.bad{border-color:var(--bad);background:var(--bad-soft)}
+.iv-hd .res.wait{border-color:var(--ext2);background:var(--ext2-soft)}
+.iv-hd .ms{color:var(--ink3);font-size:12px}
+.iv-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));padding:12px 14px 4px;position:relative}
+.iv-steps:before{content:"";position:absolute;left:calc(10% + 14px);right:calc(10% + 14px);top:24px;height:2px;background:var(--line)}
+.iv-st{position:relative;text-align:center;padding:0 4px;min-width:0}
+.iv-st .dot{width:22px;height:22px;border-radius:50%;margin:0 auto 6px;background:var(--panel);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink2);position:relative}
+.iv-st.ok .dot{border-color:var(--good);background:var(--good-soft);color:var(--good)}
+.iv-st.info .dot{border-color:var(--path);background:var(--path-soft);color:var(--path)}
+.iv-st.ext .dot{border-color:var(--ext2);background:var(--ext2-soft);color:var(--ext2)}
+.iv-st.bad .dot{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.iv-st.skip .dot{border-style:dashed;color:var(--ink3)}
+.iv-st .nm{font-size:12px;color:var(--ink2)}
+.iv-st .tm{font-size:10.5px;color:var(--ink3);font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.iv-story{display:grid;grid-template-columns:7em minmax(0,1fr);gap:6px 12px;padding:8px 14px 12px}
+.iv-k{color:var(--ink3);font-size:12px;padding-top:2px}
+.iv-v{font-size:13.5px;min-width:0;overflow-wrap:anywhere}
+.iv-v.bad{color:var(--ink)}
+.iv-sub{display:block;color:var(--ink3);font-size:12px}
+.iv-bad{color:var(--bad)}
+.iv-chip{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 6px;font-size:12.5px;background:var(--bg);margin:2px 4px 2px 0;overflow-wrap:anywhere}
+.iv-chip.cur{border-color:var(--path);background:var(--path-soft)}
+.iv-chip.new{border-color:var(--good);background:var(--good-soft)}
+.iv-chat{display:flex;flex-direction:column;gap:6px;max-width:640px}
+.iv-msg{display:flex;gap:8px;align-items:flex-start}
+.iv-msg .who{flex:none;width:7em;font-size:12px;color:var(--ink3);padding-top:6px;text-align:right}
+.iv-msg .bub{border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--bg)}
+.iv-msg.user .bub{border-color:var(--ext2);background:var(--ext2-soft)}
+.iv-msg .meta{font-size:11px;color:var(--ink3);margin-top:2px}
+.iv-fn{font-size:10.5px;color:var(--path);vertical-align:super;margin-left:2px;cursor:pointer;text-decoration:none}
+.iv-fn:hover{text-decoration:underline}
+.iv-toggle{float:right;font:inherit;font-size:11.5px;color:var(--path);cursor:pointer;border:1px solid var(--line);border-radius:10px;padding:0 8px;background:var(--panel);margin-left:8px;white-space:nowrap}
+.iv-toggle.on{background:var(--path-soft);border-color:var(--path)}
+.iv-toggle.none{color:var(--ink3);cursor:default}
+.iv-link{color:var(--path);cursor:pointer;text-decoration:underline}
+.iv-evs{display:none;grid-column:1/-1;margin:2px 0 6px;border:1px solid var(--grid);border-radius:6px;background:var(--bg);font-size:12px}
+.iv-evs.show{display:block}
+.iv-evs table{border-collapse:collapse;width:100%;min-width:640px;table-layout:fixed}
+.iv-evs td{padding:3px 8px;border-top:1px solid var(--grid);vertical-align:top;color:var(--ink2)}
+.iv-evs tr:first-child td{border-top:0}
+.iv-evs td.n{color:var(--ink3);white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+.iv-evs td.d{overflow-wrap:anywhere}
+.iv-evs td.who{color:var(--ink3);overflow-wrap:anywhere}
+.iv-evs tr.ext td.who{color:var(--ext2)}
+.iv-evs tr.hl td,.iv-evs tr.fm td{background:var(--hi)}
+.iv-tag{display:inline-block;border-radius:3px;padding:0 5px;font-size:11px;border:1px solid var(--line)}
+.iv-tag.state{background:var(--path-soft)} .iv-tag.trace{background:var(--back-soft)}
+#timeline.dim .iv-v{opacity:.35} #timeline.dim .iv-v.match{opacity:1}
+.faded{opacity:.35}
 [hidden]{display:none!important}
 @media (max-width:720px){
 header.page,.filters{padding-left:16px;padding-right:16px}
 main{padding:0 16px 32px}
-.step{grid-template-columns:minmax(0,1fr)}
-.ev{grid-template-columns:minmax(0,1fr)}
-.ext-cell{border-left:0;padding-left:0}
-.ev:not(.origin-external) .ext-cell{display:none}
-.lane-head{display:none}
-.line{grid-template-columns:3em 3.8em 2.8em minmax(0,1fr)}
-.line .label{grid-column:4}
-.line .desc{grid-column:1/-1;padding-left:3em}
+.iv-story{grid-template-columns:minmax(0,1fr)}
+.iv-st .nm{font-size:11px}
+.iv-st .tm{font-size:9.5px}
 table.kv th{width:7em}
 }
 </style>
@@ -143,11 +285,13 @@ table.kv th{width:7em}
 const LABELS = {
   TASK_STATUS_CHANGED: "任务状态变化", DATA_CHANGED: "数据变更", ACTION_PROPOSED: "行动提出",
   ACTION_STATUS_CHANGED: "行动状态变化", MESSAGE_PUT: "消息放入", MESSAGE_TAKEN: "消息取出",
-  MAILBOX_CLOSED: "邮箱关闭", TASK_ENDED: "任务结束", TASK_STARTED: "任务开始", LOOP_STARTED: "一圈开始",
+  MAILBOX_CLOSED: "邮箱关闭", TASK_ENDED: "任务结束", TASK_STARTED: "任务开始", LOOP_STARTED: "一次迭代开始",
   CHECK_DONE_RESULT: "结果检查结论", CONTROL_RESULT: "执行控制结论", EXECUTE_CALL: "行动执行调用",
   MAILBOX_WAIT: "邮箱等待", TASK_DEFINITION_ERROR: "任务定义错误",
 };
-const STEP_NAMES = ["第 1 步 结果检查", "第 2 步 行动选择", "第 3 步 执行控制", "第 4 步 行动执行", "第 5 步 状态更新"];
+// 第三步第十二项起结果检查挪到迭代末尾，进循环前另有一次「启动检查」；更早的运行文件结果检查在迭代开头。
+const STEP_NAMES = ["第 1 步 行动选择", "第 2 步 执行控制", "第 3 步 行动执行", "第 4 步 状态更新", "第 5 步 结果检查"];
+const OLD_STEP_NAMES = ["第 1 步 结果检查", "第 2 步 行动选择", "第 3 步 执行控制", "第 4 步 行动执行", "第 5 步 状态更新"];
 const BOX = { inbox: "收件箱", outbox: "发件箱" };
 const EXTERNAL_SENDERS = ["host", "user"];
 const PROPOSED = "已提出", FAILED = "已失败";
@@ -265,22 +409,36 @@ function buildRecord(file, events) {
     for (const e of info.events) if (e.name === "DATA_CHANGED") set.add(e.payload.slot);
     r.actionSlots.set(aid, set);
   }
-  // 外部事件发生时内核是否在收件箱上阻塞。
-  const open = new Set(); r.blocked = new Set();
-  for (const e of events) {
-    if (e.name === "MAILBOX_WAIT" && e.payload.box === "inbox" && e.action_id !== null) {
-      if (e.payload.phase === "begin") open.add(e.action_id); else open.delete(e.action_id);
-    } else if (isExternal(e) && open.size) r.blocked.add(e.seq);
-  }
-  // 按圈、按步切分。
-  r.before = []; r.loops = [];
+  // 按迭代、按步切分。按事件的实际结构判断：第一个「结果检查结论」在第一个「迭代开始」之前，就是结果检查在迭代末尾的新结构。
+  const firstCheck = events.findIndex(e => e.name === "CHECK_DONE_RESULT");
+  const firstLoop = events.findIndex(e => e.name === "LOOP_STARTED");
+  r.checkAtEnd = firstCheck >= 0 && (firstLoop < 0 || firstCheck < firstLoop);
+  r.stepNames = r.checkAtEnd ? STEP_NAMES : OLD_STEP_NAMES;
+  r.before = []; r.startCheck = []; r.loops = []; r.closing = [];
   let current = null, step = 0;
   for (const e of events) {
+    // 收尾：任务状态变为已完成、内核关闭发件箱、任务结束，从第一条起其后的事件都归收尾卡，不归任何迭代。
+    if (r.closing.length || (e.name === "TASK_STATUS_CHANGED" && e.payload.new_status === "已完成")
+        || (e.name === "MAILBOX_CLOSED" && e.payload.box === "outbox" && !EXTERNAL_SENDERS.includes(e.payload.sender)) || e.name === "TASK_ENDED") {
+      r.closing.push(e); continue;
+    }
     if (e.name === "LOOP_STARTED") {
       current = { no: e.payload.loop_no, steps: STEP_NAMES.map(() => []) };
       r.loops.push(current); step = 0; current.steps[0].push(e); continue;
     }
-    if (!current) { r.before.push(e); continue; }
+    if (!current) {
+      // 新结构里循环前那次结果检查及其后的完成记录单列为「启动检查」，不归任何迭代。
+      if (r.checkAtEnd && (r.startCheck.length || e.name === "CHECK_DONE_RESULT")) r.startCheck.push(e); else r.before.push(e);
+      continue;
+    }
+    if (r.checkAtEnd) {
+      if (e.name === "CHECK_DONE_RESULT") step = 4;
+      current.steps[step].push(e);
+      if (step === 0 && e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 1;
+      else if (e.name === "CONTROL_RESULT") step = 2;
+      else if (e.name === "EXECUTE_CALL" && e.payload.phase === "return") step = 3;
+      continue;
+    }
     current.steps[step].push(e);
     if (e.name === "CHECK_DONE_RESULT" && !e.payload.done) step = 1;
     else if (step === 1 && e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 2;
@@ -296,9 +454,86 @@ function slotsOfEvent(r, e) {
   if (e.name === "DATA_CHANGED") return [e.payload.slot];
   return r.actionSlots.has(e.action_id) ? [...r.actionSlots.get(e.action_id)] : [];
 }
+// 「任务开始」事件里 rules 的值由加载器按阶段与步骤生成，形如「阶段名 › 第 n 步 步骤说明」「阶段名 › 告知异常」「阶段名 › 自主 › 工具名」；
+// 分不出阶段的值（第零步、第一步写出的旧文件）返回 null，调用方原样显示。
+function parseRuleNote(note) {
+  if (typeof note !== "string") return null;
+  const i = note.indexOf(" › ");
+  if (i < 0) return null;
+  const stage = note.slice(0, i), rest = note.slice(i + 3);
+  let m = rest.match(/^第 (\d+) 步 ([\s\S]*)$/);
+  if (m) return { stage, kind: "step", no: m[1], note: m[2] };
+  if (rest === "告知异常") return { stage, kind: "exception" };
+  m = rest.match(/^自主 › (.+)$/);
+  if (m) return { stage, kind: "toolset", tool: m[1] };
+  return null;
+}
 function basisText(basis) {
-  if (Array.isArray(basis) && basis.length === 3) return `规则 ${basis[0]}：${basis[1]}；本次值 ${brief(basis[2])}`;
-  return plain(basis);
+  if (!(Array.isArray(basis) && basis.length === 3)) return plain(basis);
+  const [number, note, hit] = basis;
+  const r = parseRuleNote(note);
+  if (!r) return `第 ${number} 步：${plain(note)}；本次值 ${brief(hit)}`;
+  if (r.kind === "step") return `第 ${r.no} 步：${r.note}；本次值 ${brief(hit)}`;
+  if (r.kind === "exception") return exceptionBasisText(r.stage, hit);
+  return `自主：${r.stage} › ${r.tool}。模型的理由：${plain(hit)}`;
+}
+// 告知异常的依据：命中值是异常报告，取未达成目标的文字；游标所在阶段不是报告的阶段，就是该阶段的目标被后续阶段破坏。
+function exceptionBasisText(stage, report) {
+  const goals = report && Array.isArray(report["未达成目标"]) ? report["未达成目标"].map(g => g["文字"]).join("；") : brief(report);
+  const at = report && report["游标"];
+  const broken = at && typeof at === "object" && at["阶段"] !== undefined && at["阶段"] !== stage;
+  return `告知异常：「${stage}」阶段${broken ? "的目标在后续阶段被破坏" : "目标未达成"}；本次值 ${goals}`;
+}
+// 谓词与引用写成文字，与加载器生成「未达成目标」文字的写法一致。
+const REF_KEYS = ["槽位", "长度", "首个为空项", "首个为空项字段"];
+function isRef(v) { return v && typeof v === "object" && !Array.isArray(v) && REF_KEYS.some(k => k in v); }
+function operandText(v) {
+  if (!isRef(v)) return plain(v);
+  const [k, a] = Object.entries(v)[0];
+  if (k === "槽位") return a;
+  if (k === "长度") return `${a} 的长度`;
+  if (k === "首个为空项") return `${a[0]} 里首个 ${a[1]} 为空的项的下标`;
+  return `${a[0]} 里首个 ${a[1]} 为空的项的 ${a[2]}`;
+}
+function predicateText(p) {
+  if (p["谓词"] === "不为空") return `${p["槽位"]} 不为空`;
+  if (p["谓词"] === "列表无项为空") return `${p["槽位"]} 里没有 ${p["字段"]} 为空的项`;
+  if (p["谓词"] === "相等") return `${operandText(p["左"])} 等于 ${operandText(p["右"])}`;
+  return plain(p);
+}
+function predicatesText(list) { return (list || []).map(predicateText).join("，且 "); }
+function groupText(st, group) {
+  const until = JSON.stringify(group.until) === JSON.stringify(st.goal) ? "目标成立" : predicatesText(group.until);
+  return `${group.single ? "" : "步骤组 · "}重复直到${until === "目标成立" ? "" : " "}${until} · 最多 = ${operandText(group.max)}`;
+}
+// 路线图组框底部的文字：「最多」放在前面，框窄被截断时先丢重复条件。
+function routeGroupText(st, group) {
+  const until = JSON.stringify(group.until) === JSON.stringify(st.goal) ? "目标成立" : predicatesText(group.until);
+  return `最多 ${operandText(group.max)} 轮 · 重复直到${until}`;
+}
+// 任务概览的「阶段与步骤」：有任务定义结构时列出目标、步骤组（重复直到、最多）与步骤（全局号、说明、工具）；
+// 旧文件只有依据说明，列全局号与说明，工具名从实际提出过的行动里补。预留的告知异常条目不显示。
+function stagesHTML(model) {
+  const { def } = model;
+  const stepHTML = step => {
+    const tool = step.tool || model.toolOf.get(step.number);
+    return `<li>第 ${step.number} 步 <b>${esc(step.note)}</b>${tool ? ` <code>${esc(tool)}</code>` : ""}</li>`;
+  };
+  const itemHTML = st => {
+    if (st.auto) return st.tools.map(t => `<li>可选工具 <b>${esc(t.tool)}</b>${model.counts.get(t.number) ? ` <span class="pill">用了 ${model.counts.get(t.number)} 次</span>` : ""}</li>`).join("")
+      + (st.max !== undefined ? `<li class="muted">回合上限 ${esc(operandText(st.max))}</li>` : "");
+    return st.items.map(item => item.group
+      ? `<li><span class="muted">${esc(groupText(st, item.group))}</span><ul class="plain">${item.group.steps.map(stepHTML).join("")}</ul></li>`
+      : stepHTML(item.step)).join("");
+  };
+  return `<ul class="plain">${def.stages.map(st => st.name === null
+    ? itemHTML(st)
+    : `<li><b>阶段「${esc(st.name)}」</b><span class="tag">${st.auto ? "自主规划" : "固定步骤"}</span>`
+      + (st.goal ? ` <span class="muted">目标：${esc(predicatesText(st.goal))}</span>` : "")
+      + `<ul class="plain">${itemHTML(st)}</ul></li>`).join("")}</ul>`;
+}
+function toggleHTML(text) {
+  return `<details class="tg"><summary><span class="tg-open">展开</span><span class="tg-close">收起</span></summary><code>${esc(text)}</code></details>`;
 }
 function resultHTML(value) {
   if (typeof value === "string" && value.includes("\n")) return `<pre>${esc(value)}</pre>`;
@@ -314,15 +549,16 @@ function messageHTML(p) {
   }
   return `内容 ${resultHTML(p.content)}，${head}`;
 }
-function describeHTML(e) {
+function describeHTML(e, r) {
   const p = e.payload, n = e.name;
   switch (n) {
     case "TASK_STATUS_CHANGED": return `${esc(p.old_status)} → ${esc(p.new_status)}`;
     case "DATA_CHANGED": {
+      if (p.slot === CURSOR && r && r.path) return `游标 → ${esc(positionText(positionOf(r.path.def, p.new)))}，来源 ${esc(p.source)}`;
       const diff = valueDiff(p.old, p.new);
       const lines = diff.length ? diff : ["值未变"];
       return `槽位「${esc(p.slot)}」：${lines.map(l => `<span class="diff-line">${esc(l)}</span>`).join("")}来源 ${esc(p.source)}`
-        + ((typeof p.new === "object" && p.new !== null) ? `<details><summary>整值</summary><code>${esc(jsonText(p.old))} → ${esc(jsonText(p.new))}</code></details>` : "");
+        + ((typeof p.new === "object" && p.new !== null) ? toggleHTML(`${jsonText(p.old)} → ${jsonText(p.new)}`) : "");
     }
     case "ACTION_PROPOSED": return `工具 ${esc(p.tool)}，参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}，依据 ${esc(basisText(p.basis))}`;
     case "ACTION_STATUS_CHANGED": return `${esc(p.new_status)}，说明：${esc(p.note)}` + ("result" in p ? `，返回值 ${resultHTML(p.result)}` : "");
@@ -330,12 +566,12 @@ function describeHTML(e) {
     case "MAILBOX_CLOSED": return `${BOX[p.box] || esc(p.box)}，发起方 ${esc(p.sender)}，不会再有消息`;
     case "TASK_ENDED": return `终态 ${esc(p.final_status)}，原因：${esc(p.reason)}`;
     case "TASK_STARTED": return `任务定义 ${esc(p.task_def_name)}`;
-    case "LOOP_STARTED": return `第 ${esc(p.loop_no)} 圈`;
+    case "LOOP_STARTED": return `第 ${esc(p.loop_no)} 次迭代`;
     case "CHECK_DONE_RESULT": return `已完成 = ${p.done ? "是" : "否"}`;
     case "CONTROL_RESULT": return `行动 ${esc(p.action_id)}，结论 ${esc(p.verdict)}，核验：${esc(p.checked)}`;
     case "EXECUTE_CALL": return `行动 ${esc(p.action_id)}，工具 ${esc(p.tool)}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}`;
     case "MAILBOX_WAIT": return `${BOX[p.box] || esc(p.box)}，行动 ${esc(plain(p.action_id))}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}` + ("wait_ms" in p ? `，等待 ${esc(p.wait_ms)} 毫秒` : "");
-    case "TASK_DEFINITION_ERROR": return `原因：${esc(p.reason)}，选择规则原始输出 ${esc(plain(p.raw_output))}`;
+    case "TASK_DEFINITION_ERROR": return `原因：${esc(p.reason)}，行动选择原始输出 ${esc(plain(p.raw_output))}`;
     default: return esc(jsonText(p));
   }
 }
@@ -354,17 +590,499 @@ function questionUtterance(r, actionId) {
   const q = info.events.find(e => isQuestionSent(e));
   return q ? utteranceOf(q.payload.content) : null;
 }
-function loopTitle(r, loop) {
-  const check = loop.steps[0].find(e => e.name === "CHECK_DONE_RESULT");
-  if (check && check.payload.done) return `第 ${loop.no} 圈 · 结果检查为真，任务结束`;
-  const proposed = loop.steps[1].find(e => e.name === "ACTION_PROPOSED");
-  if (proposed) {
-    const u = questionUtterance(r, proposed.action_id);
-    return `第 ${loop.no} 圈 · ${proposed.payload.tool} · ${u !== null ? u : paramsSummary(proposed.payload.params)}`;
-  }
-  if (loop.steps[1].some(e => e.name === "TASK_DEFINITION_ERROR")) return `第 ${loop.no} 圈 · 任务定义错误，未提出行动`;
-  return `第 ${loop.no} 圈 · 本圈没有提出行动`;
+
+// ───────────── 运行路径：任务定义结构与逐次迭代的位置 ─────────────
+// 游标是加载器加进槽位表的保留槽位；页面只认这个名字与它的三项（阶段、已完成步骤、已完成轮数），不认任何任务的槽位。
+const CURSOR = "游标", REDO_RESULT = "重做";
+
+function textWidth(text, size) {
+  let w = 0;
+  for (const ch of String(text)) w += ch.charCodeAt(0) > 0x2e80 ? size : size * 0.6;
+  return w;
 }
+function fit(text, size, max) {
+  text = String(text);
+  if (textWidth(text, size) <= max) return text;
+  let out = "";
+  for (const ch of text) { if (textWidth(out + ch + "…", size) > max) break; out += ch; }
+  return out + "…";
+}
+// 阶段与步骤的结构。「任务开始」事件带 definition 时直接读它；第二步与第三步早先写出的文件只有 rules，按依据说明的文字解析，
+// 分不出阶段的归到一个不带名字的阶段（name 为 null），这种降级结构没有目标与步骤组。
+function parseDefinition(r) {
+  const stages = r.started && r.started.definition ? stagesFromDefinition(r.started.definition) : stagesFromRules(r.started ? r.started.rules || {} : {});
+  const byName = new Map(), byNumber = new Map();
+  stages.forEach((st, i) => {
+    st.index = i;
+    byName.set(st.name, st);
+    for (const step of st.steps) byNumber.set(step.number, { kind: "step", stage: st, step });
+    for (const tool of st.tools) byNumber.set(tool.number, { kind: "toolset", stage: st, tool });
+    if (st.exception !== null) byNumber.set(st.exception, { kind: "exception", stage: st });
+  });
+  const rows = [], rowOf = new Map(), firstRow = new Map();
+  for (const st of stages) {
+    firstRow.set(st, rows.length);
+    const items = st.auto ? st.tools : st.steps;
+    for (const it of items) {
+      rowOf.set(it.number, rows.length);
+      rows.push({ stage: st, item: it, label: st.auto ? `${st.name} · ${it.tool}` : (st.name === null ? `第 ${it.number} 步` : `${st.name} · 第 ${it.number} 步`) });
+    }
+    if (!items.length) rows.push({ stage: st, item: null, label: st.name === null ? "（无名阶段）" : st.name });
+  }
+  return { stages, byName, byNumber, rows, rowOf, firstRow, structured: Boolean(r.started && r.started.definition) };
+}
+function stagesFromDefinition(definition) {
+  const exceptionNumbers = definition["告知异常编号"] || {}, toolNumbers = definition["自主工具编号"] || {};
+  return (definition["阶段列表"] || []).map(raw => {
+    const st = { name: raw["名字"], type: raw["类型"], goal: raw["目标"] || null, steps: [], tools: [], items: [],
+      exception: exceptionNumbers[raw["名字"]] !== undefined ? exceptionNumbers[raw["名字"]] : null, auto: raw["类型"] === "自主规划" };
+    const stepOf = (s, group) => ({ number: s["编号"], note: s["说明"], tool: s["工具"], params: s["参数"], stage: st, group });
+    for (const item of raw["步骤"] || []) {
+      // 多个步骤一起重复写成「步骤组」（第三步早先的文件里组的键是「步骤」）；单个步骤带「重复直到」就是只有一个成员的组。
+      const members = Array.isArray(item["步骤组"]) ? item["步骤组"] : (Array.isArray(item["步骤"]) ? item["步骤"] : ("重复直到" in item ? [item] : null));
+      if (members) {
+        const group = { until: item["重复直到"], max: item["最多"], steps: [], single: members.length === 1 && members[0] === item };
+        for (const inner of members) group.steps.push(stepOf(inner, group));
+        group.first = group.steps[0].number; group.last = group.steps[group.steps.length - 1].number;
+        st.steps.push(...group.steps); st.items.push({ group });
+      } else {
+        const step = stepOf(item, null);
+        st.steps.push(step); st.items.push({ step });
+      }
+    }
+    if (st.auto) {
+      st.max = raw["最多"];
+      const numbers = toolNumbers[raw["名字"]] || {};
+      st.tools = (raw["可选工具集"] || []).map(tool => ({ number: numbers[tool], tool, stage: st }));
+    }
+    return st;
+  });
+}
+function stagesFromRules(rules) {
+  const stages = [], byName = new Map();
+  const stageOf = name => {
+    if (!byName.has(name)) { const st = { name, goal: null, steps: [], tools: [], items: [], exception: null }; byName.set(name, st); stages.push(st); }
+    return byName.get(name);
+  };
+  const entries = Object.entries(rules).map(([k, v]) => [Number(k), v]).sort((a, b) => a[0] - b[0]);
+  for (const [n, v] of entries) {
+    const p = parseRuleNote(v);
+    const st = stageOf(p ? p.stage : null);
+    if (!p || p.kind === "step") { const step = { number: n, note: p ? p.note : plain(v), stage: st, group: null }; st.steps.push(step); st.items.push({ step }); }
+    else if (p.kind === "exception") st.exception = n;
+    else st.tools.push({ number: n, tool: p.tool, stage: st });
+  }
+  // 阶段顺序：告知异常的编号按阶段顺序编，有它就按它排；自主规划阶段没有步骤号，只能靠它定位置。
+  const key = st => st.exception !== null ? st.exception : (st.steps.length ? st.steps[0].number : Infinity);
+  stages.sort((a, b) => key(a) - key(b));
+  for (const st of stages) st.auto = st.tools.length > 0 && st.steps.length === 0;
+  return stages;
+}
+// 游标记的是已经完成了什么：{阶段, 已完成步骤（全局步骤号或 null）, 已完成轮数（步骤组里的轮数或 null）}。
+// 第三步早先写出的运行文件里游标是 {阶段, 步骤（下一步下标，从 0 起）, 轮}，这里换算成同样的含义再显示。
+function positionOf(def, cursor) {
+  if (!cursor || typeof cursor !== "object") return null;
+  const st = def.byName.get(cursor["阶段"]);
+  let done = null, rounds = null, auto = false;
+  if ("已完成步骤" in cursor) {
+    done = cursor["已完成步骤"] === null ? null : (def.byNumber.get(Number(cursor["已完成步骤"])) || {}).step || { number: cursor["已完成步骤"], note: "" };
+    rounds = cursor["已完成轮数"];
+    auto = Boolean(st && st.auto);
+  } else {
+    const pos = cursor["步骤"];
+    done = st && Number.isInteger(pos) && pos > 0 && pos <= st.steps.length ? st.steps[pos - 1] : null;
+    auto = pos === null;
+    rounds = (done || auto) && cursor["轮"] ? cursor["轮"] : null;  // 旧写法里不在组里的步骤也记轮 0，分不出组，轮 0 不显示
+  }
+  return { stage: cursor["阶段"], done, auto, rounds };
+}
+// 轮数半句与告知异常的话同一写法：组尾「该组已完成 r 轮」；组内非组尾「该组已完成 r 轮，第 r+1 轮进行中」，r 为 0 时「该组第 1 轮进行中」。
+// 没有任务定义结构的旧文件分不出组尾，只写「该组已完成 r 轮」。
+function roundsClause(done, rounds) {
+  if (rounds === null || rounds === undefined) return "";
+  if (!done.group) return `，该组已完成 ${rounds} 轮`;
+  if (done.group.last === done.number) return `，该组已完成 ${rounds} 轮`;
+  return rounds === 0 ? "，该组第 1 轮进行中" : `，该组已完成 ${rounds} 轮，第 ${rounds + 1} 轮进行中`;
+}
+function positionText(at) {
+  if (!at) return "这次运行没有游标（旧格式文件）";
+  if (at.done) return `已完成『${at.stage}』阶段第 ${at.done.number} 步「${at.done.note}」` + roundsClause(at.done, at.rounds);
+  if (at.auto && at.rounds) return `在『${at.stage}』阶段已进行 ${at.rounds} 回合`;
+  return `在『${at.stage}』阶段起点，尚未执行步骤`;
+}
+function buildPath(r) {
+  const def = parseDefinition(r);
+  const data = {};
+  for (const e of [...r.before, ...r.startCheck]) if (e.name === "DATA_CHANGED") data[e.payload.slot] = e.payload.new;
+  const startData = JSON.parse(JSON.stringify(data));
+  const initialCursor = data[CURSOR];
+  const toolOf = new Map(), counts = new Map(), loopOfAction = new Map();
+  let previousCursor = initialCursor;
+  const iters = r.loops.map((loop, i) => {
+    const evs = loop.steps.flat();
+    const changed = new Set();
+    for (const e of evs) if (e.name === "DATA_CHANGED") { data[e.payload.slot] = e.payload.new; changed.add(e.payload.slot); }
+    const it = { k: i + 1, no: loop.no, data: JSON.parse(JSON.stringify(data)), changed, cursorBefore: previousCursor,
+      done: evs.some(e => e.name === "CHECK_DONE_RESULT" && e.payload.done),
+      defError: evs.some(e => e.name === "TASK_DEFINITION_ERROR"), action: null, row: null };
+    it.cursor = data[CURSOR];
+    previousCursor = it.cursor;
+    const prop = evs.find(e => e.name === "ACTION_PROPOSED");
+    if (prop) {
+      const p = prop.payload, info = r.actions.get(prop.action_id);
+      const history = info.events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+      const last = history.length ? history[history.length - 1].payload : null;
+      const answer = info.events.find(e => e.name === "MESSAGE_TAKEN" && e.payload.box === "inbox");
+      const number = Array.isArray(p.basis) ? Number(p.basis[0]) : null;
+      const ref = def.byNumber.get(number) || null;
+      it.action = { aid: prop.action_id, tool: p.tool, basis: p.basis, ref, number,
+        status: last ? last.new_status : "—", note: last ? last.note : "", result: last && "result" in last ? last.result : undefined,
+        utterance: questionUtterance(r, prop.action_id), answer: answer ? answer.payload.content : undefined };
+      if (ref) {
+        if (ref.kind === "exception") it.row = def.firstRow.get(ref.stage);
+        else it.row = def.rowOf.get(number);
+        if (ref.kind !== "exception") { counts.set(number, (counts.get(number) || 0) + 1); if (!toolOf.has(number)) toolOf.set(number, p.tool); }
+      }
+      it.exception = Boolean(ref && ref.kind === "exception");
+      it.redo = it.exception && it.action.result === REDO_RESULT;
+      it.failed = it.action.status === FAILED;
+      loopOfAction.set(prop.action_id, it.k);
+    }
+    return it;
+  });
+  const fin = finalStatusOf(r);
+  const completed = fin.status === "已完成";
+  const hasCursor = iters.some(it => it.cursor) || Boolean(initialCursor);
+  const stageIndexOf = c => c && def.byName.has(c["阶段"]) ? def.byName.get(c["阶段"]).index : -1;
+  let reached = -1;
+  for (const c of [initialCursor, ...iters.map(it => it.cursor)]) reached = Math.max(reached, stageIndexOf(c));
+  if (!hasCursor && iters.length) reached = def.stages.length - 1;
+  const finalCursor = iters.length ? iters[iters.length - 1].cursor : initialCursor;
+  const finalIndex = stageIndexOf(finalCursor);
+  const exceptions = new Map();
+  for (const it of iters) if (it.exception) {
+    const name = it.action.ref.stage.name;
+    if (!exceptions.has(name)) exceptions.set(name, []);
+    exceptions.get(name).push(it);
+  }
+  const status = def.stages.map(st => ({
+    achieved: completed || (hasCursor && st.index < finalIndex),
+    exceptions: exceptions.get(st.name) || [],
+    stoppedHere: !completed && hasCursor && st.index === finalIndex,
+  }));
+  const redos = iters.filter(it => it.redo).map(it => ({ it, from: it.cursorBefore ? it.cursorBefore["阶段"] : null, to: it.action.ref.stage.name }));
+  return { run: r, startData, def, iters, toolOf, counts, loopOfAction, fin, completed, hasCursor, reached, status, redos, finalCursor };
+}
+
+// ───────────── 视图：路线图 ─────────────
+function stageTitleParts(model, st) {
+  const s = model.status[st.index], parts = [];
+  if (st.auto) parts.push({ cls: "rp-lbl", text: "✦ 自主规划 · 模型逐回合选" });
+  if (s.exceptions.length) {
+    parts.push({ cls: "rp-lbl rp-bad", text: `✕ 第 ${s.exceptions.map(it => it.k).join("、")} 次迭代报异常` });
+    if (s.achieved) parts.push({ cls: "rp-lbl rp-good", text: "→ 重做后 ✓ 达成" });
+  } else if (s.achieved) {
+    parts.push({ cls: "rp-lbl rp-good", text: "✓ 达成" });
+  }
+  if (s.stoppedHere) parts.push({ cls: "rp-small", text: "游标停在这里" });
+  return parts;
+}
+function routeHTML(model) {
+  const { def } = model;
+  if (!def.stages.length) return "";
+  const P = 12, TOP = 16, GP = 8;  // GP：步骤组回环与组内步骤格之间的留白
+  const STEP_Y = TOP + (def.structured ? 56 : 36), STEP_H = 52;
+  const anyGroup = def.stages.some(st => st.items.some(item => item.group));
+  const autoRuns = new Map();
+  for (const it of model.iters) if (it.action && it.action.ref && it.action.ref.kind === "toolset") {
+    const name = it.action.ref.stage.name;
+    if (!autoRuns.has(name)) autoRuns.set(name, []);
+    autoRuns.get(name).push(it);
+  }
+  const anyAuto = def.stages.some(st => st.auto);
+  const boxH = STEP_Y + STEP_H + (anyGroup ? 32 : 14) + (anyAuto ? 50 : 0) - TOP;
+  let x = 10, svg = "";
+  const centers = new Map();
+  const stepWidth = text => Math.min(210, Math.max(140, textWidth(text, 12) + 28));
+  def.stages.forEach((st, i) => {
+    const mainText = it => st.auto ? it.tool : `第 ${it.number} 步 ${it.note}`;
+    // 本阶段的格子序列：自主规划阶段是工具卡片；固定步骤阶段是步骤，步骤组整体占一段并带回环。
+    const segments = st.auto ? st.tools.map(t => ({ items: [t], group: null })) : st.items.map(item => item.group ? { items: item.group.steps, group: item.group } : { items: [item.step], group: null });
+    for (const seg of segments) {
+      seg.widths = seg.items.map(it => stepWidth(mainText(it)));
+      const inner = seg.widths.reduce((acc, w) => acc + w, 0) + P * (seg.items.length - 1);
+      seg.label = seg.group ? routeGroupText(st, seg.group) : "";
+      seg.width = seg.group ? Math.max(inner + 2 * GP, Math.min(textWidth(seg.label, 11) + 2 * GP, 240)) : inner;
+    }
+    const title = st.name === null ? "（无名阶段）" : st.name;
+    const parts = stageTitleParts(model, st);
+    const titleW = textWidth(title, 13) + parts.reduce((acc, part) => acc + textWidth(part.text, 12) + 8, 0) + 2 * P;
+    const goal = st.goal ? `目标：${predicatesText(st.goal)}` : "";
+    const goalW = goal ? Math.min(textWidth(goal, 11) + 2 * P, 360) : 0;
+    const chips = st.auto ? (autoRuns.get(st.name) || []) : [];
+    const chipsW = chips.reduce((acc, it) => acc + textWidth(`${it.k} ${it.action.tool}`, 12) + 40, 0) + 2 * P;
+    const inner = segments.reduce((acc, seg) => acc + seg.width, 0) + P * Math.max(0, segments.length - 1);
+    const w = Math.max(inner + 2 * P, titleW, goalW, st.auto ? Math.max(chipsW, 260) : 0, 160);
+    const s = model.status[st.index];
+    const cls = s.exceptions.length ? "bad" : (s.achieved ? "good" : "");
+    svg += `<rect class="rp-phase ${cls}" data-stage="${esc(st.name)}" x="${x}" y="${TOP}" width="${w}" height="${boxH}" rx="6"/>`;
+    svg += `<text class="rp-ttl" x="${x + P}" y="${TOP + 22}">${esc(title)}${parts.map(part => ` <tspan class="${part.cls}">${esc(part.text)}</tspan>`).join("")}</text>`;
+    if (goal) svg += `<text class="rp-small" x="${x + P}" y="${TOP + 40}"><title>${esc(goal)}</title>${esc(fit(goal, 11, w - 2 * P))}</text>`;
+    let sx = x + P;
+    for (const seg of segments) {
+      if (seg.group) {
+        svg += `<rect class="rp-loop" x="${sx}" y="${STEP_Y - GP}" width="${seg.width}" height="${STEP_H + GP + 26}" rx="6"/>`
+          + `<text class="rp-small" x="${sx + GP}" y="${STEP_Y + STEP_H + 14}"><title>${esc(seg.label)}</title>↻ ${esc(fit(seg.label, 11, seg.width - 2 * GP - 14))}</text>`;
+      }
+      let cx = sx + (seg.group ? GP : 0);
+      seg.items.forEach((it, j) => {
+        const count = model.counts.get(it.number) || 0;
+        const state = count ? "" : (st.index <= model.reached ? "skip" : "never");
+        const full = mainText(it);
+        svg += `<g><title>${esc(full)}${count ? `，执行 ${count} 次` : (state === "skip" ? "，被跳过" : "，没到过")}</title>`
+          + `<rect class="rp-step ${state}" data-number="${it.number}" x="${cx}" y="${STEP_Y}" width="${seg.widths[j]}" height="${STEP_H}" rx="4"/>`
+          + `<text class="rp-lbl" x="${cx + 10}" y="${STEP_Y + 20}">${esc(fit(full, 12, seg.widths[j] - 20))}</text>`;
+        const tool = st.auto ? "" : (it.tool || model.toolOf.get(it.number) || "");
+        if (tool) svg += `<text class="rp-small" x="${cx + 10}" y="${STEP_Y + 38}">${esc(fit(tool, 11, seg.widths[j] - 50))}</text>`;
+        if (count) svg += `<text class="rp-count" x="${cx + seg.widths[j] - 10}" y="${STEP_Y + 44}" text-anchor="end">×${count}</text>`;
+        svg += `</g>`;
+        cx += seg.widths[j] + P;
+      });
+      sx += seg.width + P;
+    }
+    if (st.auto) {
+      const y = STEP_Y + STEP_H + 26;
+      const limit = st.max !== undefined ? `回合上限 ${operandText(st.max)} · ` : "";
+      svg += `<text class="rp-small" x="${x + P}" y="${y}">${esc(limit)}选择序列（只存在于这次运行）：${chips.length ? "" : "这次运行没有进入这个阶段"}</text>`;
+      let cx = x + P;
+      chips.forEach((it, j) => {
+        const label = `${it.k} ${it.action.tool}`, cw = textWidth(label, 12) + 20;
+        if (j) { svg += `<text class="rp-lbl" x="${cx}" y="${y + 23}">→</text>`; cx += 16; }
+        svg += `<rect class="rp-chip" x="${cx}" y="${y + 8}" width="${cw}" height="22" rx="11"/><text class="rp-lbl" x="${cx + cw / 2}" y="${y + 23}" text-anchor="middle">${esc(label)}</text>`;
+        cx += cw + 4;
+      });
+    }
+    centers.set(st.name, x + w / 2);
+    if (i < def.stages.length - 1) svg += `<path class="rp-seq" d="M ${x + w} ${TOP + boxH / 2} H ${x + w + 18}" marker-end="url(#rp-ag)"/>`;
+    x += w + 20;
+  });
+  // 结束位置：完成打绿旗；内核错误打红旗并写停在哪个阶段。
+  if (model.completed || model.fin.status === "内核错误") {
+    const color = model.completed ? "var(--good)" : "var(--bad)";
+    const at = model.finalCursor && model.finalCursor["阶段"] !== undefined ? `，停在『${model.finalCursor["阶段"]}』` : "";
+    const label = model.completed ? "结束" : "内核错误" + at;
+    svg += `<path d="M ${x} ${TOP} v 40 M ${x} ${TOP} h 22 l -6 8 6 8 h -22" stroke="${color}" stroke-width="2" fill="${color}"/>`
+      + `<text class="rp-small" x="${x - 2}" y="${TOP + 56}">${esc(label)}</text>`;
+    const items = deliverablesOf(model.run);
+    let extra = 0;
+    if (items) {
+      const link = model.completed ? `交付物 ${items.length} 份` : "交付物未交付";
+      svg += `<text class="rp-lbl rp-link" data-scroll-to="deliverables" x="${x - 2}" y="${TOP + 74}" style="fill:var(--path)"><title>跳到交付物</title>${esc(link)} ↑</text>`;
+      extra = textWidth(link + " ↑", 12) + 10;
+    }
+    x += Math.max(model.completed ? 50 : textWidth(label, 11) + 10, extra);
+  }
+  // 重做退回：从报异常前游标所在的阶段折返到被重做的阶段。
+  const base = TOP + boxH + 4;
+  let height = base + 8;
+  model.redos.forEach((redo, j) => {
+    const to = centers.get(redo.to), from = centers.has(redo.from) ? centers.get(redo.from) : to;
+    const depth = 26 + j * 30;
+    const a = from === to ? from + 40 : from, b = from === to ? to - 40 : to;
+    svg += `<path class="rp-arrow-back" d="M ${a} ${base} C ${a} ${base + depth}, ${b} ${base + depth}, ${b} ${base + 2}" marker-end="url(#rp-ah)"/>`;
+    const label = `↶ 第 ${redo.it.k} 次迭代：使用者选「重做本阶段」，游标退回「${redo.to}」`;
+    svg += `<text class="rp-lbl rp-back" x="${(a + b) / 2}" y="${base + depth * 0.75 + 16}" text-anchor="middle">${esc(label)}</text>`;
+    x = Math.max(x, (a + b) / 2 + textWidth(label, 12) / 2 + 10);
+    height = base + depth * 0.75 + 24;
+  });
+  const W = Math.ceil(x + 10), H = Math.ceil(height);
+  const defs = `<defs><marker id="rp-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--back)"/></marker>`
+    + `<marker id="rp-ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink3)"/></marker></defs>`;
+  return `<section id="route"><h2>路线图</h2>
+    <p class="hint">任务定义画成一条轨道，运行结果叠在上面：步骤格上的数字是执行次数，阶段格按结果着色，橙色折返箭头是使用者选「重做」造成的退回，旗子是结束位置。${def.structured ? "阶段格里写着目标，↻ 虚线框是会重复的步骤或步骤组，框底写「最多」几轮与重复条件。" : "这次运行的文件没有任务定义结构（旧格式），画不出目标与步骤组。"}点步骤格跳到它第一次执行的那次迭代。</p>
+    <div class="legend"><span><i class="sw path"></i>执行过（数字＝次数）</span><span><i class="sw skip"></i>被跳过</span><span><i class="sw never"></i>没到过</span>
+      <span><i class="sw good"></i>✓ 阶段目标达成</span><span><i class="sw bad"></i>✕ 报过异常</span><span><i class="sw back"></i>↶ 重做退回</span>${anyAuto ? "<span>✦ 模型选择</span>" : ""}</div>
+    <div class="scroll"><svg class="rp" id="route-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="路线图">${svg}${defs}</svg></div></section>`;
+}
+
+// ───────────── 视图：路径图 ─────────────
+function pathChartHTML(model) {
+  const { def, iters } = model, rows = def.rows, N = iters.length;
+  if (!rows.length || !N) return "";
+  // 有任务定义结构时按阶段分带：带左侧写阶段名与步数，带内每一步一行（全部步骤，没执行过的行画灰色空心标记）；
+  // 自主规划阶段的带内是可选工具各一行。旧文件没有结构，保持一行一个位置的画法。
+  const banded = def.structured;
+  const COL = 88, ROW = banded ? 40 : 44, T = banded ? 42 : 30, B = 36, R = 40;
+  const bandLabel = st => st.auto ? `✦ ${st.name} · ${st.tools.length} 个可选工具` : `${st.name} · ${st.steps.length} 步`;
+  const rowLabel = row => !banded ? row.label : (!row.item ? "（没有步骤）" : (row.stage.auto ? row.item.tool : `第 ${row.item.number} 步 ${fit(row.item.note, 12, 130)}`));
+  const BL = banded ? Math.max(...def.stages.map(st => textWidth(bandLabel(st), 12))) + 24 : 0;
+  const L = BL + Math.max(90, ...rows.map(row => textWidth(rowLabel(row), 12))) + (banded ? 34 : 24);
+  const W = L + N * COL + R, H = T + rows.length * ROW + B;
+  const x = k => L + (k - 0.5) * COL, y = i => T + i * ROW + ROW / 2;
+  let svg = "";
+  if (banded) {
+    const steps = def.stages.reduce((acc, st) => acc + st.steps.length, 0);
+    const walked = def.stages.reduce((acc, st) => acc + st.steps.filter(step => model.counts.get(step.number)).length, 0);
+    svg += `<text class="rp-lbl" x="8" y="18">${def.stages.length} 个阶段 · ${steps} 步 · 走过 ${walked} 步</text>`;
+    def.stages.forEach((st, index) => {
+      const i0 = def.firstRow.get(st), n = Math.max(1, st.auto ? st.tools.length : st.steps.length);
+      svg += `<rect class="${index % 2 ? "rp-band2" : "rp-band"}" x="4" y="${T + i0 * ROW + 2}" width="${L + N * COL + 4}" height="${n * ROW - 4}" rx="4"/>`
+        + `<text class="rp-bandlbl" x="12" y="${T + i0 * ROW + (n * ROW) / 2 + 4}">${esc(bandLabel(st))}</text>`;
+    });
+  } else {
+    for (const st of def.stages) if (st.auto) {
+      const i0 = def.firstRow.get(st);
+      svg += `<rect class="rp-band" x="${L - 6}" y="${T + i0 * ROW + 2}" width="${N * COL + 12}" height="${st.tools.length * ROW - 4}" rx="4"/>`
+        + `<text class="rp-small" x="${L + N * COL}" y="${T + i0 * ROW + 14}" text-anchor="end">✦ ${esc(st.name)} · 自主规划</text>`;
+    }
+  }
+  rows.forEach((row, i) => {
+    const never = banded && row.item && !model.counts.get(row.item.number);
+    svg += `<line class="rp-grid" x1="${L - 8}" x2="${W - R}" y1="${y(i)}" y2="${y(i)}"/>`
+      + `<text class="rp-rowlbl${never ? " never" : ""}" x="${L - (banded ? 22 : 12)}" y="${y(i) + 4}" text-anchor="end"><title>${esc(banded && row.item && !row.stage.auto ? `第 ${row.item.number} 步 ${row.item.note}` : rowLabel(row))}</title>${esc(rowLabel(row))}</text>`;
+    if (never) svg += `<circle class="rp-never" cx="${L - 12}" cy="${y(i)}" r="4"><title>这一步在这次运行里没有执行过</title></circle>`;
+  });
+  for (let k = 1; k <= N; k++) {
+    svg += `<line class="rp-grid" x1="${x(k)}" x2="${x(k)}" y1="${T - 6}" y2="${H - B + 6}"/>`
+      + `<text class="rp-axis" x="${x(k)}" y="${H - B + 22}" text-anchor="middle">第 ${iters[k - 1].no} 次迭代</text>`;
+  }
+  const pts = iters.filter(it => it.row !== null && it.row !== undefined);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const back = y(b.row) < y(a.row) && (a.redo || b.redo);
+    svg += `<line class="rp-line${back ? " back" : ""}" x1="${x(a.k)}" y1="${y(a.row)}" x2="${x(b.k)}" y2="${y(b.row)}"/>`;
+  }
+  if (pts.length) {
+    const last = pts[pts.length - 1];
+    if (model.completed) {
+      if (last.k < N) svg += `<line class="rp-line tail" x1="${x(last.k)}" y1="${y(last.row)}" x2="${x(N)}" y2="${y(last.row)}"/>`;
+      svg += `<text class="rp-small rp-good" x="${x(N)}" y="${y(last.row) - 12}" text-anchor="middle">✓ 完成</text>`;
+    } else if (model.fin.status === "内核错误") {
+      svg += `<text class="rp-small rp-bad" x="${x(last.k)}" y="${y(last.row) + 22}" text-anchor="middle">✕ 内核错误</text>`;
+    }
+  }
+  for (const it of pts) {
+    const cx = x(it.k), cy = y(it.row), a = it.action;
+    const tip = `第 ${it.no} 次迭代 · 行动 ${a.aid} · ${a.tool} · ${basisText(a.basis)} · ${a.status}`;
+    if (it.exception) {
+      const outcome = a.result !== undefined ? a.result : (a.answer !== undefined ? plain(a.answer) : a.status);
+      svg += `<g class="rp-ptg" data-k="${it.k}"><title>${esc(tip)}</title><rect class="rp-pt bad" x="${cx - 6}" y="${cy - 6}" width="12" height="12" transform="rotate(45 ${cx} ${cy})"/>`
+        + `<text class="rp-small rp-bad" x="${cx}" y="${cy - 12}" text-anchor="middle">✕ ${esc(fit(outcome, 11, 70))}</text></g>`;
+    } else {
+      svg += `<g class="rp-ptg" data-k="${it.k}"><title>${esc(tip)}</title><circle class="rp-pt${it.failed ? " failed" : ""}" cx="${cx}" cy="${cy}" r="6"/></g>`;
+    }
+  }
+  svg += `<line id="rp-cursor-line" class="rp-cursor" x1="${x(N)}" x2="${x(N)}" y1="${T - 6}" y2="${H - B + 6}"/>`;
+  return `<section id="path-chart"><h2>路径图</h2>
+    <p class="hint">横轴是迭代，纵轴是定义里的位置（自上而下按文件顺序${def.structured ? "，按阶段分带，带内每一步一行" : ""}）。正常运行是一条向下的阶梯；同一高度连续几个点是步骤组在重复；向上的橙色虚线是「重做」退回；红色菱形是告知异常那一次迭代，画在它报的阶段那一行。悬停或点击选中一次迭代，其余几处一起高亮。</p>
+    <div class="legend"><span><i class="sw path"></i>行动（蓝点，连线）</span><span><i class="sw bad"></i>✕ 告知异常（旁注使用者的选择）</span><span><i class="sw back"></i>↶ 重做退回（虚线）</span><span><i class="sw" style="border:2.5px solid var(--bad);border-radius:50%"></i>行动已失败</span>${def.structured ? `<span><i class="sw" style="border:1.5px solid var(--ink3);border-radius:50%;background:transparent"></i>没执行过的步骤</span>` : ""}</div>
+    <div class="scroll"><svg class="rp" id="path-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="路径图" data-l="${L}" data-col="${COL}">${svg}</svg></div></section>`;
+}
+
+// ───────────── 视图：时间轴 ─────────────
+function stepperHTML(model) {
+  const N = model.iters.length;
+  if (!N) return `<section id="stepper"><h2>时间轴</h2><p class="empty">这次运行没有迭代。</p></section>`;
+  return `<section id="stepper"><h2>时间轴</h2>
+    <p class="hint">拖到第 k 次迭代：路线图、路径图、行动卡片与循环时间线高亮那一次迭代，下面显示该次迭代结束时的游标、行动与槽位值（从事件重建），变过的槽位标黄。游标不当普通槽位列差异，它就是高亮的位置。</p>
+    <div class="tl"><button id="tl-prev">◀ 上一次迭代</button>
+      <input id="tl-slider" type="range" min="1" max="${N}" value="${N}" aria-label="迭代">
+      <button id="tl-next">下一次迭代 ▶</button><span class="tl-val" id="tl-label"></span></div>
+    <div class="now">
+      <div class="now-card"><h3>游标（这次迭代结束时）</h3><div class="big" id="tl-cursor"></div><div class="muted" id="tl-cursor-sub"></div></div>
+      <div class="now-card"><h3>这次迭代的行动</h3><div id="tl-action"></div></div>
+      <div class="now-card wide"><h3>槽位（这次迭代结束时）</h3><div class="scroll"><table class="now-kv" id="tl-slots"></table></div></div>
+    </div></section>`;
+}
+function cursorNote(model, it) {
+  if (it.redo) return "本次迭代使用者选「重做本阶段」，游标退回该阶段起点";
+  if (it.done) return "结果检查为真，任务完成";
+  if (it.failed) return "行动已失败，游标不写";
+  const before = it.cursorBefore, after = it.cursor, byName = model.def.byName;
+  if (before && after && byName.has(before["阶段"]) && byName.has(after["阶段"])) {
+    const i0 = byName.get(before["阶段"]).index, i1 = byName.get(after["阶段"]).index;
+    const skipped = model.def.stages.slice(i0 + 1, i1).map(st => `「${st.name}」`);
+    if (skipped.length) return `跳过目标已成立的阶段${skipped.join("")}`;
+  }
+  return "";
+}
+function selectIteration(model, k) {
+  const it = model.iters[k - 1];
+  if (!it) return;
+  const slider = document.getElementById("tl-slider");
+  if (slider) slider.value = k;
+  document.getElementById("tl-label").textContent = `第 ${it.no} 次迭代` + (k === model.iters.length && (model.completed || model.fin.status === "内核错误") ? "（结束）" : "");
+  // 路径图
+  const svg = document.getElementById("path-svg");
+  if (svg) {
+    const L = Number(svg.dataset.l), COL = Number(svg.dataset.col), cx = L + (k - 0.5) * COL;
+    const line = document.getElementById("rp-cursor-line");
+    line.setAttribute("x1", cx); line.setAttribute("x2", cx);
+    svg.querySelectorAll(".rp-pt").forEach(e => e.classList.remove("hi"));
+    const pt = svg.querySelector(`.rp-ptg[data-k="${k}"] .rp-pt`);
+    if (pt) pt.classList.add("hi");
+  }
+  // 路线图：这次迭代执行的步骤；告知异常高亮它报的阶段；没有行动时高亮游标所在阶段。
+  document.querySelectorAll("#route-svg .rp-step, #route-svg .rp-phase").forEach(e => e.classList.remove("hi"));
+  const ref = it.action && it.action.ref;
+  if (ref && ref.kind !== "exception") {
+    const box = document.querySelector(`#route-svg .rp-step[data-number="${it.action.number}"]`);
+    if (box) box.classList.add("hi");
+  } else {
+    const name = ref ? ref.stage.name : (it.cursor ? it.cursor["阶段"] : undefined);
+    if (name !== undefined) document.querySelectorAll("#route-svg .rp-phase").forEach(e => { if (e.dataset.stage === String(name)) e.classList.add("hi"); });
+  }
+  // 卡片
+  const at = positionOf(model.def, it.cursor);
+  document.getElementById("tl-cursor").textContent = positionText(at);
+  document.getElementById("tl-cursor-sub").textContent = cursorNote(model, it);
+  const a = it.action;
+  document.getElementById("tl-action").innerHTML = a
+    ? `<span class="pill ${it.exception ? "bad" : ""}">行动 ${a.aid}</span> <b>${esc(a.tool)}</b> <span class="pill ${it.failed ? "bad" : ""}">${esc(a.status)}</span>`
+      + `<div class="muted">${esc(basisText(a.basis))}</div>`
+      + (a.utterance !== null ? `<div style="margin-top:4px">话：${esc(a.utterance)}</div>` : "")
+      + (a.answer !== undefined ? `<div>回答：<b>${esc(plain(a.answer))}</b></div>` : "")
+      + (a.note ? `<div class="muted">说明：${esc(a.note)}</div>` : "")
+    : `<div class="muted">${it.done ? "结果检查为真，任务完成，不提行动" : (it.defError ? "任务定义错误，未提出行动" : "这次迭代没有提出行动")}</div>`;
+  document.getElementById("tl-slots").innerHTML = slotRowsHTML(model.run, it.data, it.changed, "当前值", false);
+  document.querySelectorAll("#actions .card").forEach(e => e.classList.toggle("hi", Number(e.dataset.k) === k));
+  document.querySelectorAll("#timeline .iv-card[data-k]").forEach(e => e.classList.toggle("hi", Number(e.dataset.k) === k));
+}
+function bindPath(model) {
+  const N = model.iters.length;
+  if (!N) return;
+  // 拖时间轴只高亮；点路径图、路线图步骤格、行动卡片时还把对应的迭代卡滚到眼前。
+  const go = (k, locate) => {
+    const kk = Math.min(N, Math.max(1, k));
+    selectIteration(model, kk);
+    const card = locate && document.querySelector(`#timeline .iv-card[data-k="${kk}"]`);
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const slider = document.getElementById("tl-slider");
+  slider.addEventListener("input", e => go(Number(e.target.value)));
+  document.getElementById("tl-prev").onclick = () => go(Number(slider.value) - 1);
+  document.getElementById("tl-next").onclick = () => go(Number(slider.value) + 1);
+  const svg = document.getElementById("path-svg");
+  if (svg) {
+    const nearest = e => {
+      const rect = svg.getBoundingClientRect(), scale = Number(svg.getAttribute("width")) / rect.width;
+      const px = (e.clientX - rect.left) * scale;
+      return Math.round((px - Number(svg.dataset.l)) / Number(svg.dataset.col) + 0.5);
+    };
+    svg.addEventListener("mousemove", e => { const k = nearest(e); if (k >= 1 && k <= N && k !== Number(slider.value)) go(k); });
+    svg.addEventListener("click", e => { const k = nearest(e); if (k >= 1 && k <= N) go(k, true); });
+  }
+  document.querySelectorAll("#route-svg .rp-step").forEach(box => box.addEventListener("click", () => {
+    const it = model.iters.find(x => x.action && x.action.number === Number(box.dataset.number) && !x.exception);
+    if (it) go(it.k, true);
+  }));
+  document.querySelectorAll("#actions .card").forEach(card => card.addEventListener("click", e => {
+    if (e.target.closest("details, a, button")) return;
+    if (card.dataset.k) go(Number(card.dataset.k), true);
+  }));
+  go(N);
+}
+
 
 // ───────────── 视图：运行索引 ─────────────
 const state = { runs: [], sortDesc: true, taskFilter: "", statusFilter: "", checked: new Set() };
@@ -386,7 +1104,7 @@ async function renderIndex() {
       <button id="compare" disabled>对比勾选的两次运行</button>
       <span class="muted" id="checked-count"></span>
     </div>
-    <div class="scroll"><table class="index"><thead><tr><th>对比</th><th>开始时刻</th><th>任务定义</th><th>任务标识</th><th>终态</th><th>原因</th><th>圈数</th><th>行动数</th><th>事件数</th><th>耗时毫秒</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="scroll"><table class="index"><thead><tr><th>对比</th><th>开始时刻</th><th>任务定义</th><th>任务标识</th><th>终态</th><th>原因</th><th>迭代数</th><th>行动数</th><th>事件数</th><th>耗时毫秒</th></tr></thead><tbody id="rows"></tbody></table></div>
     <p class="hint">点一行看运行详情；勾选两行后点「对比」。开始时刻标 * 的是旧命名文件，时刻取自文件修改时间。页面不自动刷新，要看新的运行请刷新。</p>
   </section>`;
   document.getElementById("f-task").value = state.taskFilter;
@@ -434,9 +1152,17 @@ async function renderRun(file) {
   try { events = await fetchJSON(`api/runs/${encodeURIComponent(file)}`); }
   catch (err) { document.getElementById("filters-slot").innerHTML = ""; app.innerHTML = `<section><p class="error">读取运行失败：${esc(err.message)}</p></section>`; return; }
   const r = buildRecord(file, events);
+  r.path = buildPath(r);
   document.getElementById("filters-slot").innerHTML = filtersHTML(r);
-  app.innerHTML = overviewHTML(r) + timelineHTML(r) + slotsHTML(r) + cardsHTML(r);
+  const pathViews = r.started ? routeHTML(r.path) + pathChartHTML(r.path) + stepperHTML(r.path) : "";
+  app.innerHTML = overviewHTML(r) + deliverablesHTML(r) + pathViews + iterationsHTML(r) + slotsHTML(r) + cardsHTML(r);
+  document.querySelectorAll("[data-scroll-to]").forEach(el => el.addEventListener("click", () => {
+    const target = document.getElementById(el.dataset.scrollTo);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  bindIterations();
   bindFilters();
+  if (r.started) bindPath(r.path);
 }
 function filtersHTML(r) {
   return `<nav class="filters" aria-label="过滤">
@@ -453,72 +1179,491 @@ function filtersHTML(r) {
     <label>槽位 <select id="f-slot"><option value="">全部</option>${r.slots.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}</select></label>
     <span id="f-count" class="muted"></span></nav>`;
 }
+// 槽位表（概览与时间轴共用）：表头 槽位、类型、值、说明。类型与说明取自 definition 的槽位元数据，旧文件留空；
+// 列表显示「n 项」、字典显示摘要，都带「展开／收起」；「游标」行标保留槽位，值写可读位置；changed 里的行标黄。
+// withItems 为真时，列表型槽位下面缩进列出项字段（类型、说明、提问）。
+function valueHTML(v) {
+  if (Array.isArray(v)) return `${v.length} 项${toggleHTML(jsonText(v))}`;
+  if (v && typeof v === "object") return `${esc(brief(v))}${toggleHTML(jsonText(v))}`;
+  return esc(plain(v));
+}
+function slotRowsHTML(r, values, changed, valueLabel, withItems) {
+  const metas = (r.started && r.started.definition && r.started.definition["槽位"]) || {};
+  const order = [...Object.keys((r.started && r.started.slots) || {}), ...Object.keys(values)].filter((k, i, arr) => arr.indexOf(k) === i && k in values);
+  const extra = meta => [("取值" in meta ? `取值 ${meta["取值"].map(plain).join("、")}` : ""), ("提问" in meta ? `提问「${meta["提问"]}」` : "")].filter(Boolean);
+  const noteHTML = meta => esc(meta["说明"] || "") + extra(meta).map(t => `<span class="muted">；${esc(t)}</span>`).join("");
+  const rows = order.map(name => {
+    const v = values[name], cls = changed.has(name) ? "changed" : "";
+    if (name === CURSOR) {
+      const text = r.path ? positionText(positionOf(r.path.def, v)) : brief(v);
+      return `<tr class="${cls}"><td>${esc(name)}</td><td><span class="muted">保留槽位</span></td><td>${esc(text)}</td><td class="muted">任务当前的位置，加载器自动加入</td></tr>`;
+    }
+    const meta = metas[name] || {};
+    let html = `<tr class="${cls}"><td>${esc(name)}</td><td>${esc(meta["类型"] || "")}</td><td>${valueHTML(v)}</td><td>${noteHTML(meta)}</td></tr>`;
+    if (withItems && meta["项"]) {
+      html += Object.entries(meta["项"]).map(([field, fm]) =>
+        `<tr class="sub"><td>项字段 ${esc(field)}</td><td>${esc(fm["类型"] || "")}</td><td class="muted">—</td><td>${noteHTML(fm)}</td></tr>`).join("");
+    }
+    return html;
+  }).join("");
+  return `<thead><tr><th>槽位</th><th>类型</th><th>${esc(valueLabel)}</th><th>说明</th></tr></thead><tbody>${rows || `<tr><td colspan="4" class="muted">没有槽位</td></tr>`}</tbody>`;
+}
+// ───────────── 视图：交付物 ─────────────
+// 按任务定义「交付物」块的形态渲染终态数据，不以槽位原始形态展示。没有 definition 或没有交付物块的文件不显示。
+function deliverablesOf(r) {
+  const def = r.started && r.started.definition;
+  return def && Array.isArray(def["交付物"]) ? def["交付物"] : null;
+}
+function isFilled(v) { return !(v === null || v === undefined || (Array.isArray(v) && !v.length) || v === ""); }
+function boolOf(v) {
+  if (v === true || v === "是") return true;
+  if (v === false || v === "否") return false;
+  return null;
+}
+function numberText(v) { return typeof v === "number" ? v.toLocaleString("en-US") : plain(v); }
+// 是／否字段：布尔型，或取值恰好是「是」「否」的枚举型；显示成是否文字，汇总时按「是」计数。
+function isYesNo(meta) {
+  return Boolean(meta) && (meta["类型"] === "布尔" || (meta["类型"] === "枚举" && Array.isArray(meta["取值"]) && meta["取值"].length === 2 && meta["取值"].includes("是") && meta["取值"].includes("否")));
+}
+function scalarHTML(meta, v) {
+  if (!isFilled(v)) return `<span class="dl-empty">未填</span>`;
+  if (isYesNo(meta)) return boolOf(v) === null ? esc(plain(v)) : (boolOf(v) ? "是" : "否");
+  if (meta && meta["类型"] === "数字") return esc(numberText(v));
+  return esc(plain(v));
+}
+// 布尔字段的是／否文字：字段名以「是否」开头时取后半，如「是否纳入」→「✓ 纳入」「— 不纳入」；否则「✓ 是」「— 否」。
+function boolCellHTML(field, v) {
+  const b = boolOf(v), word = field.startsWith("是否") ? field.slice(2) : "";
+  if (b === null) return `<span class="dl-no">尚未确认</span>`;
+  return b ? `<span class="dl-yes">✓ ${esc(word || "是")}</span>` : `<span class="dl-no">— ${esc(word ? "不" + word : "否")}</span>`;
+}
+function writerResult(r, slot) {
+  const writes = r.events.filter(e => e.name === "DATA_CHANGED" && e.payload.slot === slot && typeof e.payload.source === "number" && isFilled(e.payload.new));
+  if (!writes.length) return null;
+  const aid = writes[writes.length - 1].payload.source, info = r.actions.get(aid);
+  const done = info ? info.events.filter(e => e.name === "ACTION_STATUS_CHANGED" && "result" in e.payload) : [];
+  return { aid, content: done.length ? done[done.length - 1].payload.result : undefined };
+}
+function startedAtText(r) {
+  const m = /_(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})/.exec(r.file);
+  if (!m || !r.events.length) return "";
+  const start = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]);
+  const end = new Date(start.getTime() + (r.events[r.events.length - 1].ts - r.t0) * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())} ${pad(end.getHours())}:${pad(end.getMinutes())}`;
+}
+function deliverableCard(r, item, completed) {
+  const metas = r.started.definition["槽位"] || {}, data = r.finalData, form = item["形态"];
+  const head = (tag, wide) => `<div class="dl-card${wide ? " wide" : ""}"><div class="dl-t"><b>${esc(item["名字"])}</b><span class="dl-k">${esc(item["说明"])}</span><span class="dl-f">${esc(tag)}</span></div><div class="dl-body">`;
+  const missing = [];
+  let body = "", tag = form, wide = false, present = false;
+  if (form === "表单") {
+    const sources = Array.isArray(item["来源"]) ? item["来源"] : [item["来源"]];
+    present = sources.some(slot => isFilled(data[slot]));
+    body = `<div class="dl-form">${sources.map(slot => {
+      const meta = metas[slot] || {};
+      if (!isFilled(data[slot])) missing.push(`「${meta["说明"] || slot}」未填`);
+      return `<div class="dl-lb">${esc(meta["说明"] || slot)}</div><div class="dl-v">${scalarHTML(meta, data[slot])}</div>`;
+    }).join("")}</div>`;
+  } else if (form === "表格") {
+    const slot = item["来源"], meta = metas[slot] || {}, fields = Object.entries(meta["项"] || {}), rows = Array.isArray(data[slot]) ? data[slot] : [];
+    present = rows.length > 0; wide = true;
+    const head2 = fields.map(([name, fm]) => `<th class="${fm["类型"] === "数字" ? "num" : ""}" title="${esc(fm["说明"] || "")}">${esc(name)}</th>`).join("");
+    const cells = row => fields.map(([name, fm]) => {
+      const v = row && typeof row === "object" ? row[name] : undefined;
+      if (isYesNo(fm)) return `<td>${boolCellHTML(name, v)}</td>`;
+      if (fm["类型"] === "数字") return `<td class="num">${isFilled(v) ? esc(numberText(v)) : `<span class="dl-empty">—</span>`}</td>`;
+      return `<td>${isFilled(v) ? esc(plain(v)) : `<span class="dl-empty">—</span>`}</td>`;
+    }).join("");
+    const parts = [`共 ${rows.length} 行`];
+    let incomplete = false;
+    for (const [name, fm] of fields) {
+      if (!isYesNo(fm)) continue;
+      const word = name.startsWith("是否") ? name.slice(2) : "为是";
+      const yes = rows.filter(row => boolOf(row && row[name]) === true).length, open = rows.filter(row => boolOf(row && row[name]) === null).length;
+      parts.push(`${word} ${yes} 行`);
+      if (open) { missing.push(`${open} 行的「${name}」尚未确认`); incomplete = true; }
+    }
+    if (!rows.length) missing.push(`「${meta["说明"] || slot}」还没有内容`);
+    tag = `表格 · ${rows.length} 行${incomplete || !completed ? " · 不完整" : ""}`;
+    body = rows.length
+      ? `<div class="scroll"><table class="dl-tb"><thead><tr>${head2}</tr></thead><tbody>${rows.map(row => `<tr>${cells(row)}</tr>`).join("")}</tbody></table></div><div class="dl-foot">${esc(parts.join("，"))}。</div>`
+      : `<div class="dl-empty">还没有任何行。</div>`;
+  } else if (form === "文本") {
+    const slot = item["来源"], meta = metas[slot] || {};
+    present = isFilled(data[slot]);
+    if (!present) missing.push(`「${meta["说明"] || slot}」为空`);
+    body = present ? `<div class="dl-txt">${esc(plain(data[slot]))}<div class="dl-src">来源：槽位「${esc(slot)}」 · ${esc(meta["说明"] || "")}</div></div>` : `<div class="dl-empty">还没有内容。</div>`;
+  } else if (form === "文件") {
+    const slot = item["来源"], path = data[slot];
+    present = isFilled(path);
+    if (!present) missing.push(`${item["名字"]}未生成（「${slot}」为空）`);
+    const writer = present ? writerResult(r, slot) : null;
+    const content = writer && writer.content !== undefined ? (typeof writer.content === "string" ? writer.content : jsonText(writer.content)) : null;
+    body = present ? `<div class="dl-file"><div class="dl-ico"></div><div style="min-width:0"><div class="dl-nm">${esc(String(path).split("/").pop())}</div><div class="dl-pth">${esc(path)}</div>`
+      + (content !== null ? `<details class="tg" open><summary><span class="tg-open">展开内容</span><span class="tg-close">收起内容</span></summary><pre>${esc(content)}</pre></details>`
+        + `<div class="dl-foot">内容取自写入「${esc(slot)}」的那条行动（行动 ${writer.aid}）的返回值。</div>` : `<div class="dl-foot">没有找到写入这个路径的行动返回值。</div>`)
+      + `</div></div>` : "";
+  }
+  return { present, missing, html: present ? head(tag, wide) + body + (missing.length && present ? `<div class="dl-missing">缺：${esc(missing.join("；"))}。</div>` : "") + `</div></div>` : "" };
+}
+function deliverablesHTML(r) {
+  const items = deliverablesOf(r);
+  if (!items) return "";
+  const fin = finalStatusOf(r), completed = fin.status === "已完成";
+  const cards = items.map(item => deliverableCard(r, item, completed));
+  const shown = cards.filter(card => card.present).length;
+  const absent = cards.filter(card => !card.present).flatMap(card => card.missing);
+  const status = completed ? `<span class="dl-st">✓ 已交付 ${shown} 份</span>` : `<span class="dl-st no">✕ 未交付</span>`;
+  const when = completed ? `${startedAtText(r) ? startedAtText(r) + " 完成 · " : ""}${r.loops.length} 次迭代` : `${fin.reason || fin.status} · 第 ${r.loops.length} 次迭代`;
+  return `<section id="deliverables"><h2>交付物</h2>
+    <p class="hint">按任务定义「交付物」块的形态渲染这次运行结束时的数据。</p>
+    <div class="dl-head"><span class="dl-n">${esc(r.started.task_def_name)} · ${esc(r.taskId)}</span>${status}<span class="dl-k">${esc(when)}</span></div>
+    ${items.length ? `<div class="dl-grid">${cards.map(card => card.html).join("")}</div>` : `<p class="empty">这份任务定义没有写交付物。</p>`}
+    ${absent.length ? `<div class="dl-missing">缺：${esc(absent.join("；"))}。</div>` : ""}
+  </section>`;
+}
 function overviewHTML(r) {
   const rows = [["任务标识", esc(r.taskId)], ["运行文件", `<code>${esc(r.file)}</code>`]];
   const s = r.started;
   if (s) {
     rows.push(["任务定义名", esc(s.task_def_name)]);
-    rows.push([`槽位表（${Object.keys(s.slots).length} 个）`, `<ul class="plain">${Object.entries(s.slots).map(([k, v]) => `<li><b>${esc(k)}</b> 初始值 ${esc(brief(v))}</li>`).join("")}</ul>`]);
-    rows.push([`选择规则（${Object.keys(s.rules).length} 条）`, `<ul class="plain">${Object.entries(s.rules).map(([k, v]) => `<li>规则 ${esc(k)}：${esc(v)}</li>`).join("")}</ul>`]);
+    rows.push([`槽位表（${Object.keys(s.slots).length} 个）`, `<div class="scroll"><table class="now-kv">${slotRowsHTML(r, s.slots, new Set(), "初始值", true)}</table></div>`]);
+    rows.push(["阶段与步骤", stagesHTML(r.path)]);
     rows.push([`工具清单（${Object.keys(s.tools).length} 个）`, `<ul class="plain">${Object.entries(s.tools).map(([k, v]) => `<li><b>${esc(k)}</b> 参数名 ${esc(v.length ? v.join("、") : "无")}</li>`).join("")}</ul>`]);
   } else {
-    rows.push(["任务开始事件", "文件里没有「任务开始」事件，无法列出槽位表、规则与工具"]);
+    rows.push(["任务开始事件", "文件里没有「任务开始」事件，无法列出槽位表、阶段与步骤、工具，也画不出路线图、路径图与时间轴"]);
   }
   const fin = finalStatusOf(r);
   rows.push(["终态与原因", `<b>${esc(fin.status)}</b>${fin.reason ? `，原因：${esc(fin.reason)}` : ""}`]);
   const nState = r.events.filter(e => e.kind === "state").length;
   rows.push(["事件数", `共 ${r.events.length} 个：状态事件 ${nState} 个，追踪事件 ${r.events.length - nState} 个；耗时 ${r.events.length ? ((r.events[r.events.length - 1].ts - r.t0) * 1000).toFixed(3) : 0} 毫秒`]);
-  rows.push(["循环", `共 ${r.loops.length} 圈，提出行动 ${r.actions.size} 个`]);
+  const nException = r.path.iters.filter(it => it.exception).length, nRedo = r.path.redos.length;
+  rows.push(["循环", `共 ${r.loops.length} 次迭代，提出行动 ${r.actions.size} 个` + (nException ? `，告知异常 ${nException} 次，其中重做 ${nRedo} 次` : "")]);
   const sources = {};
   for (const e of r.events) sources[e.source] = (sources[e.source] || 0) + 1;
   rows.push(["记录方", Object.entries(sources).map(([k, v]) => `${esc(k)} 发布 ${v} 个`).join("；")]);
   return `<section id="overview"><h2>任务概览</h2><table class="kv">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}</table></section>`;
 }
-function eventLineHTML(r, e) {
+// ───────────── 视图：迭代卡（替换原来的循环时间线） ─────────────
+// 每次迭代一张卡：卡头一句话、五步进度条、五行叙事；每行末尾「n 条事件」开关就地展开它翻译的原始事件，句内脚注 #n 点开单条。
+// 不在迭代内的事件归「开始」卡与收尾卡；原始事件一条不丢、序号不变。叙事全部由事件数据生成，页面不复制谓词逻辑。
+const STEP_KEYS_NEW = ["select", "control", "execute", "update", "check"];
+const STEP_KEYS_OLD = ["check", "select", "control", "execute", "update"];
+const STEP_LABEL = { select: "行动选择", control: "执行控制", execute: "行动执行", update: "状态更新", check: "结果检查" };
+const SUCCEEDED = "已成功", APPROVED = "已获准", WAITING = "等待中";
+let ivRowSeq = 0;
+
+function relMs(r, e) { return ((e.ts - r.t0) * 1000).toFixed(1); }
+function fnHTML(e) { return e ? `<a class="iv-fn" data-one="${e.seq}">#${e.seq}</a>` : ""; }
+function named1(events, name, test) { return events.find(e => e.name === name && (!test || test(e))); }
+function ivEventRowHTML(r, e) {
   const origin = originOf(e);
-  const rel = `+${((e.ts - r.t0) * 1000).toFixed(1)}`;
-  const line = `<div class="line ${e.kind}${e.name === "MAILBOX_WAIT" ? " is-wait" : ""}"><span class="seq">#${e.seq}</span><span class="rel">${rel}ms</span>`
-    + `<span class="badge ${e.kind}">${e.kind === "state" ? "状态" : "追踪"}</span><span class="label">${esc(LABELS[e.name] || e.name)}</span>`
-    + `<span class="desc">${describeHTML(e)}<span class="src">${esc(e.source)}</span></span></div>`;
-  let left, right = "";
-  if (origin === "external") {
-    left = r.blocked.has(e.seq) ? `<span class="blocked">内核在此阻塞，等待外部输入</span>` : `<span class="idle">内核一侧此刻没有事件</span>`;
-    right = `<span class="ext-tag">外部 · ${esc(initiatorOf(e))}</span>${line}`;
-  } else if (origin === "tool") {
-    left = `<div class="tool-impl"><span class="tool-tag">工具实现 · ${esc(e.source)}</span>${line}</div>`;
-  } else if (isQuestionSent(e)) {
-    left = `<div class="ask-out"><span class="ask-tag">向外部提问 · 发件箱</span>${line}</div>`;
+  return `<tr data-seq="${e.seq}" data-kind="${e.kind}" data-origin="${origin}" data-action="${e.action_id === null ? "" : e.action_id}" data-slots="${esc(JSON.stringify(slotsOfEvent(r, e)))}"${origin === "external" ? ` class="ext"` : ""}>`
+    + `<td class="n">#${e.seq} +${relMs(r, e)} ms</td><td class="nm"><span class="iv-tag ${e.kind}">${e.kind === "state" ? "状态" : "追踪"}</span> ${esc(LABELS[e.name] || e.name)}</td>`
+    + `<td class="d">${describeHTML(e, r)}</td><td class="who">${esc(e.source)}</td></tr>`;
+}
+// 叙事的一行：标签、句子、「n 条事件」开关与就地展开的原始事件。
+function ivRowHTML(r, label, textHTML, events, bad) {
+  const id = `iv-ev-${++ivRowSeq}`;
+  const ext = events.filter(e => originOf(e) === "external").length;
+  const toggle = events.length
+    ? `<button type="button" class="iv-toggle" data-for="${id}">${events.length} 条事件${ext ? `，含外部 ${ext} 条` : ""}</button>`
+    : `<span class="iv-toggle none">没有事件</span>`;
+  return `<div class="iv-k">${label}</div><div class="iv-v${bad ? " bad" : ""}" data-row="${id}">${toggle}${textHTML}</div>`
+    + (events.length ? `<div class="iv-evs" id="${id}"><div class="scroll"><table><colgroup><col style="width:9em"><col style="width:11.5em"><col><col style="width:9.5em"></colgroup>${events.map(e => ivEventRowHTML(r, e)).join("")}</table></div></div>` : "");
+}
+function targetText(target) {
+  if (!target || typeof target !== "object") return plain(target);
+  return `${target.slot}${(target.path || []).map(p => typeof p === "number" ? `[${p}]` : `.${p}`).join("")}`;
+}
+function actionCallText(tool, params) {
+  if (tool === EXCEPTION_TOOL_NAME) return tool;
+  if (params && params.target) return `${tool}(${targetText(params.target)})`;
+  const s = paramsSummary(params);
+  return `${tool}(${s === "无参数" ? "" : s})`;
+}
+const EXCEPTION_TOOL_NAME = "告知异常";
+function refBindings(raw, actual, path, out) {
+  if (isRef(raw)) { out.push(`${path} ← ${"槽位" in raw ? `槽位「${raw["槽位"]}」` : operandText(raw)} ＝ ${brief(actual)}`); return out; }
+  if (Array.isArray(raw)) raw.forEach((x, i) => refBindings(x, Array.isArray(actual) ? actual[i] : undefined, `${path}[${i}]`, out));
+  else if (raw && typeof raw === "object") Object.entries(raw).forEach(([k, x]) => refBindings(x, actual && typeof actual === "object" ? actual[k] : undefined, path ? `${path}.${k}` : k, out));
+  return out;
+}
+function evalSimpleRef(ref, data) {
+  if (!isRef(ref)) return ref;
+  const [k, a] = Object.entries(ref)[0];
+  if (k === "槽位") return data[a];
+  if (k === "长度") return Array.isArray(data[a]) ? data[a].length : null;
+  return null;
+}
+function changeText(p) {
+  if (Array.isArray(p.old) || Array.isArray(p.new)) {
+    const len = v => Array.isArray(v) ? `${v.length} 项` : plain(v);
+    const lines = Array.isArray(p.old) && Array.isArray(p.new) ? valueDiff(p.old, p.new) : [];
+    return `${p.slot}：${len(p.old)} → ${len(p.new)}${lines.length ? `（${lines.join("；")}）` : ""}`;
+  }
+  if (p.old && p.new && typeof p.old === "object" && typeof p.new === "object") return `${p.slot}：${valueDiff(p.old, p.new).join("；") || "值未变"}`;
+  return `${p.slot}：${plain(p.old)} → ${plain(p.new)}`;
+}
+
+// ① 为什么选它：从依据的「选择经过」生成；告知异常写三种异常各自的句子；旧文件没有选择经过，只写依据。
+function whyHTML(r, it, events, dataBefore) {
+  const prop = named1(events, "ACTION_PROPOSED"), registered = named1(events, "ACTION_STATUS_CHANGED");
+  const err = named1(events, "TASK_DEFINITION_ERROR");
+  if (!prop) return err ? `任务定义错误：${esc(err.payload.reason)}${fnHTML(err)}。行动选择没有给出候选，内核报错结束。` : "这次迭代没有提出行动。";
+  const tail = `<div class="iv-sub">行动登记为已提出${fnHTML(registered)}</div>`;
+  if (it.exception) return exceptionWhyHTML(r, it, prop, dataBefore) + tail;
+  const def = r.path.def, basis = prop.payload.basis, hit = Array.isArray(basis) ? basis[2] : null;
+  const ref = it.action && it.action.ref, stage = ref ? ref.stage : null, step = ref && ref.kind === "step" ? ref.step : null;
+  const trail = hit && typeof hit === "object" && hit["选择经过"];
+  const bindings = step && step.params ? refBindings(step.params, prop.payload.params, "", []) : [];
+  const bindHTML = bindings.length ? `<div class="iv-sub">参数由引用求出：${esc(bindings.join("；"))}${fnHTML(prop)}</div>` : "";
+  if (!trail || !stage) return `依据：${esc(basisText(basis))}${fnHTML(prop)}。${bindHTML}${tail}`;
+  const parts = [];
+  for (const name of trail["前进"] || []) parts.push(`阶段『${esc(name)}』目标已成立，前进`);
+  for (const [name, why] of trail["跳过阶段"] || []) parts.push(`『${esc(name)}』${esc(why)}，跳过`);
+  const goal = stage.goal ? `目标「${esc(predicatesText(stage.goal))}」` : "目标";
+  if ((trail["前进"] || []).length) parts.push(`停在『${esc(stage.name)}』，${goal}不成立`);
+  else if (it.cursorBefore) parts.push(`${esc(positionText(positionOf(def, it.cursorBefore)))}，『${esc(stage.name)}』${goal}还不成立`);
+  for (const [number, why] of trail["跳过步骤"] || []) {
+    const skipped = def.byNumber.get(Number(number));
+    parts.push(`第 ${number} 步${skipped && skipped.step ? `「${esc(skipped.step.note)}」` : ""}跳过（${esc(why)}）`);
+  }
+  const rest = Object.fromEntries(Object.entries(hit).filter(([k]) => k !== "选择经过"));
+  const value = Object.keys(rest).length ? `（本次值 ${esc(brief(rest))}）` : "";
+  parts.push(`选第 ${basis[0]} 步${step ? `「${esc(step.note)}」` : ""}：前置条件成立${value}`);
+  return `${parts.join("；")}${fnHTML(prop)}。${bindHTML}${tail}`;
+}
+// 三种异常的判别由加载器写在依据命中值的「异常种类」里，页面只读它；早先的运行文件没有这个键，才退回按报告内容推断。
+function exceptionWhyHTML(r, it, prop, dataBefore) {
+  const p = prop.payload.params || {}, S = p["阶段"], at = p["游标"] || {};
+  const goals = (p["未达成目标"] || []).map(g => g["文字"]).join("；");
+  const basis = prop.payload.basis, kind = Array.isArray(basis) && basis[2] && typeof basis[2] === "object" ? basis[2]["异常种类"] : undefined;
+  const sentences = {
+    "后续破坏": `『${esc(at["阶段"])}』之后已无阶段，但任务完成条件不成立：『${esc(S)}』阶段的目标被后续阶段破坏了（${esc(goals)}）。这是第三种异常：内核不自动回头，请使用者裁定`,
+    "组到上限": `『${esc(S)}』阶段的步骤组重复到了上限，或这一轮没有可做的步骤，重复条件仍不成立，目标未达成（${esc(goals)}）。这是第二种异常：内核不再重复，请使用者裁定`,
+    "一趟走完": `『${esc(S)}』阶段的步骤走完了一趟，目标仍未达成（${esc(goals)}）。这是第一种异常：内核不自己重试，请使用者裁定`,
+  };
+  let head = sentences[kind];
+  if (!head && at["阶段"] !== undefined && at["阶段"] !== S) head = sentences["后续破坏"];
+  if (!head) {
+    // 早先的运行文件：已完成步骤是组尾且已完成轮数达到组的「最多」时按第二种写，其余按第一种写。
+    const done = at["已完成步骤"] !== undefined && at["已完成步骤"] !== null ? r.path.def.byNumber.get(Number(at["已完成步骤"])) : null;
+    const group = done && done.step ? done.step.group : null;
+    const limit = group ? evalSimpleRef(group.max, dataBefore) : null;
+    head = at["是组尾"] === true && typeof limit === "number" && at["已完成轮数"] >= limit ? sentences["组到上限"] : sentences["一趟走完"];
+  }
+  const status = (p["步骤现况"] || []).map(s => `第 ${s["步骤"]} 步 ${s["工具"]} ${s["成立"] ? "可做" : "不可做"}（${s["说明"]}）`);
+  return `${head}${fnHTML(prop)}。${status.length ? `<div class="iv-sub">步骤现况：${esc(status.join("；"))}</div>` : ""}`;
+}
+// ② 执行控制
+function controlHTML(events) {
+  const st = named1(events, "ACTION_STATUS_CHANGED"), res = named1(events, "CONTROL_RESULT");
+  if (!st && !res) return "没有到执行控制。";
+  const verdict = st && st.payload.new_status === APPROVED ? `获准${fnHTML(st)}。` : `被拒绝：${esc(st ? st.payload.note : "")}${fnHTML(st)}。`;
+  const checked = res && res.payload.checked ? `<span class="iv-sub">核验：${esc(res.payload.checked)}${fnHTML(res)}${res.payload.checked === "恒允许" ? "，本步一律获准，不核前置条件与授权" : ""}。</span>` : "";
+  return verdict + checked;
+}
+// ③ 做了什么：普通工具写调用与返回；询问与告知异常画成对话气泡。
+function executeHTML(r, it, events) {
+  const enter = named1(events, "EXECUTE_CALL", e => e.payload.phase === "enter");
+  if (!enter) return "没有执行。";
+  const statuses = events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+  const final = [...statuses].reverse().find(e => e.payload.new_status !== WAITING);
+  const tool = enter.payload.tool, params = it.action ? r.actions.get(it.action.aid).proposed.payload.params : {};
+  const questions = events.filter(isQuestionSent);
+  if (!questions.length) {
+    const chips = Object.entries(params || {}).map(([k, v]) => `<span class="iv-chip">${esc(k)}＝${esc(brief(v))}</span>`).join("");
+    const call = `调用工具 <b>${esc(tool)}</b>，参数 ${chips || "无"}${fnHTML(enter)}。`;
+    if (!final) return call;
+    if (final.payload.new_status === SUCCEEDED) {
+      const result = "result" in final.payload ? `（返回值 ${esc(fit(brief(final.payload.result), 12, 360))}）` : "";
+      return `${call}返回：${esc(final.payload.note)}${result}${fnHTML(final)}。`;
+    }
+    return `${call}<span class="iv-bad">${esc(final.payload.new_status)}：${esc(final.payload.note)}</span>${fnHTML(final)}。`;
+  }
+  const bubbles = questions.map(q => {
+    const qno = q.payload.seq;
+    const waiting = statuses.find(e => e.payload.new_status === WAITING);
+    const hostTake = named1(events, "MESSAGE_TAKEN", e => e.payload.box === "outbox" && e.payload.seq === qno);
+    const answer = named1(events, "MESSAGE_PUT", e => e.payload.box === "inbox" && e.payload.in_reply_to === qno);
+    const inTake = named1(events, "MESSAGE_TAKEN", e => e.payload.box === "inbox" && e.payload.in_reply_to === qno);
+    const wait = named1(events, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end");
+    const closed = named1(events, "MAILBOX_CLOSED", e => e.payload.box === "inbox");
+    const sys = `<div class="iv-msg"><div class="who">系统 → 使用者</div><div><div class="bub">${esc(utteranceOf(q.payload.content) || plain(q.payload.content))}${fnHTML(q)}</div>`
+      + `<div class="meta">发件箱 · 问题 #${esc(qno)}${tool === EXCEPTION_TOOL_NAME ? " · 带异常报告" : ""}${waiting ? ` · 行动记「等待中」${fnHTML(waiting)}` : ""}${hostTake ? ` · 宿主取走${fnHTML(hostTake)}` : ""}</div></div></div>`;
+    const user = answer
+      ? `<div class="iv-msg user"><div class="who">使用者</div><div><div class="bub">${esc(plain(answer.payload.content))}${fnHTML(answer)}</div>`
+        + `<div class="meta">收件箱 · 回复问题 #${esc(qno)}${wait ? ` · 行动 ${esc(enter.action_id)} 等了 ${esc(wait.payload.wait_ms)} ms 取到` : ""}${fnHTML(inTake)}</div></div></div>`
+      : `<div class="iv-msg user"><div class="who">使用者</div><div><div class="meta">没有回答${closed ? `：收件箱已关闭${fnHTML(closed)}` : ""}</div></div></div>`;
+    return sys + user;
+  }).join("");
+  let after = "";
+  if (final && final.payload.new_status === SUCCEEDED) {
+    after = tool === EXCEPTION_TOOL_NAME
+      ? `使用者的选择：${esc(plain(final.payload.result))}（${esc(final.payload.note)}）${fnHTML(final)}。`
+      : `回答理解：原样作为值写入 ${esc(targetText(params && params.target))}${fnHTML(final)}。`;
+  } else if (final) {
+    after = `<span class="iv-bad">${esc(final.payload.new_status)}：${esc(final.payload.note)}</span>${fnHTML(final)}。`;
+  }
+  return `<div class="iv-chat">${bubbles}</div>${after ? `<div class="iv-sub">${after}</div>` : ""}`;
+}
+// ④ 改了什么
+function updateHTML(r, it, events) {
+  const changes = events.filter(e => e.name === "DATA_CHANGED");
+  if (!changes.length) return it.failed ? "没有数据变更：行动失败，不写游标，内核随即报错结束。" : "没有数据变更。";
+  const chips = changes.map(e => e.payload.slot === CURSOR
+    ? `<span class="iv-chip cur">游标 → ${esc(positionText(positionOf(r.path.def, e.payload.new)))}${fnHTML(e)}</span>`
+    : `<span class="iv-chip new">${esc(changeText(e.payload))}${fnHTML(e)}</span>`).join("");
+  const onlyCursor = changes.every(e => e.payload.slot === CURSOR);
+  return chips + (onlyCursor ? `<span class="iv-sub">业务槽位未变。</span>` : "");
+}
+// ⑤ 完成了吗：目标判定取下一次迭代的选择经过，页面不复制谓词逻辑。
+function checkHTML(r, it, events, next) {
+  const check = named1(events, "CHECK_DONE_RESULT");
+  if (!check) return "这次迭代以错误结束，没有做结果检查。";
+  const oldNote = r.checkAtEnd ? "" : `<span class="iv-sub">旧格式：结果检查在迭代开头。</span>`;
+  if (check.payload.done) return `已完成${fnHTML(check)}。全部阶段目标成立，任务完成。${oldNote}`;
+  let judged = "";
+  if (r.checkAtEnd && it.cursor && next && next.action) {
+    const S = it.cursor["阶段"], hit = Array.isArray(next.action.basis) ? next.action.basis[2] : null, trail = hit && hit["选择经过"];
+    if (it.redo) judged = `下一次迭代从『${esc(S)}』阶段起点重走。`;
+    else if (next.exception) judged = `下一次迭代报告异常。`;
+    else if (trail) judged = (trail["前进"] || []).includes(S) ? `『${esc(S)}』目标已成立，下一次迭代前进。` : `『${esc(S)}』目标还不成立，下一次迭代继续。`;
+    if (trail && !it.redo) judged += `<span class="iv-sub">目标判定取自下一次迭代的选择经过。</span>`;
+  }
+  return `未完成${fnHTML(check)}。${judged}${oldNote}`;
+}
+function stepClass(key, it, events) {
+  if (!events.length) return "none";
+  const failed = it.failed;
+  if (key === "select") return it.exception || events.some(e => e.name === "TASK_DEFINITION_ERROR") ? "bad" : "info";
+  if (key === "control") { const st = named1(events, "ACTION_STATUS_CHANGED"); return st && st.payload.new_status !== APPROVED ? "skip" : "ok"; }
+  if (key === "execute") {
+    if (!named1(events, "EXECUTE_CALL")) return "skip";
+    if (failed) return "bad";
+    return events.some(isQuestionSent) ? "ext" : "ok";
+  }
+  if (key === "update") return failed ? "bad" : "ok";
+  return "info";
+}
+function iterationCardHTML(r, loop, index) {
+  const model = r.path, it = model.iters[index], next = model.iters[index + 1];
+  const keys = r.checkAtEnd ? STEP_KEYS_NEW : STEP_KEYS_OLD;
+  const byKey = {};
+  keys.forEach((key, i) => { byKey[key] = loop.steps[i]; });
+  const all = loop.steps.flat();
+  const start = named1(all, "LOOP_STARTED");
+  const dataBefore = index ? model.iters[index - 1].data : model.startData;
+  const a = it.action, ref = a && a.ref;
+  const defError = all.some(e => e.name === "TASK_DEFINITION_ERROR");
+  let where = "";
+  if (ref && ref.kind === "exception") {
+    const at = r.actions.get(a.aid).proposed.payload.params["游标"] || {};
+    where = at["阶段"] !== undefined && at["阶段"] !== ref.stage.name ? `阶段游标在『${esc(at["阶段"])}』末尾 · 报告『${esc(ref.stage.name)}』阶段` : `报告『${esc(ref.stage.name)}』阶段`;
+  } else if (ref && ref.kind === "step") {
+    where = `${ref.stage.name === null ? "" : `阶段『${esc(ref.stage.name)}』· `}第 ${ref.step.number} 步「${esc(ref.step.note)}」`;
+  } else if (defError) where = "任务定义错误";
+  const waitEv = a ? named1(all, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end" && e.action_id === a.aid) : null;
+  let res;
+  if (!a) res = { cls: "bad", text: defError ? "✕ 任务定义错误" : "没有行动" };
+  else if (it.exception) res = { cls: "bad", text: a.answer !== undefined ? `✕ 异常 → 使用者选「${plain(a.answer)}」` : "✕ 异常 → 没有回答" };
+  else if (it.failed) res = { cls: "bad", text: "✕ 失败" };
+  else if (waitEv) res = { cls: "wait", text: `✓ 成功 · 等待使用者 ${Number(waitEv.payload.wait_ms).toFixed(1)} ms` };
+  else res = { cls: "", text: "✓ 成功" };
+  const duration = all.length ? ((all[all.length - 1].ts - all[0].ts) * 1000).toFixed(1) : "0";
+  const bad = res.cls === "bad";
+  const steps = keys.map((key, i) => {
+    const evs = byKey[key], cls = stepClass(key, it, evs);
+    const tm = !evs.length ? "" : (key === "execute" && evs.length > 1 ? `+${relMs(r, evs[0])} → ${relMs(r, evs[evs.length - 1])} ms` : `+${relMs(r, evs[0])} ms`);
+    return `<div class="iv-st ${cls}"><div class="dot">${cls === "bad" && key === "select" ? "!" : i + 1}</div><div class="nm">${STEP_LABEL[key]}</div><div class="tm">${tm}</div></div>`;
+  }).join("");
+  const rows = [
+    ivRowHTML(r, it.exception ? "① 为什么异常" : "① 为什么选它", whyHTML(r, it, byKey.select, dataBefore), byKey.select, it.exception || defError),
+    ivRowHTML(r, "② 执行控制", controlHTML(byKey.control), byKey.control),
+    ivRowHTML(r, "③ 做了什么", executeHTML(r, it, byKey.execute), byKey.execute),
+    ivRowHTML(r, "④ 改了什么", updateHTML(r, it, byKey.update), byKey.update),
+    ivRowHTML(r, "⑤ 完成了吗", checkHTML(r, it, byKey.check, next), byKey.check),
+  ].join("");
+  return `<article class="iv-card${bad ? " bad" : ""}" data-k="${index + 1}">
+    <div class="iv-hd"><span class="no">第 ${esc(loop.no)} 次迭代${fnHTML(start)}</span>${where ? `<span class="where">${where}</span>` : ""}
+      ${a ? `<span class="act">行动 ${esc(a.aid)} · ${esc(actionCallText(a.tool, r.actions.get(a.aid).proposed.payload.params))}</span>` : ""}
+      <span class="res ${res.cls}">${esc(res.text)}</span><span class="ms">${duration} ms</span></div>
+    <div class="iv-steps">${steps}</div>
+    <div class="iv-story">${rows}</div></article>`;
+}
+function startCardHTML(r) {
+  const s = r.started, model = r.path;
+  const initial = s ? Object.entries(s.slots).filter(([k]) => k !== CURSOR).map(([k, v]) => `${k}＝${brief(v)}`).join("，") : "";
+  const cursor = s && s.slots[CURSOR] ? `；游标${positionText(positionOf(model.def, s.slots[CURSOR]))}` : "";
+  const head = s ? `任务「${esc(s.task_def_name)}」开始，初始值：${esc(initial)}${esc(cursor)}${fnHTML(named1(r.before, "TASK_STARTED"))}。` : "文件里没有「任务开始」事件。";
+  let rows = ivRowHTML(r, "开始", head, r.before);
+  if (r.startCheck.length) {
+    const check = named1(r.startCheck, "CHECK_DONE_RESULT"), first = model.iters[0];
+    let text = check && check.payload.done ? `已完成${fnHTML(check)}，任务不进循环就结束。` : `未完成${fnHTML(check)}。`;
+    const hit = first && first.action && Array.isArray(first.action.basis) ? first.action.basis[2] : null, trail = hit && hit["选择经过"];
+    if (trail && first.action.ref) {
+      const moved = [...(trail["前进"] || []).map(n => `『${esc(n)}』目标已成立`), ...(trail["跳过阶段"] || []).map(([n, w]) => `『${esc(n)}』${esc(w)}`)];
+      text += `${moved.length ? moved.join("，") + "；" : ""}从『${esc(first.action.ref.stage.name)}』开始。<span class="iv-sub">目标判定取自第一次迭代的选择经过。</span>`;
+    }
+    rows += ivRowHTML(r, "启动检查", text, r.startCheck);
+  }
+  return `<article class="iv-card plain"><div class="iv-story">${rows}</div></article>`;
+}
+function endCardHTML(r) {
+  const fin = finalStatusOf(r), items = deliverablesOf(r);
+  let text;
+  if (fin.status === "已完成") {
+    const n = r.loops.length;
+    text = `<b>${n ? `第 ${n} 次迭代之后` : "启动检查"} · 结果检查为真</b>：全部阶段目标成立，任务完成${fnHTML(named1(r.closing, "TASK_ENDED"))}`
+      + (items ? ` · <a class="iv-link" data-scroll-to="deliverables">交付物 ${items.length} 份（见上方「交付物」）</a>` : "");
+  } else if (fin.status === "内核错误") {
+    text = `<b>以内核错误结束</b>：${esc(fin.reason)}${fnHTML(named1(r.closing, "MAILBOX_CLOSED"))}。任务没有「任务结束」事件`;
   } else {
-    left = line;
+    text = "运行记录到此为止，任务没有结束";
   }
-  return `<li class="ev origin-${origin}" data-kind="${e.kind}" data-origin="${origin}" data-action="${e.action_id === null ? "" : e.action_id}" data-slots="${esc(JSON.stringify(slotsOfEvent(r, e)))}">`
-    + `<div class="cell kernel-cell">${left}</div><div class="cell ext-cell">${right}</div></li>`;
+  return `<article class="iv-card plain"><div class="iv-story">${ivRowHTML(r, "收尾", text + "。", r.closing)}</div></article>`;
 }
-function stepNote(events) {
-  return events.filter(e => e.name === "MAILBOX_WAIT" && e.payload.phase === "end" && e.payload.box === "inbox" && e.action_id !== null)
-    .map(w => `<span class="wait">内核阻塞等待回答 ${esc(w.payload.wait_ms)} 毫秒 · 线程 ${esc(w.payload.thread)}</span>`).join("");
+function iterationsHTML(r) {
+  ivRowSeq = 0;
+  const cards = r.loops.map((loop, i) => iterationCardHTML(r, loop, i)).join("");
+  return `<section id="timeline"><h2>迭代视图</h2>
+    <div class="iv-top"><label><input type="checkbox" id="iv-all"> 显示全部原始事件</label>
+      <span class="muted">每次迭代一张卡；行末「n 条事件」就地展开它翻译的原始事件，句中 #n 点开单条。顶部过滤器只高亮命中的事件与所在叙事行，其余变淡，不隐藏。</span></div>
+    ${startCardHTML(r)}${cards || `<p class="empty">这次运行没有迭代。</p>`}${endCardHTML(r)}</section>`;
 }
-function timelineHTML(r) {
-  let html = `<section id="timeline"><h2>循环时间线</h2><div class="lane-head"><span>内核一侧（工具实现发布的事件缩进显示）</span><span>外部（宿主或使用者引起）</span></div>`;
-  html += `<div class="loop"><h3>开始 <small>第一圈之前：任务开始与初始化</small></h3><ol class="events">${r.before.map(e => eventLineHTML(r, e)).join("")}</ol></div>`;
-  for (const loop of r.loops) {
-    html += `<div class="loop"><h3>${esc(loopTitle(r, loop))}</h3>`;
-    loop.steps.forEach((events, i) => {
-      html += `<div class="step"><div class="step-name">${STEP_NAMES[i]}${stepNote(events)}</div><div class="step-body">`
-        + (events.length ? `<ol class="events">${events.map(e => eventLineHTML(r, e)).join("")}</ol>` : `<p class="empty">本步没有发出事件</p>`)
-        + `</div></div>`;
-    });
-    html += `</div>`;
-  }
-  return html + `</section>`;
+function bindIterations() {
+  const section = document.getElementById("timeline");
+  if (!section) return;
+  const setOpen = (box, open) => {
+    box.classList.toggle("show", open);
+    const toggle = section.querySelector(`.iv-toggle[data-for="${box.id}"]`);
+    if (toggle) toggle.classList.toggle("on", open);
+  };
+  section.querySelectorAll("button.iv-toggle").forEach(t => t.addEventListener("click", () => {
+    const box = document.getElementById(t.dataset.for);
+    setOpen(box, !box.classList.contains("show"));
+  }));
+  section.querySelectorAll(".iv-fn").forEach(f => f.addEventListener("click", ev => {
+    ev.preventDefault();
+    section.querySelectorAll("tr.hl").forEach(row => row.classList.remove("hl"));
+    const row = section.querySelector(`.iv-evs tr[data-seq="${f.dataset.one}"]`);
+    if (!row) return;
+    setOpen(row.closest(".iv-evs"), true);
+    row.classList.add("hl");
+    row.scrollIntoView({ block: "nearest" });
+  }));
+  document.getElementById("iv-all").addEventListener("change", e => section.querySelectorAll(".iv-evs").forEach(box => setOpen(box, e.target.checked)));
 }
 function slotsHTML(r) {
-  const changes = r.events.filter(e => e.name === "DATA_CHANGED");
+  // 游标不在这里逐条列差异：它的位置在时间轴与路线图上看。
+  const changes = r.events.filter(e => e.name === "DATA_CHANGED" && e.payload.slot !== CURSOR);
   const head = changes.map(e => `<th>#${e.seq}</th>`).join("");
-  const rows = r.slots.map(slot => {
+  const rows = r.slots.filter(slot => slot !== CURSOR).map(slot => {
     const mine = changes.filter(e => e.payload.slot === slot);
     const last = mine.length ? mine[mine.length - 1].payload.new : undefined;
-    const finalCell = mine.length ? `${esc(brief(last))}${typeof last === "object" && last !== null ? `<details><summary>整值</summary><code>${esc(jsonText(last))}</code></details>` : ""}` : "—";
+    const finalCell = mine.length ? `${esc(brief(last))}${typeof last === "object" && last !== null ? toggleHTML(jsonText(last)) : ""}` : "—";
     const cells = changes.map(e => {
       if (e.payload.slot !== slot) return `<td class="miss">·</td>`;
       const p = e.payload;
@@ -530,7 +1675,7 @@ function slotsHTML(r) {
     }).join("");
     return `<tr class="slot-row" data-slots="${esc(JSON.stringify([slot]))}"><th>${esc(slot)}</th><td class="final">${finalCell}</td>${cells}</tr>`;
   }).join("");
-  return `<section id="slots"><h2>槽位轨迹</h2><p class="hint">列是全部「数据变更」事件，按事件序号从左到右；格子里是这次变更写入的值，列表与字典只写出变化的项。</p>`
+  return `<section id="slots"><h2>槽位轨迹</h2><p class="hint">列是全部「数据变更」事件，按事件序号从左到右；格子里是这次变更写入的值，列表与字典只写出变化的项。游标不在这里列，它的位置见时间轴。</p>`
     + `<div class="scroll"><table class="grid"><thead><tr><th>槽位</th><th>最终值</th>${head}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 function cardsHTML(r) {
@@ -539,12 +1684,15 @@ function cardsHTML(r) {
     const history = events.filter(e => e.name === "ACTION_STATUS_CHANGED");
     const questions = events.filter(isQuestionSent);
     const takes = events.filter(e => e.name === "MESSAGE_TAKEN" && e.payload.box === "inbox");
-    const changes = events.filter(e => e.name === "DATA_CHANGED");
+    const changes = events.filter(e => e.name === "DATA_CHANGED" && e.payload.slot !== CURSOR);
+    const cursorChanges = events.filter(e => e.name === "DATA_CHANGED" && e.payload.slot === CURSOR);
+    const k = r.path.loopOfAction.get(aid), it = r.path.iters[k - 1];
     const waits = events.filter(e => e.name === "MAILBOX_WAIT" && e.payload.phase === "end" && e.payload.box === "inbox");
     const terminal = history.filter(e => "result" in e.payload);
     const li = (items, empty) => items.length ? `<ul class="plain">${items.join("")}</ul>` : `<span class="empty">${empty}</span>`;
-    return `<article class="card" data-action="${aid}" data-slots="${esc(JSON.stringify([...r.actionSlots.get(aid)]))}">
-      <header><h3>行动 ${aid} · ${esc(p.tool)}</h3><span class="status">${esc(history.length ? history[history.length - 1].payload.new_status : "—")}</span></header>
+    const flags = it && it.exception ? ` <span class="pill bad">✕ 告知异常</span>` + (it.redo ? ` <span class="pill back">↶ 重做退回「${esc(it.action.ref.stage.name)}」</span>` : "") : "";
+    return `<article class="card${it && it.exception ? " bad" : ""}" data-action="${aid}" data-k="${k || ""}" data-slots="${esc(JSON.stringify([...r.actionSlots.get(aid)]))}">
+      <header><h3>行动 ${aid} · ${esc(p.tool)} ${k ? `<span class="pill">第 ${it.no} 次迭代</span>` : ""}${flags}</h3><span class="status">${esc(history.length ? history[history.length - 1].payload.new_status : "—")}</span></header>
       <dl>
         <dt>提出</dt><dd>#${info.proposed.seq} 参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}</dd>
         <dt>依据</dt><dd>${esc(basisText(p.basis))}</dd>
@@ -556,31 +1704,51 @@ function cardsHTML(r) {
         <dt>变更</dt><dd>${li(changes.map(e => {
           const diff = valueDiff(e.payload.old, e.payload.new);
           const whole = typeof e.payload.new === "object" && e.payload.new !== null
-            ? `<details><summary>整值</summary><code>${esc(jsonText(e.payload.old))} → ${esc(jsonText(e.payload.new))}</code></details>` : "";
+            ? toggleHTML(`${jsonText(e.payload.old)} → ${jsonText(e.payload.new)}`) : "";
           return `<li><span class="seq">#${e.seq}</span> 「${esc(e.payload.slot)}」 ${(diff.length ? diff : ["值未变"]).map(l => `<span class="diff-line">${esc(l)}</span>`).join("")}${whole}</li>`;
         }), "没有变更")}</dd>
+        ${r.path.hasCursor ? `<dt>游标</dt><dd>${cursorChanges.length ? `→ ${esc(positionText(positionOf(r.path.def, cursorChanges[cursorChanges.length - 1].payload.new)))}` : "没有移动"}</dd>` : ""}
       </dl></article>`;
   }).join("");
   return `<section id="actions"><h2>行动卡片</h2><div class="cards">${cards || `<p class="empty">这次运行没有提出任何行动。</p>`}</div></section>`;
 }
+// 顶部四个过滤器只高亮命中的原始事件与它所在的叙事行，其余变淡，不隐藏；行动卡片与槽位轨迹里不相关的变淡。
 function bindFilters() {
   const apply = () => {
     const kind = document.querySelector("input[name=kind]:checked").value;
     const origin = document.querySelector("input[name=origin]:checked").value;
     const action = document.getElementById("f-action").value;
     const slot = document.getElementById("f-slot").value;
+    const active = kind !== "all" || origin !== "all" || Boolean(action) || Boolean(slot);
     const slotsOf = el => { try { return JSON.parse(el.dataset.slots || "[]"); } catch (_) { return []; } };
-    let shown = 0, total = 0;
-    document.querySelectorAll("li.ev").forEach(el => {
-      total++;
-      const ok = (kind === "all" || el.dataset.kind === kind) && (origin === "all" || el.dataset.origin === origin)
-        && (!action || el.dataset.action === action) && (!slot || slotsOf(el).includes(slot));
-      el.hidden = !ok; if (ok) shown++;
+    const section = document.getElementById("timeline");
+    if (section) section.classList.toggle("dim", active);
+    document.querySelectorAll("#timeline .iv-v.match").forEach(v => v.classList.remove("match"));
+    document.querySelectorAll("#timeline .iv-evs.by-filter").forEach(box => {
+      box.classList.remove("show", "by-filter");
+      const t = document.querySelector(`.iv-toggle[data-for="${box.id}"]`);
+      if (t) t.classList.remove("on");
     });
-    document.querySelectorAll(".loop").forEach(loop => { loop.hidden = ![...loop.querySelectorAll("li.ev")].some(li => !li.hidden); });
-    document.querySelectorAll(".card").forEach(card => { card.hidden = Boolean((action && card.dataset.action !== action) || (slot && !slotsOf(card).includes(slot))); });
-    document.querySelectorAll(".slot-row").forEach(row => { row.hidden = Boolean(slot && !slotsOf(row).includes(slot)); });
-    document.getElementById("f-count").textContent = `时间线显示 ${shown} / ${total} 个事件`;
+    let hits = 0, total = 0;
+    document.querySelectorAll("#timeline .iv-evs tr[data-seq]").forEach(row => {
+      total++;
+      const ok = active && (kind === "all" || row.dataset.kind === kind) && (origin === "all" || row.dataset.origin === origin)
+        && (!action || row.dataset.action === action) && (!slot || slotsOf(row).includes(slot));
+      row.classList.toggle("fm", ok);
+      if (!ok) return;
+      hits++;
+      const box = row.closest(".iv-evs");
+      if (!box.classList.contains("show")) {
+        box.classList.add("show", "by-filter");
+        const t = document.querySelector(`.iv-toggle[data-for="${box.id}"]`);
+        if (t) t.classList.add("on");
+      }
+      const v = document.querySelector(`#timeline .iv-v[data-row="${box.id}"]`);
+      if (v) v.classList.add("match");
+    });
+    document.querySelectorAll(".card").forEach(card => card.classList.toggle("faded", Boolean((action && card.dataset.action !== action) || (slot && !slotsOf(card).includes(slot)))));
+    document.querySelectorAll(".slot-row").forEach(row => row.classList.toggle("faded", Boolean(slot && !slotsOf(row).includes(slot))));
+    document.getElementById("f-count").textContent = active ? `迭代视图里高亮 ${hits} / ${total} 个事件` : `共 ${total} 个事件`;
   };
   document.querySelectorAll("input[name=kind], input[name=origin]").forEach(i => i.addEventListener("change", apply));
   document.getElementById("f-action").addEventListener("change", apply);
@@ -613,7 +1781,7 @@ async function renderCompare(a, b) {
   const head = r => {
     const fin = finalStatusOf(r);
     return `<b>${esc(r.started ? r.started.task_def_name : "（无任务开始事件）")}</b><br><code>${esc(r.file)}</code><br>`
-      + `终态 <b>${esc(fin.status)}</b>${fin.reason ? `，${esc(fin.reason)}` : ""}；${r.loops.length} 圈，${r.actions.size} 个行动`
+      + `终态 <b>${esc(fin.status)}</b>${fin.reason ? `，${esc(fin.reason)}` : ""}；${r.loops.length} 次迭代，${r.actions.size} 个行动`
       + `<br><a href="#run=${encodeURIComponent(r.file)}">看详情</a>`;
   };
   const la = [...left.actions.values()], ra = [...right.actions.values()];
@@ -639,7 +1807,7 @@ async function renderCompare(a, b) {
     const x = left.finalData[slot], y = right.finalData[slot];
     const same = JSON.stringify(x) === JSON.stringify(y);
     if (!same) slotDiffering++;
-    const cell = v => `${esc(brief(v))}${typeof v === "object" && v !== null ? `<details><summary>整值</summary><code>${esc(jsonText(v))}</code></details>` : ""}`;
+    const cell = v => `${esc(brief(v))}${typeof v === "object" && v !== null ? toggleHTML(jsonText(v)) : ""}`;
     const diff = same ? "相同" : (valueDiff(x === undefined ? null : x, y === undefined ? null : y).join("；") || "不同");
     return `<tr data-slot="${esc(slot)}" data-differs="${!same}"><th>${esc(slot)}</th><td class="${same ? "same" : "diff"}">${cell(x)}</td><td class="${same ? "same" : "diff"}">${cell(y)}</td><td class="${same ? "same" : "diff"}">${esc(diff)}</td></tr>`;
   }).join("");

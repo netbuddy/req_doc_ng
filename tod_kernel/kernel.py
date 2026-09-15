@@ -79,7 +79,7 @@ STATE_EVENT_NAMES = (
 )
 
 # 追踪事件名：记做了什么检查、得了什么结论、调了什么；是诊断信息，不是改动，重放不用它们。
-TASK_STARTED = "TASK_STARTED"  # slots, rules, tools, task_def_name
+TASK_STARTED = "TASK_STARTED"  # slots, definition, tools, task_def_name
 LOOP_STARTED = "LOOP_STARTED"  # loop_no
 CHECK_DONE_RESULT = "CHECK_DONE_RESULT"  # done
 CONTROL_RESULT = "CONTROL_RESULT"  # action_id, verdict, checked
@@ -140,6 +140,9 @@ class Candidate:
     params: dict
     basis: Any  # 选择规则返回的依据，原样存放，内核不解释
     proposer: str  # "selector" 或 "user"
+    # 游标新值：（槽位名, 新值），由任务定义随候选给出，为空表示不动；行动成功时在状态更新里作为一条变更与工具的
+    # 变更组一起写入，来源是同一个行动编号，行动失败或被拒绝时不写。内核不解释槽位名与新值。
+    cursor_update: tuple | None = None
 
 
 @dataclass
@@ -370,7 +373,7 @@ def new_task(task_id, task_def, tools, inbox, outbox, stream) -> Task:
         raise KernelError("事件流绑定的任务标识与任务标识不一致")
     if inbox.box != INBOX or outbox.box != OUTBOX:
         raise KernelError("收件箱与发件箱的箱名不对")
-    init_changes = [Change(slot, None, value, INIT_SOURCE) for slot, value in task_def.SLOTS.items()]
+    init_changes = [Change(slot, None, copy.deepcopy(value), INIT_SOURCE) for slot, value in task_def.SLOTS.items()]
     return Task(
         task_id=task_id,
         task_def=task_def,
@@ -450,15 +453,19 @@ def select_action(task: Task) -> Candidate:
     raw = task.task_def.select_action(types.MappingProxyType(task.data))
     if raw is None:
         _definition_error(task, "选择规则返回空", raw)
-    if not (isinstance(raw, tuple) and len(raw) == 3):
-        _definition_error(task, "选择规则的返回不是（工具名, 参数, 依据）三元组", raw)
-    tool_name, params, basis = raw
+    if not (isinstance(raw, tuple) and len(raw) in (3, 4)):
+        _definition_error(task, "选择规则的返回不是（工具名, 参数, 依据）三元组或（工具名, 参数, 依据, 游标新值）四元组", raw)
+    tool_name, params, basis = raw[:3]
+    cursor_update = raw[3] if len(raw) == 4 else None
+    if cursor_update is not None and not (isinstance(cursor_update, tuple) and len(cursor_update) == 2
+                                          and isinstance(cursor_update[0], str)):
+        _definition_error(task, "游标新值不是（槽位名, 新值）二元组", raw)
     tool = task.tools.get(tool_name)
     if tool is None:
         _definition_error(task, f"工具未登记：{tool_name!r}", raw)
     if not isinstance(params, dict) or set(params) != set(tool.param_names):
         _definition_error(task, f"参数名与工具的参数名清单不符：{tool_name!r}", raw)
-    return Candidate(tool=tool_name, params=dict(params), basis=basis, proposer="selector")
+    return Candidate(tool=tool_name, params=dict(params), basis=basis, proposer="selector", cursor_update=cursor_update)
 
 
 def register_action(task: Task, candidate: Candidate) -> int:
@@ -559,44 +566,58 @@ def start_task(task_id, task_def, tools, inbox, outbox, stream) -> Task:
 
 def _run(task: Task) -> Task:
     """循环本体。正常完成时关闭发件箱后写结束记录；出错时由 start_task 关闭发件箱。"""
-    task_def, tools, outbox = task.task_def, task.tools, task.outbox
-    # 追踪：任务开始。槽位表、规则清单、工具清单都从任务定义与工具表读。
+    task_def, tools = task.task_def, task.tools
+    # 追踪：任务开始。槽位表、任务定义结构、工具清单都从任务定义与工具表读。
     loop = task.loop_publisher
     loop.publish(TASK_STARTED, {
         "slots": dict(task_def.SLOTS),
-        "rules": dict(task_def.RULES),
+        "definition": copy.deepcopy(task_def.DEFINITION),
         "tools": {name: list(tool.param_names) for name, tool in tools.items()},
         "task_def_name": task_def.NAME,
     })
     update_state(task, task.init_changes)
     update_state(task, TaskStatus.RUNNING)
-    loop_no = 0  # 只用于追踪事件的圈序号，不是对象
+    # 进循环前先做一次结果检查（不发「迭代开始」）：初始即完成时不进循环。
+    if _check_and_finish(task):
+        return task
+    loop_no = 0  # 只用于追踪事件的迭代序号，不是对象
     while True:
         loop_no += 1
         loop.publish(LOOP_STARTED, {"loop_no": loop_no})
-        # 第 1 步：结果检查只判不写；正常完成从这里返回，写入在下一行。
-        done = check_done(task)
-        loop.publish(CHECK_DONE_RESULT, {"done": done})
-        if done:
-            update_state(task, TaskStatus.DONE)
-            outbox.close(SOURCE_LOOP)
-            record_end(task, "完成条件成立")
-            return task
-        # 第 2 步：行动选择只返回候选，登记行动是写入点。圈首取主动类消息的位置留在这里，本步不实现。
+        # 第 1 步：行动选择只返回候选，登记行动是写入点。迭代开头取主动类消息的位置留在这里，本步不实现。
         candidate = select_action(task)
         action_id = register_action(task, candidate)
         action = task.actions[action_id]
-        # 第 3 步：执行控制。
+        # 第 2 步：执行控制。
         control(task, action)
         loop.publish(
             CONTROL_RESULT,
             {"action_id": action.action_id, "verdict": action.status, "checked": CONTROL_CHECKED},
             action_id=action.action_id,
         )
-        # 第 4 步：行动执行；未获准时不执行，变更组保持空列表。
+        # 第 3 步：行动执行；未获准时不执行，变更组保持空列表。
         if action.status == ActionStatus.APPROVED:
             execute(task, action)
-        # 第 5 步：状态更新。行动在登记时已经在行动表里，这里不再单独记录。
+        # 第 4 步：状态更新。行动在登记时已经在行动表里，这里不再单独记录。
+        # 候选带游标新值且行动已成功时，把它作为一条变更接在工具的变更组后面一起写入，来源是同一个行动编号；
+        # 行动失败或被拒绝时不写游标。
+        if candidate.cursor_update is not None and action.status == ActionStatus.SUCCEEDED:
+            slot, new = candidate.cursor_update
+            action.changes = list(action.changes) + [Change(slot, copy.deepcopy(task.data.get(slot)), new, action.action_id)]
         update_state(task, action.changes)
         if action.status == ActionStatus.FAILED:
             raise KernelError("行动失败", action=action)
+        # 第 5 步：结果检查挪到每次迭代末尾，紧跟状态更新；成立就结束，所以迭代数等于行动数。
+        if _check_and_finish(task):
+            return task
+
+
+def _check_and_finish(task: Task) -> bool:
+    """结果检查只判不写；成立时写完成状态、关发件箱、写结束记录。返回是否已完成。"""
+    done = check_done(task)
+    task.loop_publisher.publish(CHECK_DONE_RESULT, {"done": done})
+    if done:
+        update_state(task, TaskStatus.DONE)
+        task.outbox.close(SOURCE_LOOP)
+        record_end(task, "完成条件成立")
+    return done
