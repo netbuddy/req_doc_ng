@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>观测台 · 任务型智能体内核</title>
+<style>
+:root{--bg:#f7f7f5;--panel:#fff;--ink:#1d1f23;--muted:#62666d;--line:#e2e2de;--accent:#1f5fbf;--accent-bg:#e8f0fc;
+--trace:#6b5a2e;--trace-bg:#f3eedf;--hit:#eef6ee;--hit-ink:#1f6b3a;--wait:#8a4b08;--wait-bg:#fdf1e2;
+--ext:#7a2e8f;--ext-bg:#f6ecf9;--ext-line:#c89bd6;--tool:#2f6f6a;--diff:#fff3b0;--diff-ink:#6b5400;--same:#f0f0ee;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
+--accent:#8db4f0;--accent-bg:#1d2a3d;--trace:#d8c38e;--trace-bg:#2e2a1f;--hit:#1c2b20;--hit-ink:#8fd1a4;--wait:#f0b46a;--wait-bg:#35281a;
+--ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;--bad:#f2b8b5}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif}
+a{color:var(--accent)}
+header.page{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+header.page h1{margin:0;font-size:18px}
+header.page nav{display:flex;gap:12px;flex-wrap:wrap}
+main{padding:0 24px 40px;max-width:1400px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0;min-width:0}
+h2{margin:0 0 10px;font-size:16px}
+h3{margin:0;font-size:14px}
+h3 small{font-weight:normal;color:var(--muted);margin-left:6px}
+button{font:inherit;padding:4px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);cursor:pointer}
+button[disabled]{opacity:.5;cursor:default}
+select{font:inherit;padding:2px 4px;max-width:100%}
+.muted{color:var(--muted)}
+.empty{color:var(--muted);margin:0}
+.hint{color:var(--muted);margin:0 0 8px}
+.error{color:var(--bad)}
+.scroll{overflow-x:auto;max-width:100%}
+code,pre,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+details>summary{cursor:pointer;color:var(--muted)}
+ul.plain{list-style:none;margin:0;padding:0}
+/* 索引 */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:10px}
+.toolbar label{white-space:nowrap}
+table.index{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+table.index th,table.index td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+table.index th{color:var(--muted);font-weight:normal}
+table.index tbody tr{cursor:pointer}
+table.index tbody tr:hover{background:var(--accent-bg)}
+table.index td.reason{white-space:normal;min-width:8em}
+.status{font-weight:600}
+.status.done{color:var(--hit-ink)}
+.status.error{color:var(--bad)}
+/* 详情 */
+.filters{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;background:var(--panel);
+border-bottom:1px solid var(--line);padding:8px 24px}
+.filters fieldset{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+.filters legend{float:left;margin-right:6px;color:var(--muted)}
+.filters label{white-space:nowrap}
+table.kv{border-collapse:collapse;width:100%}
+table.kv th{width:11em;text-align:left;vertical-align:top;color:var(--muted);font-weight:normal;padding:6px 12px 6px 0;border-top:1px solid var(--line)}
+table.kv td{padding:6px 0;border-top:1px solid var(--line);min-width:0;overflow-wrap:anywhere}
+.loop{border-top:1px solid var(--line);padding:10px 0}
+.step{display:grid;grid-template-columns:12em minmax(0,1fr);border-top:1px dashed var(--line);padding:6px 0}
+.step-name{color:var(--muted)}
+.step-name .wait{display:block;margin-top:4px;color:var(--wait);background:var(--wait-bg);border-radius:4px;padding:2px 6px;max-width:100%}
+.step-body{min-width:0}
+.lane-head{display:grid;grid-template-columns:12em minmax(0,1fr) minmax(13em,33%);gap:0 10px;color:var(--muted);font-size:12px;margin-bottom:6px}
+.lane-head span:first-child{grid-column:2}
+.lane-head span:last-child{border-left:3px solid var(--ext-line);padding-left:8px;color:var(--ext)}
+ol.events{list-style:none;margin:0;padding:0}
+.ev{display:grid;grid-template-columns:minmax(0,1fr) minmax(13em,33%);gap:0 10px}
+.ev .cell{min-width:0}
+.ext-cell{border-left:3px solid var(--ext-line);padding-left:8px}
+.ev.origin-external .ext-cell{background:var(--ext-bg);border-radius:0 4px 4px 0;padding:2px 8px}
+.ext-tag{display:block;font-size:12px;font-weight:600;color:var(--ext)}
+.blocked{display:block;color:var(--wait);background:var(--wait-bg);border-radius:4px;padding:2px 6px;margin:2px 0}
+.idle{display:block;color:var(--muted);padding:2px 0}
+.tool-impl{margin-left:1.2em;border-left:2px solid var(--tool);padding-left:8px;min-width:0}
+.tool-tag{display:block;font-size:12px;color:var(--tool)}
+.ask-out{border-left:2px dashed var(--ext-line);padding-left:8px;min-width:0}
+.ask-tag{display:block;font-size:12px;font-weight:600;color:var(--ext)}
+.line{display:grid;grid-template-columns:3.2em 4.2em 2.8em 7em minmax(0,1fr);gap:6px;padding:1px 0;align-items:baseline;min-width:0}
+.ext-cell .line{grid-template-columns:3.2em 4.2em 2.8em minmax(0,1fr)}
+.ext-cell .line .desc{grid-column:1/-1;padding-left:1em}
+.line .seq,.seq{color:var(--muted);font-variant-numeric:tabular-nums}
+.line .rel{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.badge{font-size:12px;border-radius:3px;padding:0 4px;text-align:center}
+.badge.state{color:var(--accent);background:var(--accent-bg)}
+.badge.trace{color:var(--trace);background:var(--trace-bg)}
+.line.trace .label,.line.trace .desc{color:var(--muted)}
+.line.is-wait .desc{color:var(--wait)}
+.desc{min-width:0;overflow-wrap:anywhere}
+.src{margin-left:6px;font-size:12px;color:var(--muted)}
+.utterance{display:block;font-weight:600;color:var(--ink)}
+table.grid{border-collapse:collapse;font-variant-numeric:tabular-nums}
+table.grid th,table.grid td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+table.grid thead th{color:var(--muted);font-weight:normal;white-space:nowrap}
+td.hit{background:var(--hit);min-width:10em;max-width:26em}
+table.grid tbody th{white-space:nowrap}
+table.grid tbody th,table.grid thead th:first-child{position:sticky;left:0;z-index:1;background:var(--panel)}
+table.grid td.final{min-width:8em;max-width:16em}
+td.hit .val{color:var(--hit-ink);font-weight:600;display:block}
+td.hit .src{display:block;margin:0}
+td.miss{color:var(--line);text-align:center}
+.diff-line{display:block;overflow-wrap:anywhere}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.card{border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0}
+.card header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:6px;gap:8px}
+.card dl{margin:0;display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:4px 8px}
+.card dt{color:var(--muted)}
+.card dd{margin:0;min-width:0;overflow-wrap:anywhere}
+/* 对比 */
+table.compare{border-collapse:collapse;width:100%}
+table.compare th,table.compare td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+table.compare thead th{color:var(--muted);font-weight:normal}
+table.compare td.diff{background:var(--diff);color:var(--diff-ink)}
+table.compare td.same{background:var(--same)}
+table.compare td.absent{background:var(--diff);color:var(--diff-ink);font-style:italic}
+table.compare td.no{color:var(--muted);text-align:right;white-space:nowrap}
+table.compare td[data-field=status]{white-space:nowrap}
+[hidden]{display:none!important}
+@media (max-width:720px){
+header.page,.filters{padding-left:16px;padding-right:16px}
+main{padding:0 16px 32px}
+.step{grid-template-columns:minmax(0,1fr)}
+.ev{grid-template-columns:minmax(0,1fr)}
+.ext-cell{border-left:0;padding-left:0}
+.ev:not(.origin-external) .ext-cell{display:none}
+.lane-head{display:none}
+.line{grid-template-columns:3em 3.8em 2.8em minmax(0,1fr)}
+.line .label{grid-column:4}
+.line .desc{grid-column:1/-1;padding-left:3em}
+table.kv th{width:7em}
+}
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>观测台</h1>
+  <nav><a href="#">运行索引</a><span id="crumb" class="muted"></span></nav>
+</header>
+<div id="filters-slot"></div>
+<main id="app"><p class="muted">加载中……</p></main>
+<script>
+"use strict";
+// 本页不写死任何任务名、槽位名、工具名；只认识内核固定的事件名词表与循环五步的名称。
+const LABELS = {
+  TASK_STATUS_CHANGED: "任务状态变化", DATA_CHANGED: "数据变更", ACTION_PROPOSED: "行动提出",
+  ACTION_STATUS_CHANGED: "行动状态变化", MESSAGE_PUT: "消息放入", MESSAGE_TAKEN: "消息取出",
+  MAILBOX_CLOSED: "邮箱关闭", TASK_ENDED: "任务结束", TASK_STARTED: "任务开始", LOOP_STARTED: "一圈开始",
+  CHECK_DONE_RESULT: "结果检查结论", CONTROL_RESULT: "执行控制结论", EXECUTE_CALL: "行动执行调用",
+  MAILBOX_WAIT: "邮箱等待", TASK_DEFINITION_ERROR: "任务定义错误",
+};
+const STEP_NAMES = ["第 1 步 结果检查", "第 2 步 行动选择", "第 3 步 执行控制", "第 4 步 行动执行", "第 5 步 状态更新"];
+const BOX = { inbox: "收件箱", outbox: "发件箱" };
+const EXTERNAL_SENDERS = ["host", "user"];
+const PROPOSED = "已提出", FAILED = "已失败";
+
+// ───────────── 小工具 ─────────────
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function jsonText(value) { return JSON.stringify(value); }
+function plain(value) {
+  // 给人读的值：None、字符串不加引号（空串写作 “”）、其余用 JSON 写法。
+  if (value === null || value === undefined) return "None";
+  if (typeof value === "string") return value === "" ? "“”" : value;
+  return JSON.stringify(value);
+}
+function brief(value) {
+  // 摘要：列表写「n 项」，字典写「键=值」，其余同 plain。
+  if (Array.isArray(value)) return `${value.length} 项`;
+  if (value && typeof value === "object") return Object.entries(value).map(([k, v]) => `${k}=${typeof v === "object" && v !== null ? brief(v) : plain(v)}`).join("，");
+  return plain(value);
+}
+function paramsSummary(params) {
+  const flat = [];
+  (function walk(value, prefix) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const entries = Object.entries(value);
+      if (!entries.length && prefix) flat.push(`${prefix}=（空）`);
+      for (const [k, v] of entries) walk(v, prefix ? `${prefix}.${k}` : k);
+    } else {
+      flat.push(`${prefix}=${Array.isArray(value) ? JSON.stringify(value) : plain(value)}`);
+    }
+  })(params || {}, "");
+  return flat.length ? flat.join("，") : "无参数";
+}
+function valueDiff(oldValue, newValue) {
+  // 逐项比对算出差异，返回若干行文字；列表按位置、字典按键。
+  const lines = [];
+  (function walk(a, b, label) {
+    if (Array.isArray(a) && Array.isArray(b)) {
+      const n = Math.max(a.length, b.length);
+      for (let i = 0; i < n; i++) {
+        const itemLabel = `${label}第 ${i + 1} 项`;
+        if (i >= a.length) lines.push(`新增${itemLabel}：${brief(b[i])}`);
+        else if (i >= b.length) lines.push(`删除${itemLabel}：${brief(a[i])}`);
+        else walk(a[i], b[i], itemLabel + " ");
+      }
+    } else if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+      for (const k of keys) {
+        if (!(k in a)) lines.push(`${label}新增 ${k}：${plain(b[k])}`);
+        else if (!(k in b)) lines.push(`${label}删除 ${k}：${plain(a[k])}`);
+        else walk(a[k], b[k], `${label}${k}`);
+      }
+    } else if (JSON.stringify(a) !== JSON.stringify(b)) {
+      const where = label.trim();
+      lines.push(`${where ? where + "：" : ""}${brief(a)} → ${brief(b)}`);
+    }
+  })(oldValue, newValue, "");
+  return lines;
+}
+function isExternal(e) {
+  const p = e.payload;
+  if (e.name === "MESSAGE_PUT" || e.name === "MAILBOX_CLOSED") return EXTERNAL_SENDERS.includes(p.sender);
+  if (e.name === "MESSAGE_TAKEN" || e.name === "MAILBOX_WAIT") return p.box === "outbox";
+  return false;
+}
+function initiatorOf(e) {
+  if (e.name === "MESSAGE_PUT" || e.name === "MAILBOX_CLOSED") return e.payload.sender;
+  if ((e.name === "MESSAGE_TAKEN" || e.name === "MAILBOX_WAIT") && e.payload.box === "outbox") return "读取发件箱的一方";
+  return e.source;
+}
+function isQuestionSent(e) {
+  return e.name === "MESSAGE_PUT" && e.payload.box === "outbox" && !EXTERNAL_SENDERS.includes(e.payload.sender);
+}
+function originOf(e) {
+  if (isExternal(e)) return "external";
+  if ((e.source || "").startsWith("tool.")) return "tool";
+  return "kernel";
+}
+function utteranceOf(content) {
+  return content && typeof content === "object" && typeof content.utterance === "string" ? content.utterance : null;
+}
+function mentions(value, word) {
+  if (value === word) return true;
+  if (Array.isArray(value)) return value.some(v => mentions(v, word));
+  if (value && typeof value === "object") return Object.values(value).some(v => mentions(v, word));
+  return false;
+}
+async function fetchJSON(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${url} 返回 ${response.status}`);
+  return response.json();
+}
+
+// ───────────── 一次运行整理成页面要用的结构 ─────────────
+function buildRecord(file, events) {
+  events = events.slice().sort((a, b) => a.seq - b.seq);
+  const r = { file, events, t0: events.length ? events[0].ts : 0 };
+  r.taskId = events.length ? events[0].task_id : "（空文件）";
+  const started = events.find(e => e.name === "TASK_STARTED");
+  r.started = started ? started.payload : null;
+  const ended = events.filter(e => e.name === "TASK_ENDED");
+  r.ended = ended.length ? ended[ended.length - 1].payload : null;
+  r.definitionErrors = events.filter(e => e.name === "TASK_DEFINITION_ERROR");
+  r.actions = new Map();
+  for (const e of events) if (e.name === "ACTION_PROPOSED") r.actions.set(e.action_id, { proposed: e, events: [] });
+  for (const e of events) if (r.actions.has(e.action_id)) r.actions.get(e.action_id).events.push(e);
+  r.slots = r.started ? Object.keys(r.started.slots) : [];
+  for (const e of events) if (e.name === "DATA_CHANGED" && !r.slots.includes(e.payload.slot)) r.slots.push(e.payload.slot);
+  // 与槽位有关的行动：写过它的，以及参数里任何位置提到它的。
+  r.actionSlots = new Map();
+  for (const [aid, info] of r.actions) {
+    const set = new Set();
+    for (const slot of r.slots) if (mentions(info.proposed.payload.params, slot)) set.add(slot);
+    for (const e of info.events) if (e.name === "DATA_CHANGED") set.add(e.payload.slot);
+    r.actionSlots.set(aid, set);
+  }
+  // 外部事件发生时内核是否在收件箱上阻塞。
+  const open = new Set(); r.blocked = new Set();
+  for (const e of events) {
+    if (e.name === "MAILBOX_WAIT" && e.payload.box === "inbox" && e.action_id !== null) {
+      if (e.payload.phase === "begin") open.add(e.action_id); else open.delete(e.action_id);
+    } else if (isExternal(e) && open.size) r.blocked.add(e.seq);
+  }
+  // 按圈、按步切分。
+  r.before = []; r.loops = [];
+  let current = null, step = 0;
+  for (const e of events) {
+    if (e.name === "LOOP_STARTED") {
+      current = { no: e.payload.loop_no, steps: STEP_NAMES.map(() => []) };
+      r.loops.push(current); step = 0; current.steps[0].push(e); continue;
+    }
+    if (!current) { r.before.push(e); continue; }
+    current.steps[step].push(e);
+    if (e.name === "CHECK_DONE_RESULT" && !e.payload.done) step = 1;
+    else if (step === 1 && e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 2;
+    else if (e.name === "CONTROL_RESULT") step = 3;
+    else if (e.name === "EXECUTE_CALL" && e.payload.phase === "return") step = 4;
+  }
+  // 终态数据：从空数据起按序应用全部数据变更。
+  r.finalData = {};
+  for (const e of events) if (e.kind === "state" && e.name === "DATA_CHANGED") r.finalData[e.payload.slot] = e.payload.new;
+  return r;
+}
+function slotsOfEvent(r, e) {
+  if (e.name === "DATA_CHANGED") return [e.payload.slot];
+  return r.actionSlots.has(e.action_id) ? [...r.actionSlots.get(e.action_id)] : [];
+}
+function basisText(basis) {
+  if (Array.isArray(basis) && basis.length === 3) return `规则 ${basis[0]}：${basis[1]}；本次值 ${brief(basis[2])}`;
+  return plain(basis);
+}
+function resultHTML(value) {
+  if (typeof value === "string" && value.includes("\n")) return `<pre>${esc(value)}</pre>`;
+  return esc(plain(value));
+}
+function messageHTML(p) {
+  const u = utteranceOf(p.content);
+  const head = `${BOX[p.box] || p.box}，类型 ${esc(p.kind)}，发起方 ${esc(p.sender)}，收件人 ${esc(p.recipient)}，到达序号 ${esc(p.seq)}`
+    + (p.in_reply_to !== null && p.in_reply_to !== undefined ? `，回复问题 ${esc(p.in_reply_to)}` : "");
+  if (u !== null) {
+    const rest = Object.assign({}, p.content); delete rest.utterance;
+    return `<span class="utterance">${esc(u)}</span>${head}<details><summary>参数</summary><code>${esc(jsonText(rest.params !== undefined ? rest.params : rest))}</code></details>`;
+  }
+  return `内容 ${resultHTML(p.content)}，${head}`;
+}
+function describeHTML(e) {
+  const p = e.payload, n = e.name;
+  switch (n) {
+    case "TASK_STATUS_CHANGED": return `${esc(p.old_status)} → ${esc(p.new_status)}`;
+    case "DATA_CHANGED": {
+      const diff = valueDiff(p.old, p.new);
+      const lines = diff.length ? diff : ["值未变"];
+      return `槽位「${esc(p.slot)}」：${lines.map(l => `<span class="diff-line">${esc(l)}</span>`).join("")}来源 ${esc(p.source)}`
+        + ((typeof p.new === "object" && p.new !== null) ? `<details><summary>整值</summary><code>${esc(jsonText(p.old))} → ${esc(jsonText(p.new))}</code></details>` : "");
+    }
+    case "ACTION_PROPOSED": return `工具 ${esc(p.tool)}，参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}，依据 ${esc(basisText(p.basis))}`;
+    case "ACTION_STATUS_CHANGED": return `${esc(p.new_status)}，说明：${esc(p.note)}` + ("result" in p ? `，返回值 ${resultHTML(p.result)}` : "");
+    case "MESSAGE_PUT": case "MESSAGE_TAKEN": return messageHTML(p);
+    case "MAILBOX_CLOSED": return `${BOX[p.box] || esc(p.box)}，发起方 ${esc(p.sender)}，不会再有消息`;
+    case "TASK_ENDED": return `终态 ${esc(p.final_status)}，原因：${esc(p.reason)}`;
+    case "TASK_STARTED": return `任务定义 ${esc(p.task_def_name)}`;
+    case "LOOP_STARTED": return `第 ${esc(p.loop_no)} 圈`;
+    case "CHECK_DONE_RESULT": return `已完成 = ${p.done ? "是" : "否"}`;
+    case "CONTROL_RESULT": return `行动 ${esc(p.action_id)}，结论 ${esc(p.verdict)}，核验：${esc(p.checked)}`;
+    case "EXECUTE_CALL": return `行动 ${esc(p.action_id)}，工具 ${esc(p.tool)}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}`;
+    case "MAILBOX_WAIT": return `${BOX[p.box] || esc(p.box)}，行动 ${esc(plain(p.action_id))}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}` + ("wait_ms" in p ? `，等待 ${esc(p.wait_ms)} 毫秒` : "");
+    case "TASK_DEFINITION_ERROR": return `原因：${esc(p.reason)}，选择规则原始输出 ${esc(plain(p.raw_output))}`;
+    default: return esc(jsonText(p));
+  }
+}
+function finalStatusOf(r) {
+  if (r.ended) return { status: String(r.ended.final_status), reason: r.ended.reason };
+  const kernelClosed = r.events.some(e => e.name === "MAILBOX_CLOSED" && e.payload.box === "outbox" && !EXTERNAL_SENDERS.includes(e.payload.sender));
+  const failed = r.events.filter(e => e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === FAILED);
+  if (r.definitionErrors.length || kernelClosed) {
+    return { status: "内核错误", reason: r.definitionErrors.length ? r.definitionErrors[r.definitionErrors.length - 1].payload.reason : (failed.length ? failed[failed.length - 1].payload.note : "") };
+  }
+  return { status: "未结束", reason: "" };
+}
+function questionUtterance(r, actionId) {
+  const info = r.actions.get(actionId);
+  if (!info) return null;
+  const q = info.events.find(e => isQuestionSent(e));
+  return q ? utteranceOf(q.payload.content) : null;
+}
+function loopTitle(r, loop) {
+  const check = loop.steps[0].find(e => e.name === "CHECK_DONE_RESULT");
+  if (check && check.payload.done) return `第 ${loop.no} 圈 · 结果检查为真，任务结束`;
+  const proposed = loop.steps[1].find(e => e.name === "ACTION_PROPOSED");
+  if (proposed) {
+    const u = questionUtterance(r, proposed.action_id);
+    return `第 ${loop.no} 圈 · ${proposed.payload.tool} · ${u !== null ? u : paramsSummary(proposed.payload.params)}`;
+  }
+  if (loop.steps[1].some(e => e.name === "TASK_DEFINITION_ERROR")) return `第 ${loop.no} 圈 · 任务定义错误，未提出行动`;
+  return `第 ${loop.no} 圈 · 本圈没有提出行动`;
+}
+
+// ───────────── 视图：运行索引 ─────────────
+const state = { runs: [], sortDesc: true, taskFilter: "", statusFilter: "", checked: new Set() };
+
+async function renderIndex() {
+  document.getElementById("filters-slot").innerHTML = "";
+  document.getElementById("crumb").textContent = "";
+  const app = document.getElementById("app");
+  try { state.runs = await fetchJSON("api/runs"); }
+  catch (err) { app.innerHTML = `<section><p class="error">读取运行索引失败：${esc(err.message)}</p></section>`; return; }
+  const taskNames = [...new Set(state.runs.map(r => r.task_def_name || "（无任务开始事件）"))].sort();
+  const statuses = [...new Set(state.runs.map(r => r.final_status))].sort();
+  app.innerHTML = `<section id="index">
+    <h2>运行索引 <small class="muted" id="index-count"></small></h2>
+    <div class="toolbar">
+      <label>任务定义 <select id="f-task"><option value="">全部</option>${taskNames.map(n => `<option>${esc(n)}</option>`).join("")}</select></label>
+      <label>终态 <select id="f-status"><option value="">全部</option>${statuses.map(n => `<option>${esc(n)}</option>`).join("")}</select></label>
+      <button id="sort">开始时刻：${state.sortDesc ? "最近在上" : "最早在上"}</button>
+      <button id="compare" disabled>对比勾选的两次运行</button>
+      <span class="muted" id="checked-count"></span>
+    </div>
+    <div class="scroll"><table class="index"><thead><tr><th>对比</th><th>开始时刻</th><th>任务定义</th><th>任务标识</th><th>终态</th><th>原因</th><th>圈数</th><th>行动数</th><th>事件数</th><th>耗时毫秒</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <p class="hint">点一行看运行详情；勾选两行后点「对比」。开始时刻标 * 的是旧命名文件，时刻取自文件修改时间。页面不自动刷新，要看新的运行请刷新。</p>
+  </section>`;
+  document.getElementById("f-task").value = state.taskFilter;
+  document.getElementById("f-status").value = state.statusFilter;
+  document.getElementById("f-task").onchange = e => { state.taskFilter = e.target.value; drawRows(); };
+  document.getElementById("f-status").onchange = e => { state.statusFilter = e.target.value; drawRows(); };
+  document.getElementById("sort").onclick = e => { state.sortDesc = !state.sortDesc; e.target.textContent = `开始时刻：${state.sortDesc ? "最近在上" : "最早在上"}`; drawRows(); };
+  document.getElementById("compare").onclick = () => { const [a, b] = [...state.checked]; location.hash = `#compare=${encodeURIComponent(a)},${encodeURIComponent(b)}`; };
+  drawRows();
+}
+function drawRows() {
+  const rows = state.runs
+    .filter(r => !state.taskFilter || (r.task_def_name || "（无任务开始事件）") === state.taskFilter)
+    .filter(r => !state.statusFilter || r.final_status === state.statusFilter)
+    .sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.file < b.file ? -1 : 1) * (state.sortDesc ? -1 : 1));
+  const tbody = document.getElementById("rows");
+  tbody.innerHTML = rows.map(r => {
+    const cls = r.final_status === "已完成" ? "done" : (r.final_status === "内核错误" ? "error" : "");
+    return `<tr data-file="${esc(r.file)}">
+      <td><input type="checkbox" aria-label="勾选用于对比" ${state.checked.has(r.file) ? "checked" : ""}></td>
+      <td class="mono">${esc(r.started_at)}${r.started_at_source === "文件名" ? "" : " *"}</td>
+      <td>${esc(r.task_def_name || "（无任务开始事件）")}</td><td class="mono">${esc(r.task_id)}</td>
+      <td class="status ${cls}">${esc(r.final_status)}</td><td class="reason">${esc(r.reason)}</td>
+      <td>${r.loops}</td><td>${r.actions}</td><td>${r.events}</td><td>${r.duration_ms}</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="muted">没有符合条件的运行。</td></tr>`;
+  document.getElementById("index-count").textContent = `显示 ${rows.length} / ${state.runs.length} 次运行`;
+  tbody.querySelectorAll("tr[data-file]").forEach(tr => {
+    const box = tr.querySelector("input");
+    box.onclick = ev => { ev.stopPropagation(); box.checked ? state.checked.add(tr.dataset.file) : state.checked.delete(tr.dataset.file); updateCompareButton(); };
+    tr.onclick = () => { location.hash = `#run=${encodeURIComponent(tr.dataset.file)}`; };
+  });
+  updateCompareButton();
+}
+function updateCompareButton() {
+  const n = state.checked.size;
+  document.getElementById("compare").disabled = n !== 2;
+  document.getElementById("checked-count").textContent = n ? `已勾选 ${n} 次${n === 2 ? "" : "（需要恰好两次）"}` : "";
+}
+
+// ───────────── 视图：运行详情 ─────────────
+async function renderRun(file) {
+  const app = document.getElementById("app");
+  document.getElementById("crumb").textContent = ` / ${file}`;
+  let events;
+  try { events = await fetchJSON(`api/runs/${encodeURIComponent(file)}`); }
+  catch (err) { document.getElementById("filters-slot").innerHTML = ""; app.innerHTML = `<section><p class="error">读取运行失败：${esc(err.message)}</p></section>`; return; }
+  const r = buildRecord(file, events);
+  document.getElementById("filters-slot").innerHTML = filtersHTML(r);
+  app.innerHTML = overviewHTML(r) + timelineHTML(r) + slotsHTML(r) + cardsHTML(r);
+  bindFilters();
+}
+function filtersHTML(r) {
+  return `<nav class="filters" aria-label="过滤">
+    <fieldset><legend>事件类别</legend>
+      <label><input type="radio" name="kind" value="all" checked> 全部</label>
+      <label><input type="radio" name="kind" value="state"> 只看状态事件</label>
+      <label><input type="radio" name="kind" value="trace"> 只看追踪事件</label></fieldset>
+    <fieldset><legend>谁引起</legend>
+      <label><input type="radio" name="origin" value="all" checked> 全部</label>
+      <label><input type="radio" name="origin" value="kernel"> 只看内核</label>
+      <label><input type="radio" name="origin" value="tool"> 只看工具实现</label>
+      <label><input type="radio" name="origin" value="external"> 只看外部</label></fieldset>
+    <label>行动 <select id="f-action"><option value="">全部</option>${[...r.actions.keys()].map(a => `<option value="${a}">行动 ${a}</option>`).join("")}</select></label>
+    <label>槽位 <select id="f-slot"><option value="">全部</option>${r.slots.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}</select></label>
+    <span id="f-count" class="muted"></span></nav>`;
+}
+function overviewHTML(r) {
+  const rows = [["任务标识", esc(r.taskId)], ["运行文件", `<code>${esc(r.file)}</code>`]];
+  const s = r.started;
+  if (s) {
+    rows.push(["任务定义名", esc(s.task_def_name)]);
+    rows.push([`槽位表（${Object.keys(s.slots).length} 个）`, `<ul class="plain">${Object.entries(s.slots).map(([k, v]) => `<li><b>${esc(k)}</b> 初始值 ${esc(brief(v))}</li>`).join("")}</ul>`]);
+    rows.push([`选择规则（${Object.keys(s.rules).length} 条）`, `<ul class="plain">${Object.entries(s.rules).map(([k, v]) => `<li>规则 ${esc(k)}：${esc(v)}</li>`).join("")}</ul>`]);
+    rows.push([`工具清单（${Object.keys(s.tools).length} 个）`, `<ul class="plain">${Object.entries(s.tools).map(([k, v]) => `<li><b>${esc(k)}</b> 参数名 ${esc(v.length ? v.join("、") : "无")}</li>`).join("")}</ul>`]);
+  } else {
+    rows.push(["任务开始事件", "文件里没有「任务开始」事件，无法列出槽位表、规则与工具"]);
+  }
+  const fin = finalStatusOf(r);
+  rows.push(["终态与原因", `<b>${esc(fin.status)}</b>${fin.reason ? `，原因：${esc(fin.reason)}` : ""}`]);
+  const nState = r.events.filter(e => e.kind === "state").length;
+  rows.push(["事件数", `共 ${r.events.length} 个：状态事件 ${nState} 个，追踪事件 ${r.events.length - nState} 个；耗时 ${r.events.length ? ((r.events[r.events.length - 1].ts - r.t0) * 1000).toFixed(3) : 0} 毫秒`]);
+  rows.push(["循环", `共 ${r.loops.length} 圈，提出行动 ${r.actions.size} 个`]);
+  const sources = {};
+  for (const e of r.events) sources[e.source] = (sources[e.source] || 0) + 1;
+  rows.push(["记录方", Object.entries(sources).map(([k, v]) => `${esc(k)} 发布 ${v} 个`).join("；")]);
+  return `<section id="overview"><h2>任务概览</h2><table class="kv">${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}</table></section>`;
+}
+function eventLineHTML(r, e) {
+  const origin = originOf(e);
+  const rel = `+${((e.ts - r.t0) * 1000).toFixed(1)}`;
+  const line = `<div class="line ${e.kind}${e.name === "MAILBOX_WAIT" ? " is-wait" : ""}"><span class="seq">#${e.seq}</span><span class="rel">${rel}ms</span>`
+    + `<span class="badge ${e.kind}">${e.kind === "state" ? "状态" : "追踪"}</span><span class="label">${esc(LABELS[e.name] || e.name)}</span>`
+    + `<span class="desc">${describeHTML(e)}<span class="src">${esc(e.source)}</span></span></div>`;
+  let left, right = "";
+  if (origin === "external") {
+    left = r.blocked.has(e.seq) ? `<span class="blocked">内核在此阻塞，等待外部输入</span>` : `<span class="idle">内核一侧此刻没有事件</span>`;
+    right = `<span class="ext-tag">外部 · ${esc(initiatorOf(e))}</span>${line}`;
+  } else if (origin === "tool") {
+    left = `<div class="tool-impl"><span class="tool-tag">工具实现 · ${esc(e.source)}</span>${line}</div>`;
+  } else if (isQuestionSent(e)) {
+    left = `<div class="ask-out"><span class="ask-tag">向外部提问 · 发件箱</span>${line}</div>`;
+  } else {
+    left = line;
+  }
+  return `<li class="ev origin-${origin}" data-kind="${e.kind}" data-origin="${origin}" data-action="${e.action_id === null ? "" : e.action_id}" data-slots="${esc(JSON.stringify(slotsOfEvent(r, e)))}">`
+    + `<div class="cell kernel-cell">${left}</div><div class="cell ext-cell">${right}</div></li>`;
+}
+function stepNote(events) {
+  return events.filter(e => e.name === "MAILBOX_WAIT" && e.payload.phase === "end" && e.payload.box === "inbox" && e.action_id !== null)
+    .map(w => `<span class="wait">内核阻塞等待回答 ${esc(w.payload.wait_ms)} 毫秒 · 线程 ${esc(w.payload.thread)}</span>`).join("");
+}
+function timelineHTML(r) {
+  let html = `<section id="timeline"><h2>循环时间线</h2><div class="lane-head"><span>内核一侧（工具实现发布的事件缩进显示）</span><span>外部（宿主或使用者引起）</span></div>`;
+  html += `<div class="loop"><h3>开始 <small>第一圈之前：任务开始与初始化</small></h3><ol class="events">${r.before.map(e => eventLineHTML(r, e)).join("")}</ol></div>`;
+  for (const loop of r.loops) {
+    html += `<div class="loop"><h3>${esc(loopTitle(r, loop))}</h3>`;
+    loop.steps.forEach((events, i) => {
+      html += `<div class="step"><div class="step-name">${STEP_NAMES[i]}${stepNote(events)}</div><div class="step-body">`
+        + (events.length ? `<ol class="events">${events.map(e => eventLineHTML(r, e)).join("")}</ol>` : `<p class="empty">本步没有发出事件</p>`)
+        + `</div></div>`;
+    });
+    html += `</div>`;
+  }
+  return html + `</section>`;
+}
+function slotsHTML(r) {
+  const changes = r.events.filter(e => e.name === "DATA_CHANGED");
+  const head = changes.map(e => `<th>#${e.seq}</th>`).join("");
+  const rows = r.slots.map(slot => {
+    const mine = changes.filter(e => e.payload.slot === slot);
+    const last = mine.length ? mine[mine.length - 1].payload.new : undefined;
+    const finalCell = mine.length ? `${esc(brief(last))}${typeof last === "object" && last !== null ? `<details><summary>整值</summary><code>${esc(jsonText(last))}</code></details>` : ""}` : "—";
+    const cells = changes.map(e => {
+      if (e.payload.slot !== slot) return `<td class="miss">·</td>`;
+      const p = e.payload;
+      const source = typeof p.source === "number" ? `行动 ${p.source}` : String(p.source);
+      const whole = p.old === null || p.old === undefined || typeof p.new !== "object" || p.new === null;
+      const diff = whole ? [brief(p.new)] : valueDiff(p.old, p.new);
+      const count = !whole && Array.isArray(p.new) ? `<span class="muted">共 ${p.new.length} 项</span>` : "";
+      return `<td class="hit"><span class="val">${diff.map(l => `<span class="diff-line">${esc(l)}</span>`).join("") || "值未变"}</span>${count}<span class="src">${esc(source)}</span></td>`;
+    }).join("");
+    return `<tr class="slot-row" data-slots="${esc(JSON.stringify([slot]))}"><th>${esc(slot)}</th><td class="final">${finalCell}</td>${cells}</tr>`;
+  }).join("");
+  return `<section id="slots"><h2>槽位轨迹</h2><p class="hint">列是全部「数据变更」事件，按事件序号从左到右；格子里是这次变更写入的值，列表与字典只写出变化的项。</p>`
+    + `<div class="scroll"><table class="grid"><thead><tr><th>槽位</th><th>最终值</th>${head}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function cardsHTML(r) {
+  const cards = [...r.actions].map(([aid, info]) => {
+    const p = info.proposed.payload, events = info.events;
+    const history = events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+    const questions = events.filter(isQuestionSent);
+    const takes = events.filter(e => e.name === "MESSAGE_TAKEN" && e.payload.box === "inbox");
+    const changes = events.filter(e => e.name === "DATA_CHANGED");
+    const waits = events.filter(e => e.name === "MAILBOX_WAIT" && e.payload.phase === "end" && e.payload.box === "inbox");
+    const terminal = history.filter(e => "result" in e.payload);
+    const li = (items, empty) => items.length ? `<ul class="plain">${items.join("")}</ul>` : `<span class="empty">${empty}</span>`;
+    return `<article class="card" data-action="${aid}" data-slots="${esc(JSON.stringify([...r.actionSlots.get(aid)]))}">
+      <header><h3>行动 ${aid} · ${esc(p.tool)}</h3><span class="status">${esc(history.length ? history[history.length - 1].payload.new_status : "—")}</span></header>
+      <dl>
+        <dt>提出</dt><dd>#${info.proposed.seq} 参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}</dd>
+        <dt>依据</dt><dd>${esc(basisText(p.basis))}</dd>
+        <dt>状态经过</dt><dd>${li(history.map(e => `<li><span class="seq">#${e.seq}</span> <b>${esc(e.payload.new_status)}</b> · ${esc(e.payload.note)}</li>`), "没有")}</dd>
+        <dt>发出的问题</dt><dd>${li(questions.map(e => `<li><span class="seq">#${e.seq}</span> ${messageHTML(e.payload)}</li>`), "没有发出问题")}</dd>
+        <dt>等待回答</dt><dd>${esc(waits.map(w => `${w.payload.wait_ms} 毫秒，线程 ${w.payload.thread}`).join("；") || "没有邮箱等待")}</dd>
+        <dt>取到的回答</dt><dd>${li(takes.map(e => `<li><span class="seq">#${e.seq}</span> ${resultHTML(e.payload.content)}（发起方 ${esc(e.payload.sender)}，回复问题 ${esc(plain(e.payload.in_reply_to))}）</li>`), "没有取到回答")}</dd>
+        <dt>返回值</dt><dd>${terminal.length ? resultHTML(terminal[terminal.length - 1].payload.result) : "（没有终态事件）"}</dd>
+        <dt>变更</dt><dd>${li(changes.map(e => {
+          const diff = valueDiff(e.payload.old, e.payload.new);
+          const whole = typeof e.payload.new === "object" && e.payload.new !== null
+            ? `<details><summary>整值</summary><code>${esc(jsonText(e.payload.old))} → ${esc(jsonText(e.payload.new))}</code></details>` : "";
+          return `<li><span class="seq">#${e.seq}</span> 「${esc(e.payload.slot)}」 ${(diff.length ? diff : ["值未变"]).map(l => `<span class="diff-line">${esc(l)}</span>`).join("")}${whole}</li>`;
+        }), "没有变更")}</dd>
+      </dl></article>`;
+  }).join("");
+  return `<section id="actions"><h2>行动卡片</h2><div class="cards">${cards || `<p class="empty">这次运行没有提出任何行动。</p>`}</div></section>`;
+}
+function bindFilters() {
+  const apply = () => {
+    const kind = document.querySelector("input[name=kind]:checked").value;
+    const origin = document.querySelector("input[name=origin]:checked").value;
+    const action = document.getElementById("f-action").value;
+    const slot = document.getElementById("f-slot").value;
+    const slotsOf = el => { try { return JSON.parse(el.dataset.slots || "[]"); } catch (_) { return []; } };
+    let shown = 0, total = 0;
+    document.querySelectorAll("li.ev").forEach(el => {
+      total++;
+      const ok = (kind === "all" || el.dataset.kind === kind) && (origin === "all" || el.dataset.origin === origin)
+        && (!action || el.dataset.action === action) && (!slot || slotsOf(el).includes(slot));
+      el.hidden = !ok; if (ok) shown++;
+    });
+    document.querySelectorAll(".loop").forEach(loop => { loop.hidden = ![...loop.querySelectorAll("li.ev")].some(li => !li.hidden); });
+    document.querySelectorAll(".card").forEach(card => { card.hidden = Boolean((action && card.dataset.action !== action) || (slot && !slotsOf(card).includes(slot))); });
+    document.querySelectorAll(".slot-row").forEach(row => { row.hidden = Boolean(slot && !slotsOf(row).includes(slot)); });
+    document.getElementById("f-count").textContent = `时间线显示 ${shown} / ${total} 个事件`;
+  };
+  document.querySelectorAll("input[name=kind], input[name=origin]").forEach(i => i.addEventListener("change", apply));
+  document.getElementById("f-action").addEventListener("change", apply);
+  document.getElementById("f-slot").addEventListener("change", apply);
+  apply();
+}
+
+// ───────────── 视图：对比 ─────────────
+function actionRow(r, info) {
+  if (!info) return null;
+  const p = info.proposed.payload;
+  const history = info.events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+  const u = questionUtterance(r, info.proposed.action_id);
+  return {
+    tool: p.tool,
+    what: u !== null ? u : paramsSummary(p.params),
+    status: history.length ? history[history.length - 1].payload.new_status : "—",
+    slots: [...new Set(info.events.filter(e => e.name === "DATA_CHANGED").map(e => e.payload.slot))].join("、") || "（无）",
+  };
+}
+async function renderCompare(a, b) {
+  document.getElementById("filters-slot").innerHTML = "";
+  document.getElementById("crumb").textContent = " / 对比";
+  const app = document.getElementById("app");
+  let left, right;
+  try {
+    const [ea, eb] = await Promise.all([fetchJSON(`api/runs/${encodeURIComponent(a)}`), fetchJSON(`api/runs/${encodeURIComponent(b)}`)]);
+    left = buildRecord(a, ea); right = buildRecord(b, eb);
+  } catch (err) { app.innerHTML = `<section><p class="error">读取运行失败：${esc(err.message)}</p></section>`; return; }
+  const head = r => {
+    const fin = finalStatusOf(r);
+    return `<b>${esc(r.started ? r.started.task_def_name : "（无任务开始事件）")}</b><br><code>${esc(r.file)}</code><br>`
+      + `终态 <b>${esc(fin.status)}</b>${fin.reason ? `，${esc(fin.reason)}` : ""}；${r.loops.length} 圈，${r.actions.size} 个行动`
+      + `<br><a href="#run=${encodeURIComponent(r.file)}">看详情</a>`;
+  };
+  const la = [...left.actions.values()], ra = [...right.actions.values()];
+  const n = Math.max(la.length, ra.length);
+  const fields = [["tool", "工具"], ["what", "话或参数"], ["status", "终态"], ["slots", "变更的槽位"]];
+  let differing = 0;
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const x = actionRow(left, la[i]), y = actionRow(right, ra[i]);
+    const cells = side => fields.map(([key]) => {
+      const mine = side === "l" ? x : y, other = side === "l" ? y : x;
+      if (!mine) return `<td class="absent" data-field="${key}">（无）</td>`;
+      const cls = !other || other[key] !== mine[key] ? "diff" : "same";
+      return `<td class="${cls}" data-field="${key}">${esc(mine[key])}</td>`;
+    }).join("");
+    const rowDiffers = !x || !y || fields.some(([key]) => x[key] !== y[key]);
+    if (rowDiffers) differing++;
+    rows.push(`<tr data-row="${i + 1}" data-differs="${rowDiffers}"><td class="no">${i + 1}</td>${cells("l")}${cells("r")}</tr>`);
+  }
+  const slots = [...new Set([...left.slots, ...right.slots])];
+  let slotDiffering = 0;
+  const dataRows = slots.map(slot => {
+    const x = left.finalData[slot], y = right.finalData[slot];
+    const same = JSON.stringify(x) === JSON.stringify(y);
+    if (!same) slotDiffering++;
+    const cell = v => `${esc(brief(v))}${typeof v === "object" && v !== null ? `<details><summary>整值</summary><code>${esc(jsonText(v))}</code></details>` : ""}`;
+    const diff = same ? "相同" : (valueDiff(x === undefined ? null : x, y === undefined ? null : y).join("；") || "不同");
+    return `<tr data-slot="${esc(slot)}" data-differs="${!same}"><th>${esc(slot)}</th><td class="${same ? "same" : "diff"}">${cell(x)}</td><td class="${same ? "same" : "diff"}">${cell(y)}</td><td class="${same ? "same" : "diff"}">${esc(diff)}</td></tr>`;
+  }).join("");
+  app.innerHTML = `<section id="compare">
+    <h2>对比</h2>
+    <div class="scroll"><table class="compare"><thead><tr><th></th><th>左</th><th>右</th></tr></thead>
+      <tbody><tr><td class="no">运行</td><td>${head(left)}</td><td>${head(right)}</td></tr></tbody></table></div>
+  </section>
+  <section id="compare-actions">
+    <h2>行动序列 <small class="muted">按位置对齐；${differing} / ${n} 行有不同，黄色是不同处，灰色是相同处，「（无）」表示该侧没有这一行</small></h2>
+    <div class="scroll"><table class="compare"><thead><tr><th rowspan="2">行</th><th colspan="4">左</th><th colspan="4">右</th></tr>
+      <tr>${fields.map(([, label]) => `<th>${label}</th>`).join("")}${fields.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead>
+      <tbody>${rows.join("") || `<tr><td colspan="9" class="muted">两次运行都没有行动。</td></tr>`}</tbody></table></div>
+  </section>
+  <section id="compare-data">
+    <h2>终态数据 <small class="muted">逐槽位并排；${slotDiffering} / ${slots.length} 个槽位不同</small></h2>
+    <div class="scroll"><table class="compare"><thead><tr><th>槽位</th><th>左</th><th>右</th><th>差异</th></tr></thead><tbody>${dataRows}</tbody></table></div>
+  </section>`;
+}
+
+// ───────────── 路由：地址栏记视图，刷新不丢 ─────────────
+function route() {
+  const hash = location.hash.replace(/^#/, "");
+  window.scrollTo(0, 0);
+  if (hash.startsWith("run=")) return renderRun(decodeURIComponent(hash.slice(4)));
+  if (hash.startsWith("compare=")) {
+    const [a, b] = hash.slice(8).split(",").map(decodeURIComponent);
+    return renderCompare(a, b);
+  }
+  return renderIndex();
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

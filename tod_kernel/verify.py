@@ -27,6 +27,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import dataclasses
 import hashlib
 
 from tod_kernel import kernel, task_intake, task_travel
@@ -71,8 +72,10 @@ from tod_kernel.observe import (
     MemoryCollector,
     action_history,
     is_external,
+    make_server,
     read_events,
     replay_data,
+    summarize,
 )
 
 KERNEL_THREAD_PREFIX = "kernel-"
@@ -154,25 +157,28 @@ EXPECTED_UTTERANCES = {
     ("材料清单", (2, "是否纳入")): "请确认是否把文件 c.xlsx 纳入项目。",
 }
 
-# 第一步验证目标一：内核三个文件在提交 9472ac5 里的 sha256，写死在这里。改了一个字节，本步即不通过。
+# 零差异断言：第二步只允许改 observe.py、verify.py、__init__.py 与新增观测台页面，
+# 下面五个模块必须与提交 185c6d7 逐字节相同。
 KERNEL_SHA256 = {
     "kernel.py": "b28cb651f1ab500cee7306a891b42417f6063897fc4cfb2d6743f65a917974e2",
-    "observe.py": "12f7168bfb27a2318cc5e2771adbd7b55e441a07f192a6dfb4bcdaf42999c570",
-    "view.py": "958e62c499ce7771316d2a40d9188208b0678c429e43ee975ea7ddb74cebd651",
+    "tools.py": "3c01943df0635ffba4b54eca21686750172881e2c0f597b232cc216b131ed12e",
+    "dialogue.py": "0a7a6509581ba96cf6da573362b4d2e4992a962a1287f8f3105ca12102297d7e",
+    "task_travel.py": "7f17f631329154be071388cd851cb4526872df6ef9ad47059f5e2b5eaa62a71e",
+    "task_intake.py": "7db9d0c42e30c5d38c48448e979e07f42abde3fe7062de8f3c7d3ab8c734cfa1",
 }
 
 
-def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",)) -> Run:
+def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), runs_dir=None, console=True) -> Run:
     run = Run(task_id=task_id, task_def=task_def, host_thread=threading.get_ident())
 
     # 宿主：事件流、订阅者、邮箱。
     stream = EventStream(task_id)
     collector = MemoryCollector()
     stream.subscribe(collector)
-    stream.subscribe(ConsolePrinter())
-    writer = FileWriter(RUNS_DIR)
+    if console:
+        stream.subscribe(ConsolePrinter())
+    writer = FileWriter(RUNS_DIR if runs_dir is None else runs_dir)
     stream.subscribe(writer)
-    run.run_file = writer.path_for(task_id)
     stream.subscribe(lambda e: run.thread_of_seq.__setitem__(e.seq, threading.get_ident()))
 
     inbox = Mailbox(stream, task_id, INBOX)
@@ -248,6 +254,7 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",)) -> 
     finally:
         kernel.update_state, kernel.execute, kernel.select_action = original_update, original_execute, original_select
         kernel.register_action = original_register
+    run.run_file = writer.path_for(task_id)  # 收到「任务开始」时才定名，所以运行结束后再取
     run.all_events = list(collector.events)
     run.events = [e for e in run.all_events if e.kind == STATE]
     run.inbox_closed = inbox._closed  # 只读检查用：两个箱最终是否关闭
@@ -747,11 +754,11 @@ INTAKE_FINAL_DATA = {
 
 
 def check_kernel_unchanged(c: Checker) -> None:
-    """第一步验证目标一：内核三个文件的内容哈希等于提交 9472ac5 里的值。"""
+    """零差异断言：五个模块的内容哈希等于提交 185c6d7 里的值（第一步是三个内核文件对 9472ac5，第二步起改为这五个）。"""
     here = Path(kernel.__file__).resolve().parent
     actual = {name: hashlib.sha256((here / name).read_bytes()).hexdigest() for name in KERNEL_SHA256}
     for name, expected in KERNEL_SHA256.items():
-        c.check(f"第一步目标一：{name} 的 sha256 等于提交 9472ac5 里的值", actual[name] == expected,
+        c.check(f"零差异：{name} 的 sha256 等于提交 185c6d7 里的值", actual[name] == expected,
                 f"写死 {expected}，实际 {actual[name]}")
     source = (here / "kernel.py").read_text(encoding="utf-8")
     words = ("目录", "文件总表", "材料清单", "登记进度", "清单文件路径", "list_dir", "register_file", "generate_manifest")
@@ -889,9 +896,161 @@ def intake_scenario_three() -> Checker:
     return c
 
 
+# ───────────────────────── 第二步：观测台 ─────────────────────────
+
+# 七个场景的运行参数：（任务标识, 任务定义, 答案表, 工具名）。
+def all_scenarios():
+    return [
+        ("T-scenario-1", task_travel, slot_answers(FULL_ANSWERS), ("ask",)),
+        ("T-scenario-2", task_travel.ALL_FILLED, {}, ("ask",)),
+        ("T-scenario-3", task_travel, slot_answers({"目的地": "上海", "日期": "9 月 20 日"}), ("ask",)),
+        ("T-scenario-4", task_travel.DATE_FILLED, slot_answers({"目的地": "上海", "事由": "客户拜访"}), ("ask",)),
+        ("T-intake-1", task_intake, INTAKE_ANSWERS, INTAKE_TOOLS),
+        ("T-intake-2", task_intake.SWAPPED, INTAKE_ANSWERS, INTAKE_TOOLS),
+        ("T-intake-3", task_intake, {k: v for k, v in INTAKE_ANSWERS.items() if k[1][0] in (0, 1)}, INTAKE_TOOLS),
+    ]
+
+
+# 摘要预期表：任务标识 → （任务定义名, 终态, 圈数, 行动数），来自第零步、第一步文档。
+EXPECTED_SUMMARIES = {
+    "T-scenario-1": ("出差申请单", "已完成", 4, 3),
+    "T-scenario-2": ("出差申请单（三项预填）", "已完成", 1, 0),
+    "T-scenario-3": ("出差申请单", "内核错误", 3, 3),
+    "T-scenario-4": ("出差申请单（日期预填）", "已完成", 3, 2),
+    "T-intake-1": ("材料接入登记", "已完成", 9, 8),
+    "T-intake-2": ("材料接入登记（规则二三互换）", "已完成", 9, 8),
+    "T-intake-3": ("材料接入登记", "内核错误", 7, 7),
+}
+
+
+def http_get(port: int, raw_path: str):
+    """按原始路径发请求（不做 .. 规范化），返回（状态码, 响应体字节）。"""
+    import http.client
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request("GET", raw_path)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+def observatory_checks() -> Checker:
+    import json as json_module
+    import shutil
+    import tempfile
+    import urllib.parse
+
+    banner("第二步：观测台")
+    c = Checker("第二步：观测台")
+    print("── 断言 ──")
+    check_kernel_unchanged(c)
+    work = Path(tempfile.mkdtemp(prefix="tod-observatory-"))
+    try:
+        runs_dir = work / "runs"
+        for round_no in (1, 2):
+            for task_id, task_def, answers, tools in all_scenarios():
+                run_scenario(task_id, task_def, answers, tools, runs_dir=runs_dir, console=False)
+        files = sorted(runs_dir.iterdir())
+        scenario_count = len(all_scenarios())
+
+        # 目标一：每次运行都留下来、都能找到。
+        c.check(f"第二步目标一：临时空目录里连跑两遍后恰有 {2 * scenario_count} 个文件", len(files) == 2 * scenario_count, [f.name for f in files])
+        c.check("第二步目标一：文件名两两不同，且都是「任务标识_开始时刻.jsonl」",
+                len({f.name for f in files}) == len(files)
+                and all(re.fullmatch(r"T-[a-z]+-\d_\d{8}T\d{9}(_\d+)?\.jsonl", f.name) for f in files),
+                [f.name for f in files])
+        per_task: dict[str, int] = {}
+        wrong = []
+        for f in files:
+            summary = summarize(f)
+            per_task[summary.task_id] = per_task.get(summary.task_id, 0) + 1
+            actual = (summary.task_def_name, summary.final_status, summary.loops, summary.actions)
+            if EXPECTED_SUMMARIES.get(summary.task_id) != actual:
+                wrong.append((f.name, actual))
+        c.check("第二步目标一：每份文件的摘要（任务定义名、终态、圈数、行动数）与预期表逐行相等", not wrong, wrong)
+        c.check("第二步目标一：每个任务标识恰有两份文件", per_task == {task_id: 2 for task_id in EXPECTED_SUMMARIES}, per_task)
+        c.check("第二步目标一：每份文件的事件序号从 1 起连续，且含「任务开始」",
+                all([e.seq for e in read_events(f)] == list(range(1, len(read_events(f)) + 1))
+                    and any(e.name == "TASK_STARTED" for e in read_events(f)) for f in files))
+
+        # 目标二：看一次运行不生成文件；服务三个接口。
+        c.check("第二步目标二：仓库里不再有 view.py", not (Path(kernel.__file__).resolve().parent / "view.py").exists())
+        c.check("第二步目标二：运行目录里只有 .jsonl，没有 .html", all(f.suffix == ".jsonl" for f in files), [f.name for f in files])
+        # 旧命名文件照样能读：复制一份成不带时刻的文件名。
+        old_dir = work / "old"
+        old_dir.mkdir()
+        old_file = old_dir / "T-intake-1.jsonl"
+        by_task = {}
+        for f in files:
+            by_task.setdefault(summarize(f).task_id, f)  # 按摘要里的任务标识挑文件，不依赖文件名
+        if "T-intake-1" in by_task:
+            shutil.copyfile(by_task["T-intake-1"], old_file)
+            old_summary = summarize(old_file)
+            c.check("第二步：旧命名文件照样能读，开始时刻取文件修改时间并标出来源",
+                    old_summary.started_at_source == "文件修改时间"
+                    and (old_summary.task_def_name, old_summary.final_status, old_summary.loops, old_summary.actions) == EXPECTED_SUMMARIES["T-intake-1"],
+                    old_summary)
+        else:
+            c.check("第二步：旧命名文件照样能读（找不到 T-intake-1 的运行文件，无法检查）", False)
+
+        server = make_server(runs_dir, "0.0.0.0", 0)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, name="observatory-test", daemon=True)
+        thread.start()
+        try:
+            status, body = http_get(port, "/")
+            c.check("第二步目标二：GET / 返回 200 和观测台页面", status == 200 and "观测台".encode("utf-8") in body, status)
+            status, body = http_get(port, "/api/runs")
+            index = json_module.loads(body) if status == 200 else []
+            c.check(f"第二步目标一：GET /api/runs 返回 200，行数等于文件数 {len(files)}", status == 200 and len(index) == len(files), (status, len(index)))
+            c.check("第二步目标一：索引按开始时刻倒序", [row["started_at"] for row in index] == sorted((row["started_at"] for row in index), reverse=True))
+            mismatched = []
+            for f in files:
+                status, body = http_get(port, "/api/runs/" + urllib.parse.quote(f.name))
+                lines = sum(1 for line in f.read_text(encoding="utf-8").splitlines() if line.strip())
+                if status != 200 or len(json_module.loads(body)) != lines:
+                    mismatched.append((f.name, status))
+            c.check("第二步目标二：每份文件经 GET /api/runs/<文件名> 返回的事件数等于文件行数", not mismatched, mismatched)
+            # 其中 ../old/T-intake-1.jsonl 是运行目录之外真实存在的文件，拦截失效时会返回 200。
+            for raw in ("/api/runs/../old/T-intake-1.jsonl", "/api/runs/..%2Fold%2FT-intake-1.jsonl",
+                        "/api/runs/%2E%2E%2Fold%2FT-intake-1.jsonl", "/api/runs/../x", "/api/runs/nope.jsonl", "/api/runs/"):
+                status, _ = http_get(port, raw)
+                c.check(f"第二步目标二：路径穿越或不存在的文件 {raw} 返回 404", status == 404, status)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
+
+        # 同一个文件订阅者：序号回绕认作新运行；「任务开始」前的事件缓存后写入；没有「任务开始」不写文件。
+        sample = read_events(by_task["T-scenario-2"]) if "T-scenario-2" in by_task else []
+        head = [e for e in sample if e.name != "TASK_STARTED"][:1]  # 取一个非「任务开始」事件放到最前
+        replay = head + [e for e in sample if not head or e is not head[0]]
+        replay = [dataclasses.replace(e, seq=i + 1) for i, e in enumerate(replay)]
+        writer_dir = work / "writer"
+        writer = FileWriter(writer_dir)
+        for _ in range(2):
+            for e in replay:
+                writer(e)
+        if replay:
+            writer(dataclasses.replace(replay[0], seq=1))  # 第三次运行只有一个事件，没有「任务开始」
+        written = sorted(writer_dir.iterdir())
+        contents = [[json_module.loads(line)["seq"] for line in f.read_text(encoding="utf-8").splitlines()] for f in written]
+        c.check("第二步：同一个文件订阅者对同一任务标识，序号回绕后另起一份文件；两份都完整且按原序写出缓存的事件；"
+                "没有「任务开始」的第三次运行不写文件",
+                replay and len(written) == 2 and all(seqs == list(range(1, len(replay) + 1)) for seqs in contents)
+                and writer.paths == written,
+                ([f.name for f in written], contents))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return c
+
+
 def main() -> int:
     checkers = [scenario_one(), scenario_two(), scenario_three(), scenario_four(),
-                intake_scenario_one(), intake_scenario_two(), intake_scenario_three()]
+                intake_scenario_one(), intake_scenario_two(), intake_scenario_three(),
+                observatory_checks()]
     banner("汇总")
     all_ok = True
     for c in checkers:
