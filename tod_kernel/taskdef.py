@@ -2,7 +2,7 @@
 
 一份任务定义文件定义的是一类任务，顶层三个键：名字、槽位（槽位名到元数据：说明、类型、默认值、取值、项、提问）、阶段列表。
 一次任务的实例由宿主分配的任务标识加上启动时给的初始输入确定，初始输入经 load 的 initial 参数给出，覆盖槽位默认值。
-加载后的对象带内核按属性名访问的 NAME、SLOTS（各槽位默认值）、DEFINITION、is_done、select_action，以及询问工具读的 TEMPLATES
+加载后的对象带内核按属性名访问的 NAME、SLOTS（各槽位默认值）、DEFINITION、is_done、select_call，以及询问工具读的 TEMPLATES
 （由槽位与列表项字段上的「提问」生成）。DEFINITION 是加载后的结构化定义（槽位元数据原样，阶段列表原样、步骤带全局编号，
 外加告知异常与自主工具的编号表），内核把它放进「任务开始」事件。
 文件格式的权威定义是同目录 task_defs/任务定义.schema.json；本模块只用标准库，结构检查是它的子集，另做 schema 管不了的语义检查。
@@ -12,18 +12,18 @@
 阶段目标、步骤组的「重复直到」用三个谓词（不为空、相等、列表无项为空）写，取「且」；
 参数、目标、「最多」里可以用四种引用（槽位、长度、首个为空项、首个为空项字段）取数据。
 
-本模块导入静态工具表（tools.STATIC_TOOLS）：加载时校验工具名与参数名；行动选择时求前置条件。数据文件里只有工具名。
+本模块导入静态工具表（tools.STATIC_TOOLS）：加载时校验工具名与参数名；调用选择时求前置条件。数据文件里只有工具名。
 每个步骤必填一句「说明」，由任务作者写这一步做什么；依据说明、告知异常的话与观测台都用它，不用工具标识。
 
-执行语义（行动选择每次迭代做一次，只读数据，不读行动记录，不写任何东西）：
+执行语义（调用选择每次迭代做一次，只读数据，不读工具调用记录，不写任何东西）：
 - 任务进行到哪叫「当前步」（第四步 4.10 节），是任务对象上的一个字段，不在任务数据里，内核只保管不解读。
   它记的是最近成功完成的那一步的地址，沿定义三层从外到内写：{"阶段": 阶段名, "循环": {"起", "止", "第几次"}, "步骤": 阶段内序号}。
   「循环」只在这一步落在循环段（阶段里连续几步的循环执行）里时才有，「起」「止」是该段在本阶段内的起止序号；
   阶段刚开始一步都没做时只有「阶段」这一层。阶段内序号从 1 起。
-- 本模块提供五个接口：INITIAL_STEP（初始当前步）、select_action(data, step)、record_step(step, action)、step_text、step_view。
+- 本模块提供五个接口：INITIAL_STEP（初始当前步）、select_call(data, step)、record_step(step, call)、step_text、step_view。
 - 阶段只向前走：当前阶段目标成立就前进到后面第一个目标未达成的阶段的起点，从不自动后退。
 - 一趟从当前步的下一步起往后走，跳过引用为 null 或前置条件不成立的步骤。
-- 三种异常构造「告知异常」候选：一趟走完阶段目标仍未达成；循环段次数到「最多」仍未满足「重复直到」（含同一次行动选择里
+- 三种异常构造「告知异常」候选：一趟走完阶段目标仍未达成；循环段次数到「最多」仍未满足「重复直到」（含同一次调用选择里
   段内一次零候选）；阶段越过最后一个而任务未完成。使用者选重做时由 record_step 把当前步退回该阶段起点。
 - 当前步不合法（阶段不存在、步骤或循环不属于这个阶段）时抛 DefinitionError，由内核报任务定义错误。
 """
@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tod_kernel.kernel import ActionStatus, DefinitionError
+from tod_kernel.kernel import CallStatus, DefinitionError
 from tod_kernel.tools import EXCEPTION_OPTIONS, EXCEPTION_TOOL, REDO_RESULT, STATIC_TOOLS
 
 # 文件里的键。
@@ -183,7 +183,7 @@ class Stage:
 
 
 class TaskDefinition:
-    """加载后的任务定义。内核按属性名访问 NAME、SLOTS、DEFINITION、is_done、select_action；询问工具读 TEMPLATES；
+    """加载后的任务定义。内核按属性名访问 NAME、SLOTS、DEFINITION、is_done、select_call；询问工具读 TEMPLATES；
     DELIVERABLES 是交付物列表（名字、说明、来源、形态），给观测台与将来的「告知」工具用。
 
     依据说明（序号 → 「阶段名 › 第 n 步 步骤说明」等）由加载器从结构生成，存在 _notes 里，不作为属性对外。
@@ -214,8 +214,8 @@ class TaskDefinition:
         index = self._stage_index.get(stage_name)
         return True if index is None else _holds_all(self._stages[index].goal, data)
 
-    def select_action(self, data, step):
-        """行动选择：返回（工具名, 参数, 依据）——普通一步或告知异常；全部阶段目标都已成立时返回 None。
+    def select_call(self, data, step):
+        """调用选择：返回（工具名, 参数, 依据）——普通一步或告知异常；全部阶段目标都已成立时返回 None。
 
         只读，不写任何东西。step 是当前步；它不合法时抛 DefinitionError，由内核报任务定义错误。
         """
@@ -241,21 +241,21 @@ class TaskDefinition:
 
     # ── 当前步的四个接口（另一个是 INITIAL_STEP） ──
 
-    def record_step(self, step, action):
-        """记录本步：行动到终态后，把这个行动做的那一步记进当前步并返回新值。纯函数，不读任务数据。
+    def record_step(self, step, call):
+        """记录本步：工具调用到终态后，把这个工具调用做的那一步记进当前步并返回新值。纯函数，不读任务数据。
 
-        三条规则：行动没成功不动；告知异常且返回值是「重做」则回到该阶段起点；
+        三条规则：工具调用没成功不动；告知异常且返回值是「重做」则回到该阶段起点；
         其余写该步的阶段与阶段内序号，落在循环段里时带上这段循环的起止与第几次。
         """
-        if getattr(action, "status", None) is not ActionStatus.SUCCEEDED:
+        if getattr(call, "status", None) is not CallStatus.SUCCEEDED:
             return step
-        number = action.basis[0] if isinstance(action.basis, tuple) and action.basis else None
+        number = call.basis[0] if isinstance(call.basis, tuple) and call.basis else None
         reported = self._exception_stage.get(number)
         if reported is not None:
-            return reported.start_step() if action.result == REDO_RESULT else step
+            return reported.start_step() if call.result == REDO_RESULT else step
         located = self._step_of_number.get(number)
         if located is None:
-            raise DefinitionError(f"行动的依据序号不是任何一步，记不了当前步：{number!r}")
+            raise DefinitionError(f"工具调用的依据序号不是任何一步，记不了当前步：{number!r}")
         stage, done = located
         new = {STEP_STAGE: stage.name}
         if done.group is not None:
@@ -325,7 +325,7 @@ class TaskDefinition:
 
         here 是这一趟起点的当前步（前进过阶段时是新阶段的起点），只在构造告知异常时用来报位置。
         position 是由 here 推出的起点状态。结局是候选、告知异常候选或 None（任务定义缺口）。
-        record 记本次行动选择的经过（段首走起过的循环段、选择经过），候选的依据命中值带上选择经过。
+        record 记本次调用选择的经过（段首走起过的循环段、选择经过），候选的依据命中值带上选择经过。
         """
         (kind, pos), rounds = position
         handlers = {"enter": self._enter, "in": self._in_group, "round_end": self._round_end}
@@ -347,7 +347,7 @@ class TaskDefinition:
         group = step.group
         limit = _evaluate(group.max, data)
         if not _valid_limit(limit):
-            return _Outcome(None)  # 「最多」求出的既不是 null 也不是非负整数：任务定义缺口，行动选择返回空，由内核报任务定义错误
+            return _Outcome(None)  # 「最多」求出的既不是 null 也不是非负整数：任务定义缺口，调用选择返回空，由内核报任务定义错误
         if limit is None or _holds_all(group.until, data):
             # 「最多」为 null 跳过整段循环；「重复直到」已成立，一次不走越过整段
             reason = REASON_LIMIT_NULL if limit is None else REASON_UNTIL_HOLDS
@@ -382,13 +382,13 @@ class TaskDefinition:
         if rounds >= limit:
             return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 次数到「最多」仍未满足停止条件
         if group.first in record.walked_from_first:
-            return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 本次行动选择里段内一次零候选，不回段首
+            return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 本次调用选择里段内一次零候选，不回段首
         return ("in", group.first), rounds
 
     def _try_step(self, stage, step, data, rounds_after, record):
         """求一个步骤：引用为 null 或前置条件不成立返回 None 并记进选择经过；成立返回（工具名, 参数, 依据）。
 
-        依据的命中值是前置条件返回的命中值字典，外加「选择经过」键。当前步不在这里写，由 record_step 在行动成功后记。
+        依据的命中值是前置条件返回的命中值字典，外加「选择经过」键。当前步不在这里写，由 record_step 在工具调用成功后记。
         rounds_after 现在只给状态机用（段尾试中时这一次就算走完），不再进候选。
         """
         params = _evaluate_params(step.params, data)
@@ -449,7 +449,7 @@ class TaskDefinition:
 
 
 class _PassRecord:
-    """一次行动选择的经过：组首走起过的组（以组首序号记，判「组内一轮零候选」用），以及写进依据命中值的选择经过。"""
+    """一次调用选择的经过：组首走起过的组（以组首序号记，判「组内一轮零候选」用），以及写进依据命中值的选择经过。"""
 
     __slots__ = ("walked_from_first", "trail")
 
@@ -768,7 +768,7 @@ class _Checker:
         if not isinstance(name, str) or name not in STATIC_TOOLS:
             self.fail(where, f"工具「{name}」不在静态工具表里")
         if name == EXCEPTION_TOOL:
-            self.fail(where, f"「{EXCEPTION_TOOL}」由行动选择自动构造，不能写进任务定义")
+            self.fail(where, f"「{EXCEPTION_TOOL}」由调用选择自动构造，不能写进任务定义")
 
     def step(self, value, where):
         self.dict_with(value, where, (STEP_NOTE, STEP_TOOL, STEP_PARAMS), (GROUP_UNTIL, GROUP_MAX))

@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tod_kernel.kernel import (
-    ACTION_PROPOSED,
-    ACTION_STATUS_CHANGED,
+    CALL_PROPOSED,
+    CALL_STATUS_CHANGED,
     CHECK_DONE_RESULT,
     CONTROL_RESULT,
     DATA_CHANGED,
@@ -93,16 +93,38 @@ def replay_step(events):
     return step
 
 
-def action_history(events, action_id) -> list[Event]:
-    """某个行动的状态经过：按行动编号过滤出的「行动状态变化」事件，按序号排列。"""
+def call_history(events, call_id) -> list[Event]:
+    """某个工具调用的状态经过：按工具调用编号过滤出的「工具调用状态变化」事件，按序号排列。"""
     return sorted(
-        (e for e in events if e.kind == STATE and e.name == ACTION_STATUS_CHANGED and e.action_id == action_id),
+        (e for e in events if e.kind == STATE and e.name == CALL_STATUS_CHANGED and e.call_id == call_id),
         key=lambda e: e.seq,
     )
 
 
+# 2026-09-17「工具调用」改名「工具调用」之前写出的运行文件用的是旧事件名与旧键。旧名到新名的对照只写在这里一处，
+# 读文件的两条路（读成事件对象、HTTP 接口把每行发给页面）都调它，所以页面、重放与断言都只认新名。
+# runs/ 里的旧文件不改写：它们是当时的历史记录。
+OLD_EVENT_NAMES = {"ACTION_PROPOSED": CALL_PROPOSED, "ACTION_STATUS_CHANGED": CALL_STATUS_CHANGED}
+OLD_CALL_KEY, CALL_KEY = "action_id", "call_id"
+
+
+def normalize_event(raw: dict) -> dict:
+    """把运行文件里的一行归一成新名字：旧事件名换成新的，顶层与载荷里的 action_id 换成 call_id。"""
+    raw = dict(raw)
+    if raw.get("name") in OLD_EVENT_NAMES:
+        raw["name"] = OLD_EVENT_NAMES[raw["name"]]
+    if OLD_CALL_KEY in raw:
+        raw[CALL_KEY] = raw.pop(OLD_CALL_KEY)
+    payload = raw.get("payload")
+    if isinstance(payload, dict) and OLD_CALL_KEY in payload:
+        payload = dict(payload)
+        payload[CALL_KEY] = payload.pop(OLD_CALL_KEY)
+        raw["payload"] = payload
+    return raw
+
+
 def read_events(path) -> list[Event]:
-    """把文件订阅者写出的 JSONL 读回事件对象。
+    """把文件订阅者写出的 JSONL 读回事件对象，旧文件顺手归一到新名字。
 
     读回后状态枚举是中文字符串、元组是列表、字典的整数键是字符串；比对状态时按中文值比。
     """
@@ -110,7 +132,7 @@ def read_events(path) -> list[Event]:
     with open(path, encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
-                events.append(Event(**json.loads(line)))
+                events.append(Event(**normalize_event(json.loads(line))))
     return events
 
 
@@ -153,7 +175,7 @@ class FileWriter:
             "seq": event.seq,
             "ts": event.ts,
             "task_id": event.task_id,
-            "action_id": event.action_id,
+            "call_id": event.call_id,
             "kind": event.kind,
             "source": event.source,
             "name": event.name,
@@ -205,7 +227,7 @@ class RunSummary:
     final_status: str  # 已完成、内核错误、未结束
     reason: str
     loops: int
-    actions: int
+    calls: int
     events: int
     duration_ms: float
     started_at_source: str  # 「文件名」或「文件修改时间」（旧命名的文件没有开始时刻）
@@ -230,7 +252,7 @@ def summarize(path) -> RunSummary:
             e.name == MAILBOX_CLOSED and e.payload.get("box") == OUTBOX and e.payload.get("sender") not in EXTERNAL_SENDERS
             for e in events
         )
-        failed = [e for e in events if e.name == ACTION_STATUS_CHANGED and str(e.payload["new_status"]) == "已失败"]
+        failed = [e for e in events if e.name == CALL_STATUS_CHANGED and str(e.payload["new_status"]) == "已失败"]
         if definition_errors or kernel_closed_outbox:
             final_status = FINISHED_ABNORMALLY
             reason = definition_errors[-1].payload["reason"] if definition_errors else (failed[-1].payload["note"] if failed else "")
@@ -253,7 +275,7 @@ def summarize(path) -> RunSummary:
         final_status=final_status,
         reason=reason,
         loops=sum(1 for e in events if e.name == LOOP_STARTED),
-        actions=sum(1 for e in events if e.name == ACTION_PROPOSED),
+        calls=sum(1 for e in events if e.name == CALL_PROPOSED),
         events=len(events),
         duration_ms=round((events[-1].ts - events[0].ts) * 1000, 3) if events else 0.0,
         started_at_source=source,
@@ -320,7 +342,7 @@ def make_server(directory, host: str = "0.0.0.0", port: int = DEFAULT_PORT):
                     self._json({"error": "没有这份运行文件"}, 404)
                     return
                 with open(path, encoding="utf-8") as handle:
-                    self._json([json.loads(line) for line in handle if line.strip()])
+                    self._json([normalize_event(json.loads(line)) for line in handle if line.strip()])
             else:
                 self._json({"error": "没有这个地址"}, 404)
 
@@ -382,8 +404,8 @@ _LABELS = {
     TASK_STATUS_CHANGED: "任务状态变化",
     DATA_CHANGED: "数据变更",
     STEP_CHANGED: "当前步变化",
-    ACTION_PROPOSED: "行动提出",
-    ACTION_STATUS_CHANGED: "行动状态变化",
+    CALL_PROPOSED: "工具调用提出",
+    CALL_STATUS_CHANGED: "工具调用状态变化",
     MESSAGE_PUT: "消息放入",
     MESSAGE_TAKEN: "消息取出",
     MAILBOX_CLOSED: "邮箱关闭",
@@ -392,7 +414,7 @@ _LABELS = {
     LOOP_STARTED: "一圈开始",
     CHECK_DONE_RESULT: "结果检查结论",
     CONTROL_RESULT: "执行控制结论",
-    EXECUTE_CALL: "行动执行调用",
+    EXECUTE_CALL: "调用执行调用",
     MAILBOX_WAIT: "邮箱等待",
     TASK_DEFINITION_ERROR: "任务定义错误",
 }
@@ -407,10 +429,10 @@ def _show(value) -> str:
 
 
 class ConsolePrinter:
-    """按段打印：先一段初始化，然后每个行动一段，最后一段结束。
+    """按段打印：先一段初始化，然后每个工具调用一段，最后一段结束。
 
-    段的划分只看事件自身：行动编号不为空的事件归该行动的段；行动编号为空的状态事件，
-    在任务置为执行中之前（含这一条）归初始化段，之后归结束段。行动编号为空的追踪事件留在
+    段的划分只看事件自身：工具调用编号不为空的事件归该工具调用的段；工具调用编号为空的状态事件，
+    在任务置为执行中之前（含这一条）归初始化段，之后归结束段。工具调用编号为空的追踪事件留在
     当前段里打印，不另起分段；「一圈开始」打一条分隔线，并让下一段重新打印标题。
     追踪事件行首用「·」标出，状态事件行首用「#」。由外部（宿主或使用者）引起的事件行首用「⇢」，
     并写明「外部」与发起方；工具实现发布的事件多缩进一格。每行末尾用〔〕写出记录方。
@@ -427,10 +449,10 @@ class ConsolePrinter:
             self._segment = None
             return
         is_state = event.kind == STATE
-        if event.action_id is not None:
-            segment = f"行动 {event.action_id}"
+        if event.call_id is not None:
+            segment = f"工具调用 {event.call_id}"
         elif not is_state or is_external(event.name, event.payload):
-            # 追踪事件与外部引起的事件不带行动编号时，不另起分段，留在当前段里打印。
+            # 追踪事件与外部引起的事件不带工具调用编号时，不另起分段，留在当前段里打印。
             segment = self._segment if (self._segment or self._init_done) else "初始化"
         elif not self._init_done:
             segment = "初始化"
@@ -461,9 +483,9 @@ class ConsolePrinter:
             return f"槽位「{p['slot']}」 {_show(p['old'])} → {_show(p['new'])}，来源 {p['source']}"
         if event.name == STEP_CHANGED:
             return f"{p['text']}（{_show(p['old'])} → {_show(p['new'])}），来源 {p['source']}"
-        if event.name == ACTION_PROPOSED:
+        if event.name == CALL_PROPOSED:
             return f"工具 {p['tool']}，参数 {p['params']}，提出者 {p['proposer']}，依据 {p['basis']}"
-        if event.name == ACTION_STATUS_CHANGED:
+        if event.name == CALL_STATUS_CHANGED:
             text = f"{_show(p['new_status'])}，说明：{p['note']}"
             if "result" in p:
                 text += f"，返回值 {p['result']!r}"
@@ -484,11 +506,11 @@ class ConsolePrinter:
         if event.name == CHECK_DONE_RESULT:
             return f"已完成={p['done']}"
         if event.name == CONTROL_RESULT:
-            return f"行动 {p['action_id']}，结论 {_show(p['verdict'])}，核验：{p['checked']}"
+            return f"工具调用 {p['call_id']}，结论 {_show(p['verdict'])}，核验：{p['checked']}"
         if event.name == EXECUTE_CALL:
-            return f"行动 {p['action_id']}，工具 {p['tool']}，阶段 {p['phase']}，线程 {p['thread']}"
+            return f"工具调用 {p['call_id']}，工具 {p['tool']}，阶段 {p['phase']}，线程 {p['thread']}"
         if event.name == MAILBOX_WAIT:
-            text = f"{BOX_LABELS[p['box']]}，行动 {p['action_id']}，阶段 {p['phase']}，线程 {p['thread']}"
+            text = f"{BOX_LABELS[p['box']]}，工具调用 {p['call_id']}，阶段 {p['phase']}，线程 {p['thread']}"
             if "wait_ms" in p:
                 text += f"，等待 {p['wait_ms']} 毫秒"
             return text

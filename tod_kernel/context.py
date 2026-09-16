@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tod_kernel.kernel import ACTION_PROPOSED, DATA_CHANGED, INBOX, MESSAGE_PUT, OUTBOX
+from tod_kernel.kernel import CALL_PROPOSED, DATA_CHANGED, INBOX, MESSAGE_PUT, OUTBOX
 from tod_kernel.taskdef import STAGE_NAME_SEPARATOR, predicate_text
 
 # 六种段类型，顺序固定：工具声明要哪几段，组装时一律按这个顺序排。
@@ -70,7 +70,7 @@ class Turn:
     answer: str
     stage: str
     slot: str | None
-    action_id: int
+    call_id: int
 
     def render(self) -> str:
         return f"{SPEAKER_SYSTEM}{self.question}\n{SPEAKER_USER}{self.answer}"
@@ -90,28 +90,28 @@ def turns_of(events) -> list:
     """
     proposed = {}
     for event in events:
-        if event.name == ACTION_PROPOSED:
-            proposed[event.action_id] = event.payload
+        if event.name == CALL_PROPOSED:
+            proposed[event.call_id] = event.payload
     questions, answers = {}, {}
     for event in events:
         if event.name != MESSAGE_PUT:
             continue
         payload = event.payload
         if payload["box"] == OUTBOX and payload["kind"] == "question":
-            questions[payload["seq"]] = (payload["action_id"], payload["content"])
+            questions[payload["seq"]] = (payload["call_id"], payload["content"])
         elif payload["box"] == INBOX and payload["kind"] == "answer":
             answers[payload["in_reply_to"]] = payload["content"]
     turns = []
     for seq in sorted(questions):
-        action_id, content = questions[seq]
+        call_id, content = questions[seq]
         if seq not in answers or not isinstance(content, dict):
             continue
         params = content.get("params") or {}
         target = params.get("target") or {}
-        basis = (proposed.get(action_id) or {}).get("basis") or ("", "", None)
+        basis = (proposed.get(call_id) or {}).get("basis") or ("", "", None)
         turns.append(Turn(question=content.get("utterance", ""), answer=answers[seq],
                           stage=_stage_of_note(basis[1] if len(basis) > 1 else ""),
-                          slot=target.get("slot"), action_id=action_id))
+                          slot=target.get("slot"), call_id=call_id))
     return turns
 
 

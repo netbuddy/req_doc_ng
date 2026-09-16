@@ -47,7 +47,7 @@ SAME_SYSTEM_PROMPT = "同任务系统提示"  # 记录里第二次起写这句�
 class LLMError(Exception):
     """模型调用失败。
 
-    brief 是不含请求原文的一句话，给行动的说明与运行索引的原因栏用；
+    brief 是不含请求原文的一句话，给工具调用的说明与运行索引的原因栏用；
     异常本身的文字在这句话之后附上请求原文，便于人照着录一条或改提示词。
     """
 
@@ -73,7 +73,7 @@ class Request:
 
 @dataclass(frozen=True)
 class Reply:
-    """模型的回答与本次调用的记录。记录进行动的返回值，不新设事件名。"""
+    """模型的回答与本次调用的记录。记录进工具调用的返回值，不新设事件名。"""
 
     text: str
     record: dict = field(default_factory=dict)

@@ -16,6 +16,6 @@
 - task_defs/recordings/：录制文件，模式「回放」时模型的回答从这里按请求哈希查。
 
 验证脚本：在仓根下运行 `python -m tod_kernel.verify`。
-控制台：在仓根下运行 `python -m tod_kernel.console [--config 路径] [--show-actions]`。
+控制台：在仓根下运行 `python -m tod_kernel.console [--config 路径] [--show-calls]`。
 观测台：在仓根下运行 `python -m tod_kernel.observe serve [--dir runs] [--port 8765]`，按打印的地址用浏览器打开。
 """

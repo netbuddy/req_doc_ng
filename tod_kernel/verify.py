@@ -3,7 +3,7 @@
 脚本同时扮演宿主和使用者。
 - 宿主：分配任务标识、建事件流、挂订阅者、建收件箱与发件箱、起线程跑 start_task、最后收线程。
 - 使用者：主线程循环阻塞读发件箱，取到问题就按内容里的槽位查答案表，往收件箱放一条回答
-  （回复对象填问题的到达序号，所属行动与收件人填问题的所属行动，发起方 user）；答案表里没有
+  （回复对象填问题的到达序号，所属工具调用与收件人填问题的所属工具调用，发起方 user）；答案表里没有
   的槽位就关闭收件箱（发起方 host）。内核结束或出错时关闭发件箱，主线程取到空即停止读取。
   事件流只做观测，不参与应答。
 
@@ -11,10 +11,10 @@
 追踪事件，只对状态事件做；唯一例外是「序号连续」，序号由两类事件共用，所以对全部事件断言。
 任一断言失败时脚本以非零状态退出。
 
-仅供验证的手段：跑场景期间临时替换 kernel 模块上的 update_state、execute、select_action 与
-register_action，在调用原函数前后抄下任务数据的实际值（select_action 另抄下下一个行动编号、行动表大小
-与事件条数，用来确认行动选择不写任何东西；register_action 抄下返回后行动表的情况，用来确认登记即放入
-行动表），与事件重放的结果比对；跑完即恢复。
+仅供验证的手段：跑场景期间临时替换 kernel 模块上的 update_state、execute、select_call 与
+register_call，在调用原函数前后抄下任务数据的实际值（select_call 另抄下下一个工具调用编号、工具调用表大小
+与事件条数，用来确认调用选择不写任何东西；register_call 抄下返回后工具调用表的情况，用来确认登记即放入
+工具调用表），与事件重放的结果比对；跑完即恢复。
 内核本身没有这类钩子，也不依赖它们。
 """
 
@@ -35,8 +35,8 @@ from tod_kernel.console import PRESET_ANSWER_PREFIX, QUESTION_PREFIX, PresetAnsw
 from tod_kernel.tools import DRAFT_TOOL, EXCEPTION_OPTIONS, EXCEPTION_TOOL, JUDGE_TOOL, build_table
 from tod_kernel.tools import set_at as tools_set_at
 from tod_kernel.kernel import (
-    ACTION_PROPOSED,
-    ACTION_STATUS_CHANGED,
+    CALL_PROPOSED,
+    CALL_STATUS_CHANGED,
     CHECK_DONE_RESULT,
     CONTROL_RESULT,
     DATA_CHANGED,
@@ -61,8 +61,10 @@ from tod_kernel.kernel import (
     SOURCE_MAILBOX,
     SOURCE_UPDATE,
     STATE_EVENT_NAMES,
-    Action,
-    ActionStatus,
+    ToolCall,
+    Change,
+    CallStatus,
+    StepChange,
     EventStream,
     KernelError,
     Mailbox,
@@ -73,7 +75,7 @@ from tod_kernel.observe import (
     ConsolePrinter,
     FileWriter,
     MemoryCollector,
-    action_history,
+    call_history,
     is_external,
     make_server,
     read_events,
@@ -102,7 +104,7 @@ HOST_JOIN_SECONDS = 30  # 收内核线程时最多等多久，只防验证脚本
 # ───────────────────────── 断言记账 ─────────────────────────
 
 
-# 控制台跑场景时把这几个开关拨一下：问答打印出来、事件流水与逐条断言都不打印、另挂一个显示行动的订阅者。
+# 控制台跑场景时把这几个开关拨一下：问答打印出来、事件流水与逐条断言都不打印、另挂一个显示工具调用的订阅者。
 # 直接跑验证脚本时它们保持原样，打印与第三步一字不差。
 SHOW_EXCHANGES = False
 PRINT_EVENTS = True
@@ -144,9 +146,9 @@ class Run:
     all_events: list = field(default_factory=list)  # 两类事件都在
     events: list = field(default_factory=list)  # 过滤掉追踪事件后的状态事件
     update_snapshots: list = field(default_factory=list)  # (前数据, 前事件数, 后数据, 后事件数)
-    execute_snapshots: dict = field(default_factory=dict)  # 行动编号 → 执行前实际数据
-    select_snapshots: list = field(default_factory=list)  # 每次行动选择前后的（数据, 下一个行动编号, 行动表大小, 事件条数）
-    register_snapshots: list = field(default_factory=list)  # 每次登记返回时的（返回的编号, 登记前表大小, 登记后表大小, 表里该行动的状态, 当时最后一个行动提出事件的编号）
+    execute_snapshots: dict = field(default_factory=dict)  # 工具调用编号 → 执行前实际数据
+    select_snapshots: list = field(default_factory=list)  # 每次调用选择前后的（数据, 下一个工具调用编号, 工具调用表大小, 事件条数）
+    register_snapshots: list = field(default_factory=list)  # 每次登记返回时的（返回的编号, 登记前表大小, 登记后表大小, 表里该工具调用的状态, 当时最后一个工具调用提出事件的编号）
     thread_of_seq: dict = field(default_factory=dict)  # 事件序号 → 发布它的线程
     run_file: Path | None = None  # 文件订阅者写出的 JSONL
     inbox_closed: bool = False
@@ -177,7 +179,7 @@ def step_at(stage, index=None, loop=None) -> dict:
 
 
 def step_sequence(run) -> list:
-    """这次运行里当前步的变化序列：[(来源, 新值), …]，按事件序号。来源是「初始化」或行动编号。"""
+    """这次运行里当前步的变化序列：[(来源, 新值), …]，按事件序号。来源是「初始化」或工具调用编号。"""
     return [(e.payload["source"], e.payload["new"]) for e in named(run.events, STEP_CHANGED)]
 
 
@@ -198,11 +200,11 @@ EXPECTED_UTTERANCES = {
 
 
 def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), runs_dir=None, console=True,
-                 exception_answers=None, call=None, answerer=None, show=None, subscribers=None) -> Run:
+                 exception_answers=None, call_model=None, answerer=None, show=None, subscribers=None) -> Run:
     """跑一个场景。
 
     exception_answers：第三步新增，使用者对「告知异常」依次给的回答；用完后再来告知异常就关闭收件箱。
-    call：第四步新增，模型调用件（llm.make_caller 做出来的函数），只有用到「生成术语释义」的任务需要。
+    call_model：第四步新增，模型调用件（llm.make_caller 做出来的函数），只有用到「生成术语释义」的任务需要。
     answerer：应答者，默认按答案表答；控制台的自由输入方式换成从键盘取回答的那个。
     show：是否打印一问一答，默认随模块开关 SHOW_EXCHANGES。
     subscribers：另外挂的事件订阅者，默认随模块开关 EXTRA_SUBSCRIBERS。
@@ -227,8 +229,8 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
 
     # 仅供验证：临时包住 update_state 与 execute，抄下实际数据。
     original_update, original_execute = kernel.update_state, kernel.execute
-    original_select = kernel.select_action
-    original_register = kernel.register_action
+    original_select = kernel.select_call
+    original_register = kernel.register_call
 
     def update_probe(task, item):
         run.task = task
@@ -236,27 +238,27 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
         original_update(task, item)
         run.update_snapshots.append((before, n_before, dict(task.data), len(collector.events)))
 
-    def execute_probe(task, action):
-        run.execute_snapshots[action.action_id] = dict(task.data)
-        original_execute(task, action)
+    def execute_probe(task, call):
+        run.execute_snapshots[call.call_id] = dict(task.data)
+        original_execute(task, call)
 
     def select_probe(task):
-        before = (dict(task.data), task.next_action_id, len(task.actions), len(collector.events))
+        before = (dict(task.data), task.next_call_id, len(task.calls), len(collector.events))
         candidate = original_select(task)
-        run.select_snapshots.append((before, (dict(task.data), task.next_action_id, len(task.actions), len(collector.events))))
+        run.select_snapshots.append((before, (dict(task.data), task.next_call_id, len(task.calls), len(collector.events))))
         return candidate
 
     def register_probe(task, candidate):
-        size_before = len(task.actions)
-        action_id = original_register(task, candidate)
-        in_table = task.actions.get(action_id)
-        proposed = [e for e in collector.events if e.name == ACTION_PROPOSED]
+        size_before = len(task.calls)
+        call_id = original_register(task, candidate)
+        in_table = task.calls.get(call_id)
+        proposed = [e for e in collector.events if e.name == CALL_PROPOSED]
         run.register_snapshots.append((
-            action_id, size_before, len(task.actions),
+            call_id, size_before, len(task.calls),
             in_table.status if in_table is not None else None,
-            proposed[-1].action_id if proposed else None,
+            proposed[-1].call_id if proposed else None,
         ))
-        return action_id
+        return call_id
 
     def kernel_main():
         try:
@@ -268,10 +270,10 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
             # 由宿主代关，免得主线程永远阻塞在发件箱上。
             outbox.close("host")
 
-    kernel.update_state, kernel.execute, kernel.select_action = update_probe, execute_probe, select_probe
-    kernel.register_action = register_probe
+    kernel.update_state, kernel.execute, kernel.select_call = update_probe, execute_probe, select_probe
+    kernel.register_call = register_probe
     # 上下文包要读至今的事件（对话历史、修订记录）：宿主本来就持有内存收集器，把读它的函数交给工具表，内核不动。
-    table = build_table(task_def, tool_names, call=call, read_events=lambda: list(collector.events))
+    table = build_table(task_def, tool_names, call_model=call_model, read_events=lambda: list(collector.events))
     run.tools_spec = {name: {"param_names": list(tool.param_names), "category": tool.category, "summary": tool.summary,
                              **({"writer_roles": dict(tool.writer_roles)} if tool.writer_roles else {})}
                       for name, tool in table.items()}
@@ -286,8 +288,8 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
         if thread.is_alive():
             run.error = run.error or TimeoutError("验证脚本等待内核线程结束超时")
     finally:
-        kernel.update_state, kernel.execute, kernel.select_action = original_update, original_execute, original_select
-        kernel.register_action = original_register
+        kernel.update_state, kernel.execute, kernel.select_call = original_update, original_execute, original_select
+        kernel.register_call = original_register
     run.run_file = writer.path_for(task_id)  # 收到「任务开始」时才定名，所以运行结束后再取
     run.all_events = list(collector.events)
     run.events = [e for e in run.all_events if e.kind == STATE]
@@ -304,8 +306,8 @@ def named(events, name):
     return [e for e in events if e.name == name]
 
 
-def of_action(events, name, action_id):
-    return [e for e in events if e.name == name and e.action_id == action_id]
+def of_call(events, name, call_id):
+    return [e for e in events if e.name == name and e.call_id == call_id]
 
 
 def status_values(history):
@@ -328,17 +330,17 @@ def check_integrity(c: Checker, run: Run) -> None:
         return
 
     expected = [(ch.slot, ch.old, ch.new, ch.source) for ch in task.init_changes]
-    for action in task.actions.values():
-        expected += [(ch.slot, ch.old, ch.new, ch.source) for ch in action.changes]
+    for call in task.calls.values():
+        expected += [(ch.slot, ch.old, ch.new, ch.source) for ch in call.changes]
     actual = [(e.payload["slot"], e.payload["old"], e.payload["new"], e.payload["source"]) for e in named(events, DATA_CHANGED)]
-    c.check("目标五：初始化变更组与各行动变更组按序拼接，与全部「数据变更」事件的四个键逐位相等",
+    c.check("目标五：初始化变更组与各工具调用变更组按序拼接，与全部「数据变更」事件的四个键逐位相等",
             expected == actual, f"对象上 {expected}；事件里 {actual}")
 
-    for action in task.actions.values():
-        history = action_history(events, action.action_id)
-        c.check(f"目标五：行动 {action.action_id} 的当前状态等于它最后一个「行动状态变化」事件的状态",
-                history and history[-1].payload["new_status"] == action.status,
-                f"对象 {action.status}，事件 {status_values(history)}")
+    for call in task.calls.values():
+        history = call_history(events, call.call_id)
+        c.check(f"目标五：工具调用 {call.call_id} 的当前状态等于它最后一个「工具调用状态变化」事件的状态",
+                history and history[-1].payload["new_status"] == call.status,
+                f"对象 {call.status}，事件 {status_values(history)}")
 
     task_status_events = named(events, TASK_STATUS_CHANGED)
     c.check("目标五：任务状态等于最后一个「任务状态变化」事件的状态",
@@ -355,23 +357,23 @@ def check_integrity(c: Checker, run: Run) -> None:
     c.check("终态数据：返回的任务对象上的真实数据等于从全部事件重放出的数据",
             replay_data(events) == task.data, f"重放 {replay_data(events)}，真实 {task.data}")
 
-    proposed_events = named(events, ACTION_PROPOSED)
-    proposed_ids = [e.action_id for e in proposed_events]
-    on_objects = [(a.action_id, a.tool, a.params, a.proposer, a.basis) for a in task.actions.values()]
-    in_events = [(e.action_id, e.payload["tool"], e.payload["params"], e.payload["proposer"], e.payload["basis"])
+    proposed_events = named(events, CALL_PROPOSED)
+    proposed_ids = [e.call_id for e in proposed_events]
+    on_objects = [(a.call_id, a.tool, a.params, a.proposer, a.basis) for a in task.calls.values()]
+    in_events = [(e.call_id, e.payload["tool"], e.payload["params"], e.payload["proposer"], e.payload["basis"])
                  for e in proposed_events]
-    c.check("目标五：每个行动的编号、工具名、参数、提出者、依据与「行动提出」事件逐字段相等",
+    c.check("目标五：每个工具调用的编号、工具名、参数、提出者、依据与「工具调用提出」事件逐字段相等",
             on_objects == in_events, f"对象上 {on_objects}；事件里 {in_events}")
-    c.check("行动表：键就是各行动自己的编号，顺序等于登记顺序（即「行动提出」事件的顺序）",
-            all(k == a.action_id for k, a in task.actions.items()) and list(task.actions) == proposed_ids,
-            (list(task.actions), proposed_ids))
-    c.check(f"登记即放入行动表：{len(run.register_snapshots)} 次登记返回时，返回的编号已在行动表里、表大小加一、"
-            "状态是已提出、「行动提出」事件已为该编号发出",
-            all(size_after == size_before + 1 and status == ActionStatus.PROPOSED and last_proposed == aid
+    c.check("工具调用表：键就是各工具调用自己的编号，顺序等于登记顺序（即「工具调用提出」事件的顺序）",
+            all(k == a.call_id for k, a in task.calls.items()) and list(task.calls) == proposed_ids,
+            (list(task.calls), proposed_ids))
+    c.check(f"登记即放入工具调用表：{len(run.register_snapshots)} 次登记返回时，返回的编号已在工具调用表里、表大小加一、"
+            "状态是已提出、「工具调用提出」事件已为该编号发出",
+            all(size_after == size_before + 1 and status == CallStatus.PROPOSED and last_proposed == aid
                 for aid, size_before, size_after, status, last_proposed in run.register_snapshots)
             and len(run.register_snapshots) == len(proposed_ids),
             run.register_snapshots)
-    c.check(f"行动选择只返回候选、不写任何东西：{len(run.select_snapshots)} 次调用前后，任务数据、下一个行动编号、行动表、事件条数都没有变化",
+    c.check(f"调用选择只返回候选、不写任何东西：{len(run.select_snapshots)} 次调用前后，任务数据、下一个工具调用编号、工具调用表、事件条数都没有变化",
             all(before == after for before, after in run.select_snapshots), run.select_snapshots)
     ended = named(events, TASK_ENDED)
     if task.end_record is None:
@@ -381,11 +383,11 @@ def check_integrity(c: Checker, run: Run) -> None:
                 len(ended) == 1 and ended[0].payload == {"final_status": task.end_record.final_status,
                                                           "reason": task.end_record.reason})
 
-    for action_id in proposed_ids:
-        proposed = of_action(events, ACTION_PROPOSED, action_id)[0]
-        first_status = action_history(events, action_id)[0]
-        c.check(f"行动 {action_id} 的「行动提出」事件在「已提出」状态变化之前发出",
-                proposed.seq < first_status.seq and first_status.payload["new_status"] == ActionStatus.PROPOSED)
+    for call_id in proposed_ids:
+        proposed = of_call(events, CALL_PROPOSED, call_id)[0]
+        first_status = call_history(events, call_id)[0]
+        c.check(f"工具调用 {call_id} 的「工具调用提出」事件在「已提出」状态变化之前发出",
+                proposed.seq < first_status.seq and first_status.payload["new_status"] == CallStatus.PROPOSED)
 
     def on(box, name):
         return [e for e in events if e.name == name and e.payload["box"] == box]
@@ -411,21 +413,21 @@ def check_run_file(c: Checker, run: Run) -> None:
     if run.task is not None:
         c.check("目标六：用文件重放出的终态数据等于运行时任务对象上的真实数据",
                 replay_data(from_file) == run.task.data, f"文件重放 {replay_data(from_file)}，真实 {run.task.data}")
-        for action in run.task.actions.values():
-            history = [e.payload["new_status"] for e in action_history(from_file, action.action_id)]
-            c.check(f"目标六：用文件得到的行动 {action.action_id} 状态经过（中文值）与内存事件一致",
-                    history == [s.value for s in status_values(action_history(run.events, action.action_id))], history)
+        for call in run.task.calls.values():
+            history = [e.payload["new_status"] for e in call_history(from_file, call.call_id)]
+            c.check(f"目标六：用文件得到的工具调用 {call.call_id} 状态经过（中文值）与内存事件一致",
+                    history == [s.value for s in status_values(call_history(run.events, call.call_id))], history)
 
 
 def check_selection_trail(c: Checker, run: Run, expected: dict) -> None:
     """第三步第十四项：依据命中值里的「选择经过」（前进过的阶段、跳过的阶段与原因、跳过的步骤与原因）；告知异常的命中值不带它。"""
-    for proposed in named(run.events, ACTION_PROPOSED):
+    for proposed in named(run.events, CALL_PROPOSED):
         hit = proposed.payload["basis"][2]
-        aid = proposed.action_id
+        aid = proposed.call_id
         if proposed.payload["tool"] == EXCEPTION_TOOL:
-            c.check(f"行动 {aid} 是告知异常，命中值是异常报告，不带「选择经过」", isinstance(hit, dict) and "选择经过" not in hit, hit)
+            c.check(f"工具调用 {aid} 是告知异常，命中值是异常报告，不带「选择经过」", isinstance(hit, dict) and "选择经过" not in hit, hit)
         elif aid in expected:
-            c.check(f"行动 {aid} 的依据命中值里「选择经过」是 {expected[aid]}",
+            c.check(f"工具调用 {aid} 的依据命中值里「选择经过」是 {expected[aid]}",
                     isinstance(hit, dict) and hit.get("选择经过") == expected[aid], hit)
 
 
@@ -452,22 +454,22 @@ def check_trace_shape(c: Checker, run: Run, loops: int, mailbox_tools=("ask",)) 
     c.check("追踪：「结果检查结论」循环前一次、每次迭代末尾一次，只有最后那次为真", done_flags == expected_done, done_flags)
     c.check("追踪：没有「任务定义错误」", not [e for e in trace if e.name == TASK_DEFINITION_ERROR])
 
-    for proposed in [e for e in events if e.name == ACTION_PROPOSED]:
-        aid = proposed.action_id
-        mine = [e for e in all_events if e.action_id == aid]
+    for proposed in [e for e in events if e.name == CALL_PROPOSED]:
+        aid = proposed.call_id
+        mine = [e for e in all_events if e.call_id == aid]
         ctl = [e for e in mine if e.name == CONTROL_RESULT]
-        c.check(f"追踪：行动 {aid} 有一条「执行控制结论」，结论已获准、核验恒允许",
-                len(ctl) == 1 and ctl[0].payload == {"action_id": aid, "verdict": ActionStatus.APPROVED, "checked": "恒允许"})
+        c.check(f"追踪：工具调用 {aid} 有一条「执行控制结论」，结论已获准、核验恒允许",
+                len(ctl) == 1 and ctl[0].payload == {"call_id": aid, "verdict": CallStatus.APPROVED, "checked": "恒允许"})
         calls = [e for e in mine if e.name == EXECUTE_CALL]
         waits = [e for e in mine if e.name == MAILBOX_WAIT and e.payload["box"] == INBOX]
-        c.check(f"追踪：行动 {aid} 的「行动执行调用」依次是 enter、return，线程是内核线程",
+        c.check(f"追踪：工具调用 {aid} 的「调用执行调用」依次是 enter、return，线程是内核线程",
                 [e.payload["phase"] for e in calls] == ["enter", "return"]
                 and all(e.payload["thread"] == KERNEL_THREAD_PREFIX + run.task_id for e in calls))
         if proposed.payload["tool"] not in mailbox_tools:  # 第三步起告知异常也走邮箱，由新场景传入
-            c.check(f"追踪：行动 {aid}（工具 {proposed.payload['tool']}）不碰邮箱，没有邮箱等待",
+            c.check(f"追踪：工具调用 {aid}（工具 {proposed.payload['tool']}）不碰邮箱，没有邮箱等待",
                     not waits and not [e for e in mine if e.name in (MESSAGE_PUT, MESSAGE_TAKEN)])
             continue
-        c.check(f"追踪：行动 {aid} 在收件箱上的「邮箱等待」恰好两条，依次是 begin、end，end 带非负毫秒数，线程是内核线程",
+        c.check(f"追踪：工具调用 {aid} 在收件箱上的「邮箱等待」恰好两条，依次是 begin、end，end 带非负毫秒数，线程是内核线程",
                 [e.payload["phase"] for e in waits] == ["begin", "end"]
                 and isinstance(waits[1].payload.get("wait_ms"), (int, float)) and waits[1].payload["wait_ms"] >= 0
                 and "wait_ms" not in waits[0].payload
@@ -475,7 +477,7 @@ def check_trace_shape(c: Checker, run: Run, loops: int, mailbox_tools=("ask",)) 
                 [e.payload for e in waits])
         if len(calls) == 2 and len(waits) == 2:
             takes = [e for e in mine if e.name == MESSAGE_TAKEN and e.payload["box"] == INBOX]
-            c.check(f"追踪：行动 {aid} 的邮箱等待夹在执行调用的 enter 与 return 之间，取出（若有）在等待结束之后",
+            c.check(f"追踪：工具调用 {aid} 的邮箱等待夹在执行调用的 enter 与 return 之间，取出（若有）在等待结束之后",
                     calls[0].seq < waits[0].seq < waits[1].seq < calls[1].seq
                     and all(t.seq > waits[1].seq for t in takes))
 
@@ -486,23 +488,23 @@ def expected_source(event, tool_of: dict) -> str:
         return SOURCE_UPDATE
     if event.name in (MESSAGE_PUT, MESSAGE_TAKEN, MAILBOX_CLOSED, MAILBOX_WAIT):
         return SOURCE_MAILBOX
-    if event.name == ACTION_STATUS_CHANGED and event.payload["new_status"] not in (ActionStatus.PROPOSED, ActionStatus.APPROVED):
-        return TOOL_SOURCE_PREFIX + tool_of[event.action_id]
+    if event.name == CALL_STATUS_CHANGED and event.payload["new_status"] not in (CallStatus.PROPOSED, CallStatus.APPROVED):
+        return TOOL_SOURCE_PREFIX + tool_of[event.call_id]
     return SOURCE_LOOP
 
 
 def check_sources_and_senders(c: Checker, run: Run, closed_before_failure_of: int | None) -> None:
     """记录方与发起方：记录方按组件写对；发起方自报的值用线程做事实核对；邮箱关闭有事件。"""
     all_events = run.all_events
-    tool_of = {e.action_id: e.payload["tool"] for e in all_events if e.name == ACTION_PROPOSED}
+    tool_of = {e.call_id: e.payload["tool"] for e in all_events if e.name == CALL_PROPOSED}
     wrong = [(e.seq, e.name, e.source, expected_source(e, tool_of)) for e in all_events
              if e.source != expected_source(e, tool_of)]
     c.check("记录方：每个事件的记录方都符合裁定（状态更新 kernel.update，邮箱 kernel.mailbox，"
             "工具实现记的状态 tool.<工具名>，其余 kernel.loop）", not wrong, wrong)
-    status_sources = sorted({(e.payload["new_status"].value, e.source) for e in all_events if e.name == ACTION_STATUS_CHANGED})
-    if run.events and any(e.name == ACTION_PROPOSED for e in run.events):
+    status_sources = sorted({(e.payload["new_status"].value, e.source) for e in all_events if e.name == CALL_STATUS_CHANGED})
+    if run.events and any(e.name == CALL_PROPOSED for e in run.events):
         expected_sources = {SOURCE_LOOP} | {TOOL_SOURCE_PREFIX + name for name in set(tool_of.values())}
-        c.check("记录方：同一个事件名「行动状态变化」来自不同记录方（已提出、已获准是 kernel.loop，"
+        c.check("记录方：同一个事件名「工具调用状态变化」来自不同记录方（已提出、已获准是 kernel.loop，"
                 f"其余是所用工具的 tool.<工具名>：{sorted(expected_sources - {SOURCE_LOOP})}）",
                 {src for _, src in status_sources} == expected_sources, status_sources)
 
@@ -515,7 +517,7 @@ def check_sources_and_senders(c: Checker, run: Run, closed_before_failure_of: in
             [(e.seq, e.name, e.payload["sender"]) for e in inbox_acts])
     questions = on(OUTBOX, MESSAGE_PUT)
     c.check("发起方：发件箱里的问题，发起方是 tool.<工具名>，类型是 question，收件人是 user，出自内核线程",
-            all(e.payload["sender"] == TOOL_SOURCE_PREFIX + tool_of[e.action_id] and e.payload["kind"] == "question"
+            all(e.payload["sender"] == TOOL_SOURCE_PREFIX + tool_of[e.call_id] and e.payload["kind"] == "question"
                 and e.payload["recipient"] == "user" and run.thread_of_seq[e.seq] == run.kernel_thread for e in questions),
             [(e.seq, e.payload) for e in questions])
     for box, expected_sender in ((INBOX, "user"), (OUTBOX, None)):
@@ -541,43 +543,43 @@ def check_sources_and_senders(c: Checker, run: Run, closed_before_failure_of: in
         c.check("邮箱关闭：本场景宿主没有关闭收件箱", not inbox_closed)
     else:
         aid = closed_before_failure_of
-        history = action_history(run.events, aid)
-        waiting = [e for e in history if e.payload["new_status"] == ActionStatus.WAITING]
-        failed = [e for e in history if e.payload["new_status"] == ActionStatus.FAILED]
-        c.check(f"邮箱关闭：收件箱恰有一条「邮箱关闭」，发起方 host，落在行动 {aid} 的「等待中」与「已失败」之间",
+        history = call_history(run.events, aid)
+        waiting = [e for e in history if e.payload["new_status"] == CallStatus.WAITING]
+        failed = [e for e in history if e.payload["new_status"] == CallStatus.FAILED]
+        c.check(f"邮箱关闭：收件箱恰有一条「邮箱关闭」，发起方 host，落在工具调用 {aid} 的「等待中」与「已失败」之间",
                 len(inbox_closed) == 1 and inbox_closed[0].payload == {"box": INBOX, "sender": "host"} and waiting and failed
                 and waiting[0].seq < inbox_closed[0].seq < failed[0].seq,
                 [(e.seq, e.payload) for e in inbox_closed])
-        c.check(f"邮箱关闭：出错时，发件箱在行动 {aid}「已失败」之后由内核关闭",
+        c.check(f"邮箱关闭：出错时，发件箱在工具调用 {aid}「已失败」之后由内核关闭",
                 failed and outbox_closed and outbox_closed[0].seq > failed[0].seq)
 
     host_waits = [e for e in all_events if e.name == MAILBOX_WAIT and e.payload["box"] == OUTBOX]
-    c.check("邮箱等待：宿主在发件箱上的等待都出自主线程、不带行动编号，begin 与 end 成对",
-            host_waits and all(run.thread_of_seq[e.seq] == run.host_thread and e.action_id is None for e in host_waits)
+    c.check("邮箱等待：宿主在发件箱上的等待都出自主线程、不带工具调用编号，begin 与 end 成对",
+            host_waits and all(run.thread_of_seq[e.seq] == run.host_thread and e.call_id is None for e in host_waits)
             and [e.payload["phase"] for e in host_waits] == ["begin", "end"] * (len(host_waits) // 2),
             [(e.seq, e.payload["phase"]) for e in host_waits])
 
 
-def check_waiting_then_success(c: Checker, run: Run, action_id: int, expected_utterance=None) -> None:
-    """验证目标二：询问行动在拿到回答前处于等待中，回答到达后完成。
+def check_waiting_then_success(c: Checker, run: Run, call_id: int, expected_utterance=None) -> None:
+    """验证目标二：询问工具调用在拿到回答前处于等待中，回答到达后完成。
 
     expected_utterance 由调用方给出时以它为准，不查预期句表：术语澄清确认那一问的话里带着模型现写的草稿，
     写不进模块级的常量表。
     """
     events = run.events
-    history = action_history(events, action_id)
-    c.check(f"目标二：行动 {action_id} 的状态序列是 已提出、已获准、等待中、已成功",
-            status_values(history) == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.WAITING, ActionStatus.SUCCEEDED],
+    history = call_history(events, call_id)
+    c.check(f"目标二：工具调用 {call_id} 的状态序列是 已提出、已获准、等待中、已成功",
+            status_values(history) == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.WAITING, CallStatus.SUCCEEDED],
             [s.value for s in status_values(history)])
     if len(history) != 4:
         return
     waiting, succeeded = history[2], history[3]
-    mine = [e for e in events if e.action_id == action_id]
+    mine = [e for e in events if e.call_id == call_id]
     questions = [e for e in mine if e.name == MESSAGE_PUT and e.payload["box"] == OUTBOX]
     puts = [e for e in mine if e.name == MESSAGE_PUT and e.payload["box"] == INBOX]
     takes = [e for e in mine if e.name == MESSAGE_TAKEN and e.payload["box"] == INBOX]
-    proposed = of_action(events, ACTION_PROPOSED, action_id)
-    c.check(f"目标二：行动 {action_id} 恰有一条问题（发件箱放入），内容是 {{话, 参数}}，参数是行动参数原样，且在「等待中」之前",
+    proposed = of_call(events, CALL_PROPOSED, call_id)
+    c.check(f"目标二：工具调用 {call_id} 恰有一条问题（发件箱放入），内容是 {{话, 参数}}，参数是工具调用参数原样，且在「等待中」之前",
             len(questions) == 1 and proposed and list(questions[0].payload["content"]) == ["utterance", "params"]
             and questions[0].payload["content"]["params"] == proposed[0].payload["params"]
             and questions[0].seq < waiting.seq)
@@ -586,24 +588,24 @@ def check_waiting_then_success(c: Checker, run: Run, action_id: int, expected_ut
     target = proposed[0].payload["params"]["target"]
     if expected_utterance is None:
         expected_utterance = EXPECTED_UTTERANCES.get(target_key(target))
-    c.check(f"第一步目标三：行动 {action_id} 问题里的话逐字等于预期句「{expected_utterance}」",
+    c.check(f"第一步目标三：工具调用 {call_id} 问题里的话逐字等于预期句「{expected_utterance}」",
             expected_utterance is not None and questions[0].payload["content"]["utterance"] == expected_utterance,
             questions[0].payload["content"]["utterance"])
-    c.check(f"目标二：行动 {action_id} 的「等待中」说明写明了问题的到达序号",
+    c.check(f"目标二：工具调用 {call_id} 的「等待中」说明写明了问题的到达序号",
             waiting.payload["note"] == f"已向使用者提问，问题 {questions[0].payload['seq']}", waiting.payload["note"])
-    c.check(f"目标二：行动 {action_id} 在收件箱恰有一条回答放入和一条取出", len(puts) == 1 and len(takes) == 1)
+    c.check(f"目标二：工具调用 {call_id} 在收件箱恰有一条回答放入和一条取出", len(puts) == 1 and len(takes) == 1)
     if len(puts) != 1 or len(takes) != 1:
         return
-    c.check(f"目标二：行动 {action_id} 的回答放入与取出都落在「等待中」与「已成功」之间，且放入在取出之前",
+    c.check(f"目标二：工具调用 {call_id} 的回答放入与取出都落在「等待中」与「已成功」之间，且放入在取出之前",
             waiting.seq < puts[0].seq < takes[0].seq < succeeded.seq,
             (waiting.seq, puts[0].seq, takes[0].seq, succeeded.seq))
-    c.check(f"目标二：行动 {action_id} 的回答的回复对象等于问题的到达序号",
+    c.check(f"目标二：工具调用 {call_id} 的回答的回复对象等于问题的到达序号",
             puts[0].payload["in_reply_to"] == takes[0].payload["in_reply_to"] == questions[0].payload["seq"])
-    c.check(f"目标二：行动 {action_id} 的问题与回答，内容里的所属行动都是 {action_id}",
-            questions[0].payload["action_id"] == puts[0].payload["action_id"] == takes[0].payload["action_id"] == action_id)
-    changes = of_action(events, DATA_CHANGED, action_id)
+    c.check(f"目标二：工具调用 {call_id} 的问题与回答，内容里的所属工具调用都是 {call_id}",
+            questions[0].payload["call_id"] == puts[0].payload["call_id"] == takes[0].payload["call_id"] == call_id)
+    changes = of_call(events, DATA_CHANGED, call_id)
     path = target["path"]
-    c.check(f"目标二：行动 {action_id} 的数据变更新值按写入目标路径 {path} 取出的值 = 取出的回答 = 「已成功」事件的返回值；"
+    c.check(f"目标二：工具调用 {call_id} 的数据变更新值按写入目标路径 {path} 取出的值 = 取出的回答 = 「已成功」事件的返回值；"
             "槽位是写入目标的槽位，除该路径外新旧值相同",
             len(changes) == 1 and changes[0].payload["slot"] == target["slot"]
             and get_at(changes[0].payload["new"], path) == takes[0].payload["content"] == succeeded.payload["result"]
@@ -615,15 +617,15 @@ def check_explainable(c: Checker, run: Run) -> None:
     events, task = run.events, run.task
     c.check("目标三：从空数据起应用全部「数据变更」事件，得到的数据与任务终态数据一致",
             replay_data(events) == task.data)
-    for action in task.actions.values():
-        proposed = of_action(events, ACTION_PROPOSED, action.action_id)[0]
+    for call in task.calls.values():
+        proposed = of_call(events, CALL_PROPOSED, call.call_id)[0]
         before = replay_data([e for e in events if e.seq < proposed.seq])
-        c.check(f"目标三：重放到行动 {action.action_id} 的「行动提出」之前，得到的数据就是它的执行前实际数据",
-                before == run.execute_snapshots.get(action.action_id),
-                f"重放 {before}，实际 {run.execute_snapshots.get(action.action_id)}")
-        terminal = action_history(events, action.action_id)[-1]
-        c.check(f"目标三：由事件重建的行动 {action.action_id} 返回值与行动对象上的一致",
-                terminal.payload.get("result") == action.result)
+        c.check(f"目标三：重放到工具调用 {call.call_id} 的「工具调用提出」之前，得到的数据就是它的执行前实际数据",
+                before == run.execute_snapshots.get(call.call_id),
+                f"重放 {before}，实际 {run.execute_snapshots.get(call.call_id)}")
+        terminal = call_history(events, call.call_id)[-1]
+        c.check(f"目标三：由事件重建的工具调用 {call.call_id} 返回值与工具调用对象上的一致",
+                terminal.payload.get("result") == call.result)
 
 
 def check_kernel_is_task_agnostic(c: Checker) -> None:
@@ -646,6 +648,22 @@ def check_kernel_is_task_agnostic(c: Checker) -> None:
     stale = {name: text.count(word) for name, text in (("kernel.py", source), ("taskdef.py", loader_source))
              for word in ("游标", "cursor") if text.count(word)}
     c.check("内核与任务定义加载器里不再出现「游标」「cursor」（第四步 4.10 节废除了这个词与那个保留槽位）", not stale, stale)
+    # 2026-09-17「行动」改名「工具调用」：本目录下的代码里不该再有旧名字。
+    # observe.py 是唯一的例外：它要认出旧运行文件里的旧键 action_id，把它归一成 call_id。
+    # 两个文件例外：observe.py 要认出旧运行文件里的旧键 action_id 好归一成 call_id；
+    # 本文件是这条检查自己待的地方，旧名字作为被查的词写在这一段里，所以不查自己。
+    renamed = {}
+    for path in sorted(Path(kernel.__file__).resolve().parent.glob("*.py")):
+        if path.name == Path(__file__).name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = [word for word in ("行动", "Action") if word in text]
+        if "action_id" in text and path.name != "observe.py":
+            hits.append("action_id")
+        if hits:
+            renamed[path.name] = hits
+    c.check("这一目录下的代码里不再出现「行动」「Action」「action_id」（observe.py 认旧运行文件的旧键除外）",
+            not renamed, renamed)
     imported = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
@@ -667,22 +685,22 @@ STEP_TWO_RUN_FILES = {
 }
 
 
-def action_sequence(events) -> list:
-    """行动序列：每个「行动提出」的（工具名, 参数实际值, 依据序号），经 JSON 往返统一元组与列表。"""
+def call_sequence(events) -> list:
+    """工具调用序列：每个「工具调用提出」的（工具名, 参数实际值, 依据序号），经 JSON 往返统一元组与列表。"""
     import json as json_module
 
-    rows = [(e.payload["tool"], e.payload["params"], e.payload["basis"][0]) for e in events if e.name == ACTION_PROPOSED]
+    rows = [(e.payload["tool"], e.payload["params"], e.payload["basis"][0]) for e in events if e.name == CALL_PROPOSED]
     return json_module.loads(json_module.dumps(rows, ensure_ascii=False))
 
 
 def check_matches_step_two(c: Checker, run: Run) -> None:
-    """第三步目标一：行动序列与第二步留下的旧运行文件逐位相等。"""
+    """第三步目标一：工具调用序列与第二步留下的旧运行文件逐位相等。"""
     old_path = RUNS_DIR / STEP_TWO_RUN_FILES[run.task_id]
     c.check(f"第三步目标一：第二步的旧运行文件 {old_path.name} 存在（只在本机成立）", old_path.is_file(), old_path)
     if not old_path.is_file():
         return
-    old, new = action_sequence(read_events(old_path)), action_sequence(run.events)
-    c.check(f"第三步目标一：行动序列（工具名、参数实际值、依据序号）与 {old_path.name} 逐位相等，共 {len(old)} 个行动",
+    old, new = call_sequence(read_events(old_path)), call_sequence(run.events)
+    c.check(f"第三步目标一：工具调用序列（工具名、参数实际值、依据序号）与 {old_path.name} 逐位相等，共 {len(old)} 个工具调用",
             old == new, f"旧 {old}；新 {new}")
 
 
@@ -713,18 +731,18 @@ INTAKE_FINAL_DATA = {
 }
 
 
-def check_other_tool_actions(c: Checker, run: Run) -> None:
-    """非询问行动：状态经过是已提出、已获准、已成功；变更只写该工具声明的可写槽位。"""
+def check_other_tool_calls(c: Checker, run: Run) -> None:
+    """非询问工具调用：状态经过是已提出、已获准、已成功；变更只写该工具声明的可写槽位。"""
     events, task = run.events, run.task
-    for action in task.actions.values():
-        if action.tool == "ask":
+    for call in task.calls.values():
+        if call.tool == "ask":
             continue
-        history = status_values(action_history(events, action.action_id))
-        slots = {e.payload["slot"] for e in of_action(events, DATA_CHANGED, action.action_id)}
-        c.check(f"行动 {action.action_id}（{action.tool}）的状态经过是 已提出、已获准、已成功，"
-                f"变更只写可写槽位 {sorted(run.writable.get(action.tool) or [])}",
-                history == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.SUCCEEDED]
-                and slots and slots <= set(run.writable.get(action.tool) or ()),
+        history = status_values(call_history(events, call.call_id))
+        slots = {e.payload["slot"] for e in of_call(events, DATA_CHANGED, call.call_id)}
+        c.check(f"工具调用 {call.call_id}（{call.tool}）的状态经过是 已提出、已获准、已成功，"
+                f"变更只写可写槽位 {sorted(run.writable.get(call.tool) or [])}",
+                history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.SUCCEEDED]
+                and slots and slots <= set(run.writable.get(call.tool) or ()),
                 (history, slots))
 
 
@@ -750,9 +768,9 @@ def intake_scenario_one() -> Checker:
     if run.task is None:
         return c
     events, task = run.events, run.task
-    proposed = named(events, ACTION_PROPOSED)
+    proposed = named(events, CALL_PROPOSED)
     tools = [e.payload["tool"] for e in proposed]
-    c.check("第一步目标二：恰好八个行动（八次迭代每次一个行动，第八次迭代末尾的结果检查为真）", len(proposed) == 8, len(proposed))
+    c.check("第一步目标二：恰好八个工具调用（八次迭代每次一个工具调用，第八次迭代末尾的结果检查为真）", len(proposed) == 8, len(proposed))
     c.check("第一步目标二：工具依次是 列目录、登记文件×3、询问×3、生成清单文件",
             tools == ["list_dir", "register_file", "register_file", "register_file", "ask", "ask", "ask", "generate_manifest"], tools)
     c.check("第一步目标二：依据里的规则序号依次是 一、二、二、二、三、三、三、四",
@@ -769,14 +787,14 @@ def intake_scenario_one() -> Checker:
     check_matches_step_two(c, run)
     c.check("终态材料清单三项的是否纳入依次是 是、否、是",
             [item["是否纳入"] for item in task.data["材料清单"]] == ["是", "否", "是"])
-    manifest = [a for a in task.actions.values() if a.tool == "generate_manifest"]
+    manifest = [a for a in task.calls.values() if a.tool == "generate_manifest"]
     text = manifest[0].result if manifest else ""
     c.check("生成清单文件的返回值含 a.docx 与 c.xlsx、不含 b.pdf",
             manifest and "a.docx" in text and "c.xlsx" in text and "b.pdf" not in text, text)
-    for action in task.actions.values():
-        if action.tool == "ask":
-            check_waiting_then_success(c, run, action.action_id)
-    check_other_tool_actions(c, run)
+    for call in task.calls.values():
+        if call.tool == "ask":
+            check_waiting_then_success(c, run, call.call_id)
+    check_other_tool_calls(c, run)
     check_explainable(c, run)
     common_checks(c, run, loops=8)
     return c
@@ -795,17 +813,17 @@ def all_scenarios():
         dict(task_id="T-exception-3", task_def=intake_def("intake_bad_goal.json"), answers=INTAKE_ANSWERS,
              tool_names=EXCEPTION_TOOLS, exception_answers=["被动终止"]),
         dict(task_id="T-glossary-1", task_def=glossary_def(dict(GLOSSARY_INPUT_ONE)), answers=GLOSSARY_ANSWERS_ONE,
-             tool_names=GLOSSARY_TOOLS, call=glossary_call()[0]),
+             tool_names=GLOSSARY_TOOLS, call_model=glossary_call()[0]),
         dict(task_id="T-glossary-2", task_def=glossary_def(dict(GLOSSARY_INPUT_TWO)), answers=GLOSSARY_ANSWERS_TWO,
-             tool_names=GLOSSARY_TOOLS, call=glossary_call()[0]),
+             tool_names=GLOSSARY_TOOLS, call_model=glossary_call()[0]),
     ]
 
 
 def expected_summaries() -> dict:
-    """摘要预期表：任务标识 → （任务定义名, 终态, 迭代数, 行动数）。
+    """摘要预期表：任务标识 → （任务定义名, 终态, 迭代数, 工具调用数）。
 
     写成函数而不是模块级字典，因为任务定义名取自后面定义的常量。
-    结果检查第三步起挪到迭代末尾，所以正常完成的运行迭代数等于行动数；以内核错误结束的那次迭代没有末尾检查，数目不变。
+    结果检查第三步起挪到迭代末尾，所以正常完成的运行迭代数等于工具调用数；以内核错误结束的那次迭代没有末尾检查，数目不变。
     """
     return {
         "T-intake-1": ("材料接入登记", "已完成", 8, 8),
@@ -859,10 +877,10 @@ def observatory_checks() -> Checker:
         for f in files:
             summary = summarize(f)
             per_task[summary.task_id] = per_task.get(summary.task_id, 0) + 1
-            actual = (summary.task_def_name, summary.final_status, summary.loops, summary.actions)
+            actual = (summary.task_def_name, summary.final_status, summary.loops, summary.calls)
             if expected.get(summary.task_id) != actual:
                 wrong.append((f.name, actual))
-        c.check("第二步目标一：每份文件的摘要（任务定义名、终态、迭代数、行动数）与预期表逐行相等", not wrong, wrong)
+        c.check("第二步目标一：每份文件的摘要（任务定义名、终态、迭代数、工具调用数）与预期表逐行相等", not wrong, wrong)
         c.check("第二步目标一：每个任务标识恰有两份文件", per_task == {task_id: 2 for task_id in expected}, per_task)
         c.check("第二步目标一：每份文件的事件序号从 1 起连续，且含「任务开始」",
                 all([e.seq for e in read_events(f)] == list(range(1, len(read_events(f)) + 1))
@@ -883,7 +901,7 @@ def observatory_checks() -> Checker:
             old_summary = summarize(old_file)
             c.check("第二步：旧命名文件照样能读，开始时刻取文件修改时间并标出来源",
                     old_summary.started_at_source == "文件修改时间"
-                    and (old_summary.task_def_name, old_summary.final_status, old_summary.loops, old_summary.actions) == expected["T-intake-1"],
+                    and (old_summary.task_def_name, old_summary.final_status, old_summary.loops, old_summary.calls) == expected["T-intake-1"],
                     old_summary)
         else:
             c.check("第二步：旧命名文件照样能读（找不到 T-intake-1 的运行文件，无法检查）", False)
@@ -1132,46 +1150,46 @@ BAD_GOAL_UTTERANCE_END = (f"阶段『登记』目标未达成：登记进度 等
                           f"{OPTIONS_TEXT}")
 
 
-def check_exception_action(c: Checker, run: Run, action_id: int, number: int, stage: str,
+def check_exception_call(c: Checker, run: Run, call_id: int, number: int, stage: str,
                            params: dict, utterance: str, answer: str, kind: str = "一趟走完") -> None:
-    """一条告知异常行动：候选内容、发出的问题、状态经过、返回值、变更组。"""
+    """一条告知异常工具调用：候选内容、发出的问题、状态经过、返回值、变更组。"""
     events = run.events
-    proposed = of_action(events, ACTION_PROPOSED, action_id)
-    c.check(f"行动 {action_id} 是告知异常，提出者是行动选择，依据序号 {number}、说明「{stage} › 告知异常」，"
+    proposed = of_call(events, CALL_PROPOSED, call_id)
+    c.check(f"工具调用 {call_id} 是告知异常，提出者是调用选择，依据序号 {number}、说明「{stage} › 告知异常」，"
             f"命中值是这份异常报告外加异常种类「{kind}」",
             len(proposed) == 1 and proposed[0].payload["tool"] == EXCEPTION_TOOL and proposed[0].payload["proposer"] == "selector"
             and list(proposed[0].payload["basis"]) == [number, f"{stage} › {EXCEPTION_TOOL}", {**params, "异常种类": kind}],
             proposed[0].payload if proposed else None)
-    c.check(f"行动 {action_id} 的五个参数与预期逐项相等",
+    c.check(f"工具调用 {call_id} 的五个参数与预期逐项相等",
             proposed and proposed[0].payload["params"] == params, proposed[0].payload["params"] if proposed else None)
-    questions = [e for e in of_action(events, MESSAGE_PUT, action_id) if e.payload["box"] == OUTBOX]
-    c.check(f"行动 {action_id} 恰发出一条问题，类型 question，内容是 {{话, 参数}}，参数与行动参数相同",
+    questions = [e for e in of_call(events, MESSAGE_PUT, call_id) if e.payload["box"] == OUTBOX]
+    c.check(f"工具调用 {call_id} 恰发出一条问题，类型 question，内容是 {{话, 参数}}，参数与工具调用参数相同",
             len(questions) == 1 and questions[0].payload["kind"] == "question"
             and list(questions[0].payload["content"]) == ["utterance", "params"]
             and questions[0].payload["content"]["params"] == params,
             [e.payload for e in questions])
     if len(questions) == 1:
-        c.check(f"行动 {action_id} 的话逐字等于「{utterance}」",
+        c.check(f"工具调用 {call_id} 的话逐字等于「{utterance}」",
                 questions[0].payload["content"]["utterance"] == utterance, questions[0].payload["content"]["utterance"])
-    history = action_history(events, action_id)
+    history = call_history(events, call_id)
     terminal, result, note = {
-        "重做本阶段": (ActionStatus.SUCCEEDED, "重做", "使用者选择重做本阶段"),
-        "主动终止": (ActionStatus.FAILED, "主动终止", "使用者主动终止"),
-        "被动终止": (ActionStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
+        "重做本阶段": (CallStatus.SUCCEEDED, "重做", "使用者选择重做本阶段"),
+        "主动终止": (CallStatus.FAILED, "主动终止", "使用者主动终止"),
+        "被动终止": (CallStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
     }[answer]
-    c.check(f"行动 {action_id} 的状态经过是 已提出、已获准、等待中、{terminal.value}，最后一条说明「{note}」，返回值「{result}」",
-            status_values(history) == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.WAITING, terminal]
+    c.check(f"工具调用 {call_id} 的状态经过是 已提出、已获准、等待中、{terminal.value}，最后一条说明「{note}」，返回值「{result}」",
+            status_values(history) == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.WAITING, terminal]
             and history[-1].payload["note"] == note and history[-1].payload.get("result") == result,
             [(e.payload["new_status"].value, e.payload["note"], e.payload.get("result")) for e in history])
-    changes = of_action(events, DATA_CHANGED, action_id)
-    steps = of_action(events, STEP_CHANGED, action_id)
-    c.check(f"行动 {action_id} 没有数据变更：告知异常工具不写任何槽位", not changes, [e.payload for e in changes])
+    changes = of_call(events, DATA_CHANGED, call_id)
+    steps = of_call(events, STEP_CHANGED, call_id)
+    c.check(f"工具调用 {call_id} 没有数据变更：告知异常工具不写任何槽位", not changes, [e.payload for e in changes])
     if answer == "重做本阶段":
-        c.check(f"行动 {action_id} 选重做：发一条当前步变化，新值是「{stage}」阶段起点，来源是这个行动",
-                len(steps) == 1 and steps[0].payload["new"] == step_at(stage) and steps[0].payload["source"] == action_id,
+        c.check(f"工具调用 {call_id} 选重做：发一条当前步变化，新值是「{stage}」阶段起点，来源是这个工具调用",
+                len(steps) == 1 and steps[0].payload["new"] == step_at(stage) and steps[0].payload["source"] == call_id,
                 [e.payload for e in steps])
     else:
-        c.check(f"行动 {action_id} 选终止：当前步不动，没有当前步变化事件", not steps, [e.payload for e in steps])
+        c.check(f"工具调用 {call_id} 选终止：当前步不动，没有当前步变化事件", not steps, [e.payload for e in steps])
 
 
 def exception_common(c: Checker, run: Run, loops: int) -> None:
@@ -1183,16 +1201,16 @@ def exception_common(c: Checker, run: Run, loops: int) -> None:
 
 
 def check_registered_three(c: Checker, run: Run) -> None:
-    proposed = named(run.events, ACTION_PROPOSED)[:4]
-    c.check("前四个行动依次是 列目录、登记文件×3，依据序号 1、2、2、2",
+    proposed = named(run.events, CALL_PROPOSED)[:4]
+    c.check("前四个工具调用依次是 列目录、登记文件×3，依据序号 1、2、2、2",
             [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
             == [("list_dir", 1), ("register_file", 2), ("register_file", 2), ("register_file", 2)],
             [(e.payload["tool"], e.payload["basis"][0]) for e in proposed])
 
 
-def check_terminated(c: Checker, run: Run, action_id: int, note: str) -> None:
-    c.check(f"内核错误携带行动 {action_id}", isinstance(run.error, KernelError) and run.error.action is not None
-            and run.error.action.action_id == action_id, repr(run.error))
+def check_terminated(c: Checker, run: Run, call_id: int, note: str) -> None:
+    c.check(f"内核错误携带工具调用 {call_id}", isinstance(run.error, KernelError) and run.error.call is not None
+            and run.error.call.call_id == call_id, repr(run.error))
     c.check("任务没有结束：没有「任务结束」事件，任务状态仍是执行中",
             not named(run.events, TASK_ENDED) and run.task is not None and run.task.status == TaskStatus.RUNNING)
     summary = summarize(run.run_file) if run.run_file is not None and run.run_file.exists() else None
@@ -1215,15 +1233,15 @@ def intake_exception_scenario() -> Checker:
     c = Checker(title)
     print("── 断言 ──")
     check_registered_three(c, run)
-    proposed = named(run.events, ACTION_PROPOSED)
-    c.check("恰好五个行动，第五个（第五次迭代）是告知异常",
+    proposed = named(run.events, CALL_PROPOSED)
+    c.check("恰好五个工具调用，第五个（第五次迭代）是告知异常",
             [e.payload["tool"] for e in proposed] == ["list_dir"] + ["register_file"] * 3 + [EXCEPTION_TOOL],
             [e.payload["tool"] for e in proposed])
-    check_exception_action(c, run, 5, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_END),
+    check_exception_call(c, run, 5, BAD_GOAL_EXCEPTION_NUMBER, "登记", bad_goal_params(BAD_GOAL_AT_END),
                            BAD_GOAL_UTTERANCE_END, answer)
     check_terminated(c, run, 5, note)
     check_step_final(c, run, step_at("登记", 1, loop=(1, 1, 3)))
-    # 第 5 次迭代是告知异常，使用者选终止：行动记已失败，当前步不动，所以只有五条当前步变化。
+    # 第 5 次迭代是告知异常，使用者选终止：工具调用记已失败，当前步不动，所以只有五条当前步变化。
     c.check("当前步逐次记下走到哪：初始化、列目录一步、登记那一步循环三次；告知异常那次不写当前步",
             step_sequence(run) == [
                 ("初始化", step_at("列目录")),
@@ -1235,10 +1253,69 @@ def intake_exception_scenario() -> Checker:
     return c
 
 
+def update_group_checks() -> Checker:
+    """更新组先核对整组再写入（第四步第 7 节第 13 条③）：任一项旧值不符，整组不写、一个事件也不发。
+
+    直接调写入口，不跑任务：这一组要验的是写入口本身的规矩。
+    """
+    title = "第四步：更新组先核对再写入"
+    banner(title)
+    c = Checker(title)
+    print("── 断言 ──")
+    task_def = intake_def("intake.json")
+    task_id = "T-update-group"
+    stream = kernel.EventStream(task_id)
+    collector = MemoryCollector()
+    stream.subscribe(collector)
+    inbox, outbox = Mailbox(stream, task_id, INBOX), Mailbox(stream, task_id, OUTBOX)
+    task = kernel.new_task(task_id, task_def, build_table(task_def, INTAKE_TOOLS), inbox, outbox, stream)
+    kernel.update_state(task, task.init_changes)
+
+    data_before, events_before = dict(task.data), len(collector.events)
+    bad = [Change("登记进度", 0, 1, 7), Change("清单文件路径", "对不上的旧值", "清单.md", 7)]
+    raised = None
+    try:
+        kernel.update_state(task, bad)
+    except KernelError as error:
+        raised = error.reason
+    c.check("整组里有一项旧值不符：抛内核错误，错误话里写明是哪个槽位、当前值与声明值",
+            raised is not None and "清单文件路径" in raised and "对不上的旧值" in raised, raised)
+    c.check("那一组整组没写：前面那条合格的变更也没落到数据上", task.data == data_before, task.data)
+    c.check("那一组一个事件也没发：事件条数与调用前一样", len(collector.events) == events_before,
+            [e.name for e in collector.events[events_before:]])
+
+    good = [Change("登记进度", 0, 1, 7), Change("清单文件路径", None, "清单.md", 7)]
+    kernel.update_state(task, good)
+    c.check("整组都合格：两条都写进数据，发出两条「数据变更」",
+            task.data["登记进度"] == 1 and task.data["清单文件路径"] == "清单.md"
+            and [e.name for e in collector.events[events_before:]] == [DATA_CHANGED, DATA_CHANGED],
+            (task.data["登记进度"], [e.name for e in collector.events[events_before:]]))
+
+    events_before = len(collector.events)
+    twice = [Change("登记进度", 1, 2, 8), Change("登记进度", 2, 3, 8)]
+    kernel.update_state(task, twice)
+    c.check("同一组里两条写同一个槽位：后一条按前一条的新值核对，两条都写成，与逐条写入的次序一致",
+            task.data["登记进度"] == 3 and len(collector.events) - events_before == 2, task.data["登记进度"])
+
+    events_before = len(collector.events)
+    mixed = [Change("登记进度", 3, 4, 9), StepChange({"阶段": "没有这个阶段"}, 9)]
+    raised = None
+    try:
+        kernel.update_state(task, mixed)
+    except Exception as error:  # 阶段不存在时 step_text／step_view 读不出来，但不该抛错
+        raised = repr(error)
+    c.check("更新组里可以同时有数据变更与当前步更新，两样一次写完", raised is None and task.data["登记进度"] == 4, raised)
+    c.check("同一次写入口发出的事件：两条（一条数据变更、一条当前步变化）",
+            [e.name for e in collector.events[events_before:]] == [DATA_CHANGED, STEP_CHANGED],
+            [e.name for e in collector.events[events_before:]])
+    outbox.close("host")
+    return c
+
+
 def current_step_checks() -> Checker:
     """当前步（第四步 4.10 节）：初始值、记录本步的三条规则、「第几次」怎么加、不合法怎么报、两个显示接口。
 
-    手写当前步与行动，不跑任务：这一组要验的是规则本身。场景里的当前步序列另在各场景断言里逐次核对。
+    手写当前步与工具调用，不跑任务：这一组要验的是规则本身。场景里的当前步序列另在各场景断言里逐次核对。
     """
     from tod_kernel.kernel import DefinitionError
     from tod_kernel.taskdef import STEP_STAGE
@@ -1254,32 +1331,32 @@ def current_step_checks() -> Checker:
             glossary.INITIAL_STEP == step_at("写释义草稿") and intake.INITIAL_STEP == step_at("列目录"),
             (glossary.INITIAL_STEP, intake.INITIAL_STEP))
 
-    def action(number, status=ActionStatus.SUCCEEDED, result=None):
-        """一个只有记录本步用得着的部分的行动：依据序号、终态、返回值。"""
-        made = Action(tool="无所谓", params={}, proposer="selector", basis=(number, "无所谓", {}))
+    def a_call(number, status=CallStatus.SUCCEEDED, result=None):
+        """一个只有记录本步用得着的部分的工具调用：依据序号、终态、返回值。"""
+        made = ToolCall(tool="无所谓", params={}, proposer="selector", basis=(number, "无所谓", {}))
         made.status, made.result = status, result
         return made
 
-    # 规则一：行动没成功，当前步不动。
+    # 规则一：工具调用没成功，当前步不动。
     before = step_at("确认", 2, loop=(1, 3, 2))
-    c.check("记录本步规则一：行动已失败时当前步原样不动",
-            glossary.record_step(before, action(3, ActionStatus.FAILED)) == before,
-            glossary.record_step(before, action(3, ActionStatus.FAILED)))
+    c.check("记录本步规则一：工具调用已失败时当前步原样不动",
+            glossary.record_step(before, a_call(3, CallStatus.FAILED)) == before,
+            glossary.record_step(before, a_call(3, CallStatus.FAILED)))
     # 规则二：告知异常且返回值「重做」回到该阶段起点；终止不动。
-    redo = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), action(6, result="重做"))
-    stop = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), action(6, result="被动终止"))
+    redo = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="重做"))
+    stop = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="被动终止"))
     c.check("记录本步规则二：告知异常选重做，当前步回到该阶段起点『登记』；选终止时不动",
             redo == step_at("登记") and stop == step_at("登记", 1, loop=(1, 1, 3)), (redo, stop))
     # 规则三：其余写该步的阶段与阶段内序号，落在循环段里时带起止与第几次。
     c.check("记录本步规则三：不在循环段里的一步只写阶段与阶段内序号",
-            glossary.record_step(step_at("写释义草稿"), action(2)) == step_at("写释义草稿", 2),
-            glossary.record_step(step_at("写释义草稿"), action(2)))
+            glossary.record_step(step_at("写释义草稿"), a_call(2)) == step_at("写释义草稿", 2),
+            glossary.record_step(step_at("写释义草稿"), a_call(2)))
 
     # 「第几次」：进这段循环记 1；同一次里沿用；回到段首加 1；段尾被跳过、停在段中时回段首也加 1。
-    first = glossary.record_step(step_at("写释义草稿", 2), action(3))
-    same = glossary.record_step(first, action(4))
-    again = glossary.record_step(step_at("确认", 3, loop=(1, 3, 1)), action(3))
-    skipped = glossary.record_step(step_at("确认", 2, loop=(1, 3, 1)), action(3))
+    first = glossary.record_step(step_at("写释义草稿", 2), a_call(3))
+    same = glossary.record_step(first, a_call(4))
+    again = glossary.record_step(step_at("确认", 3, loop=(1, 3, 1)), a_call(3))
+    skipped = glossary.record_step(step_at("确认", 2, loop=(1, 3, 1)), a_call(3))
     c.check("「第几次」：从循环段外进来记第 1 次",
             first == step_at("确认", 1, loop=(1, 3, 1)), first)
     c.check("「第几次」：同一次里往后走，第几次沿用",
@@ -1302,15 +1379,15 @@ def current_step_checks() -> Checker:
     ]
     for name, value in bad:
         try:
-            glossary.select_action({}, value)
+            glossary.select_call({}, value)
             raised = None
         except DefinitionError as error:
             raised = error.reason
         c.check(f"不合法的当前步（{name}）抛任务定义错误，原因是一句能读的话", bool(raised), raised)
 
-    c.check("当前步合法时行动选择照常返回候选（不合法判据没有误伤正常值）",
-            glossary.select_action({**glossary.SLOTS, "术语": "基线"}, step_at("写释义草稿"))[0] == DRAFT_TOOL,
-            glossary.select_action({**glossary.SLOTS, "术语": "基线"}, step_at("写释义草稿")))
+    c.check("当前步合法时调用选择照常返回候选（不合法判据没有误伤正常值）",
+            glossary.select_call({**glossary.SLOTS, "术语": "基线"}, step_at("写释义草稿"))[0] == DRAFT_TOOL,
+            glossary.select_call({**glossary.SLOTS, "术语": "基线"}, step_at("写释义草稿")))
 
     # 显示用的两个接口。
     texts = [glossary.step_text(step_at("写释义草稿")),
@@ -1384,17 +1461,17 @@ def confirm_utterance(term: str, draft: str) -> str:
     return f"对术语「{term}」的释义草稿是：{draft} 请确认，或提出修改意见。"
 
 
-def model_record(run: Run, action_id: int) -> dict:
-    """某条行动的返回值（模型工具的返回值就是调用记录）。行动不存在时返回空字典，让断言判失败而不是抛异常。"""
-    action = run.task.actions.get(action_id) if run.task else None
-    record = action.result if action is not None else None
+def model_record(run: Run, call_id: int) -> dict:
+    """某条工具调用的返回值（模型工具的返回值就是调用记录）。工具调用不存在时返回空字典，让断言判失败而不是抛异常。"""
+    call = run.task.calls.get(call_id) if run.task else None
+    record = call.result if call is not None else None
     return record if isinstance(record, dict) else {}
 
 
-def check_model_record(c: Checker, run: Run, action_id: int, config: dict, shape: str, segments: list) -> None:
-    """一条在工具里调模型的行动，它的返回值是完整的调用记录。"""
-    record = model_record(run, action_id)
-    c.check(f"行动 {action_id} 的返回值是模型调用记录：模式「{llm.MODE_REPLAY}」、模型名取自配置、"
+def check_model_record(c: Checker, run: Run, call_id: int, config: dict, shape: str, segments: list) -> None:
+    """一条在工具里调模型的工具调用，它的返回值是完整的调用记录。"""
+    record = model_record(run, call_id)
+    c.check(f"工具调用 {call_id} 的返回值是模型调用记录：模式「{llm.MODE_REPLAY}」、模型名取自配置、"
             f"输出形状「{shape}」，另有系统提示哈希、用户内容、返回原文、请求哈希与耗时",
             record.get("mode") == llm.MODE_REPLAY and record.get("model") == config["model"]
             and record.get("shape") == shape and len(record.get("system_prompt_hash") or "") == 64
@@ -1402,23 +1479,23 @@ def check_model_record(c: Checker, run: Run, action_id: int, config: dict, shape
             and len(record.get("request_hash") or "") == 64 and isinstance(record.get("elapsed_ms"), int),
             {key: record.get(key) for key in ("mode", "model", "shape", "elapsed_ms")})
     actual = [segment["type"] for segment in record.get("segments") or []]
-    c.check(f"行动 {action_id} 的段列表按固定顺序装了：{'、'.join(segments)}", actual == segments, actual)
+    c.check(f"工具调用 {call_id} 的段列表按固定顺序装了：{'、'.join(segments)}", actual == segments, actual)
     body = {segment["type"]: segment for segment in record.get("segments") or []}
-    c.check(f"行动 {action_id} 的每段都带类型、来源与正文，正文是逐字原文（不截断）",
+    c.check(f"工具调用 {call_id} 的每段都带类型、来源与正文，正文是逐字原文（不截断）",
             all(segment.get("source") and isinstance(segment.get("text"), str)
                 for segment in record.get("segments") or []), body.keys())
 
 
-def segment_text(run: Run, action_id: int, seg_type: str, source_part: str = "") -> str:
+def segment_text(run: Run, call_id: int, seg_type: str, source_part: str = "") -> str:
     """取某条调用记录里某一段的正文；source_part 用来在同类型多段里挑（例如当前数据段有好几段）。"""
-    for segment in model_record(run, action_id).get("segments") or []:
+    for segment in model_record(run, call_id).get("segments") or []:
         if segment["type"] == seg_type and source_part in segment["source"]:
             return segment["text"]
     return ""
 
 
-def segment_source(run: Run, action_id: int, seg_type: str, source_part: str = "") -> str:
-    for segment in model_record(run, action_id).get("segments") or []:
+def segment_source(run: Run, call_id: int, seg_type: str, source_part: str = "") -> str:
+    for segment in model_record(run, call_id).get("segments") or []:
         if segment["type"] == seg_type and source_part in segment["source"]:
             return segment["source"]
     return ""
@@ -1428,9 +1505,9 @@ def glossary_scenario_one() -> Checker:
     """场景：术语澄清，给全初始输入，一次确认。证明模型在工具里被调用、JSON 判读、问术语那步被前置条件跳过。"""
     title = "术语澄清：给全初始输入，一次确认"
     banner(title)
-    call, config = glossary_call()
+    call_model, config = glossary_call()
     run = run_scenario("T-glossary-1", glossary_def(dict(GLOSSARY_INPUT_ONE)), GLOSSARY_ANSWERS_ONE,
-                       GLOSSARY_TOOLS, call=call)
+                       GLOSSARY_TOOLS, call_model=call_model)
     c = Checker(title)
     print("── 断言 ──")
     check_kernel_is_task_agnostic(c)
@@ -1438,12 +1515,12 @@ def glossary_scenario_one() -> Checker:
     if run.task is None:
         return c
     task = run.task
-    proposed = named(run.events, ACTION_PROPOSED)
+    proposed = named(run.events, CALL_PROPOSED)
     actual = [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
-    c.check("三个行动：生成术语释义（第 2 步）、念草稿问回复（第 3 步）、判读回复（第 4 步）；"
+    c.check("三个工具调用：生成术语释义（第 2 步）、念草稿问回复（第 3 步）、判读回复（第 4 步）；"
             "问术语那一步因写入目标已有值被跳过",
             actual == [(DRAFT_TOOL, 2), ("ask", 3), (JUDGE_TOOL, 4)], actual)
-    if len(proposed) < 3:  # 行动没跑齐（例如录制缺失），后面的断言无从谈起
+    if len(proposed) < 3:  # 工具调用没跑齐（例如录制缺失），后面的断言无从谈起
         return c
     skip_reason = "前置条件不成立：写入目标指向的位置为 None"
     check_selection_trail(c, run, {1: {"前进": [], "跳过阶段": [], "跳过步骤": [[1, skip_reason]]}})
@@ -1472,7 +1549,7 @@ def glossary_scenario_one() -> Checker:
     c.check("任务状态是已完成，术语与原文片段仍是初始输入给的那两段",
             task.status == TaskStatus.DONE and task.data.get("术语") == GLOSSARY_TERM_ONE
             and task.data.get("原文片段") == GLOSSARY_SOURCE, task.status)
-    check_other_tool_actions(c, run)
+    check_other_tool_calls(c, run)
     check_explainable(c, run)
     check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 1)))  # 第 1 次循环里判读即确认，这一次没走到第 3 步
     glossary_common(c, run, loops=3)
@@ -1483,18 +1560,18 @@ def glossary_scenario_two() -> Checker:
     """场景：术语澄清，只给术语，使用者先提一次修改意见再确认。修改循环、上下文包三件事都在这个场景里。"""
     title = "术语澄清：只给术语，一次修改后确认"
     banner(title)
-    call, config = glossary_call()
+    call_model, config = glossary_call()
     run = run_scenario("T-glossary-2", glossary_def(dict(GLOSSARY_INPUT_TWO)), GLOSSARY_ANSWERS_TWO,
-                       GLOSSARY_TOOLS, call=call)
+                       GLOSSARY_TOOLS, call_model=call_model)
     c = Checker(title)
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
     if run.task is None:
         return c
     task = run.task
-    proposed = named(run.events, ACTION_PROPOSED)
+    proposed = named(run.events, CALL_PROPOSED)
     actual = [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
-    c.check("六个行动：写首稿、念草稿、判为修改、按意见改稿、再念草稿、判为确认；"
+    c.check("六个工具调用：写首稿、念草稿、判为修改、按意见改稿、再念草稿、判为确认；"
             "依据序号依次是 2、3、4、5、3、4（第二轮回到组首的第 3 步）",
             actual == [(DRAFT_TOOL, 2), ("ask", 3), (JUDGE_TOOL, 4), (DRAFT_TOOL, 5), ("ask", 3), (JUDGE_TOOL, 4)], actual)
     if len(proposed) < 6:
@@ -1510,9 +1587,9 @@ def glossary_scenario_two() -> Checker:
     c.check("第 3 次迭代判为修改：解析结果的决定是「修改」、修改意见非空，确认文本是 null",
             parsed_revise.get("决定") == "修改" and parsed_revise.get("确认文本") is None
             and isinstance(parsed_revise.get("修改意见"), str) and parsed_revise["修改意见"].strip(), parsed_revise)
-    def written(slot):  # 只看行动写的，初始化那条（来源「初始化」、不挂行动编号）不算
+    def written(slot):  # 只看工具调用写的，初始化那条（来源「初始化」、不挂工具调用编号）不算
         return [e.payload["new"] for e in named(run.events, DATA_CHANGED)
-                if e.payload["slot"] == slot and e.action_id is not None]
+                if e.payload["slot"] == slot and e.call_id is not None]
 
     feedback_written, reply_written = written("修改意见"), written("回复")
     c.check("修改意见写了一次又被清空；回复写了两次、每次判读后都清空",
@@ -1552,7 +1629,7 @@ def glossary_scenario_two() -> Checker:
             parsed_confirm.get("决定") == "确认"
             and task.data.get("确认释义") == (parsed_confirm.get("确认文本") or "").strip()
             and task.status == TaskStatus.DONE, (parsed_confirm.get("决定"), task.status))
-    check_other_tool_actions(c, run)
+    check_other_tool_calls(c, run)
     check_explainable(c, run)
     check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 2)))
     # 当前步逐次核对（第四步第 5 节第十项的验收点）：术语由初始输入给全，所以第 1 步的 ask 被跳过，
@@ -1572,7 +1649,7 @@ def glossary_scenario_two() -> Checker:
 
 
 def glossary_scenario_three() -> Checker:
-    """场景：术语澄清，模型不可达。回放模式对着一份空录制，第一个行动就失败，任务以内核错误结束。"""
+    """场景：术语澄清，模型不可达。回放模式对着一份空录制，第一个工具调用就失败，任务以内核错误结束。"""
     import json as json_module
     import shutil
     import tempfile
@@ -1583,21 +1660,21 @@ def glossary_scenario_three() -> Checker:
     try:
         empty = work / "empty.json"
         empty.write_text(json_module.dumps([], ensure_ascii=False) + "\n", encoding="utf-8")
-        call, config = glossary_call(recording=str(empty))
+        call_model, config = glossary_call(recording=str(empty))
         run = run_scenario("T-glossary-3", glossary_def(dict(GLOSSARY_INPUT_ONE)), GLOSSARY_ANSWERS_ONE,
-                           GLOSSARY_TOOLS, call=call)
+                           GLOSSARY_TOOLS, call_model=call_model)
         c = Checker(title)
         print("── 断言 ──")
-        proposed = named(run.events, ACTION_PROPOSED)
-        c.check("恰好一个行动，就是生成术语释义", [e.payload["tool"] for e in proposed] == [DRAFT_TOOL],
+        proposed = named(run.events, CALL_PROPOSED)
+        c.check("恰好一个工具调用，就是生成术语释义", [e.payload["tool"] for e in proposed] == [DRAFT_TOOL],
                 [e.payload["tool"] for e in proposed])
         note = f"录制文件里没有这条请求：{empty}"
-        history = status_values(action_history(run.events, 1))
-        c.check("行动 1 的状态经过是 已提出、已获准、已失败（没有等待中：它不问使用者）",
-                history == [ActionStatus.PROPOSED, ActionStatus.APPROVED, ActionStatus.FAILED],
+        history = status_values(call_history(run.events, 1))
+        c.check("工具调用 1 的状态经过是 已提出、已获准、已失败（没有等待中：它不问使用者）",
+                history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.FAILED],
                 [s.value for s in history])
-        failed = [e for e in action_history(run.events, 1) if e.payload["new_status"] == ActionStatus.FAILED]
-        c.check(f"行动 1 已失败的说明是模型调用那一句错误：「{note}」",
+        failed = [e for e in call_history(run.events, 1) if e.payload["new_status"] == CallStatus.FAILED]
+        c.check(f"工具调用 1 已失败的说明是模型调用那一句错误：「{note}」",
                 failed and failed[0].payload["note"] == note, failed[0].payload["note"] if failed else None)
         c.check("释义草稿仍然为空：模型没写出东西就不写槽位",
                 run.task is not None and run.task.data.get("释义草稿") is None,
@@ -1620,24 +1697,24 @@ CTX_REPLY = "再具体些。"
 CTX_REPLY_TWO = "还要说明它的作用。"
 
 
-def fake_event(seq, name, payload, action_id=None, kind=STATE, source=SOURCE_LOOP):
-    return kernel.Event(seq=seq, ts=0.0, task_id="T-context", action_id=action_id,
+def fake_event(seq, name, payload, call_id=None, kind=STATE, source=SOURCE_LOOP):
+    return kernel.Event(seq=seq, ts=0.0, task_id="T-context", call_id=call_id,
                         kind=kind, source=source, name=name, payload=payload)
 
 
-def ask_events(seq, action_id, stage, slot, question, answer) -> list:
-    """一问一答在事件流里的样子：行动提出（带依据说明，阶段名从这里来）、发件箱的问题、收件箱的回答。"""
+def ask_events(seq, call_id, stage, slot, question, answer) -> list:
+    """一问一答在事件流里的样子：工具调用提出（带依据说明，阶段名从这里来）、发件箱的问题、收件箱的回答。"""
     note = f"{stage}{taskdef.STAGE_NAME_SEPARATOR}第 1 步 问一句"
     return [
-        fake_event(seq, ACTION_PROPOSED, {"tool": "ask", "params": {"target": {"slot": slot, "path": []}},
-                                          "proposer": "selector", "basis": [1, note, {}]}, action_id),
+        fake_event(seq, CALL_PROPOSED, {"tool": "ask", "params": {"target": {"slot": slot, "path": []}},
+                                          "proposer": "selector", "basis": [1, note, {}]}, call_id),
         fake_event(seq + 1, MESSAGE_PUT, {"box": OUTBOX, "kind": "question", "sender": "tool.ask", "recipient": "user",
-                                          "action_id": action_id, "in_reply_to": None,
+                                          "call_id": call_id, "in_reply_to": None,
                                           "content": {"utterance": question, "params": {"target": {"slot": slot, "path": []}}},
-                                          "seq": action_id}, action_id),
-        fake_event(seq + 2, MESSAGE_PUT, {"box": INBOX, "kind": "answer", "sender": "user", "recipient": action_id,
-                                          "action_id": action_id, "in_reply_to": action_id,
-                                          "content": answer, "seq": action_id}, action_id),
+                                          "seq": call_id}, call_id),
+        fake_event(seq + 2, MESSAGE_PUT, {"box": INBOX, "kind": "answer", "sender": "user", "recipient": call_id,
+                                          "call_id": call_id, "in_reply_to": call_id,
+                                          "content": answer, "seq": call_id}, call_id),
     ]
 
 
@@ -1958,6 +2035,7 @@ CHECK_GROUPS = [
     ("任务定义 JSON Schema", schema_checks),
     ("告知异常话的循环次数写法", utterance_round_clause_checks),
     ("当前步的记录、判据与显示", current_step_checks),
+    ("更新组先核对再写入", update_group_checks),
     ("模型调用件的三种模式", llm_mode_checks),
     ("上下文包与对话历史的三条规则", context_pack_checks),
     ("控制台的问答打印", console_transcript_checks),

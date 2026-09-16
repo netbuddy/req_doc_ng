@@ -1,6 +1,6 @@
 """工具与工具表。
 
-工具是「能做什么」的静态定义，行动是工具的一次调用。工具表分两层：
+工具是「能做什么」的静态定义，工具调用是工具的一次调用。工具表分两层：
 - 静态工具表（STATIC_TOOLS）：每个工具的工具名、参数名清单、前置条件、可写槽位，不依赖任何任务定义；
   任务定义加载器（taskdef.py）导入它，用来校验工具名与参数名、求前置条件、拼依据说明。
 - 运行工具表（build_table 按任务建）：在静态表之上配好工具实现，询问工具绑定任务定义的话语模板，交给内核。
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from tod_kernel.dialogue import generate_utterance, understand_answer
-from tod_kernel.kernel import TOOL_SOURCE_PREFIX, ActionStatus, Change, KernelError, Message
+from tod_kernel.kernel import TOOL_SOURCE_PREFIX, CallStatus, Change, KernelError, Message
 from tod_kernel.llm import SHAPE_JSON, SHAPE_TEXT, LLMError, Request, build_system_prompt
 
 # 工具的「类别」：按这个工具与谁打交道分，取值封闭，登记时核对。
@@ -30,7 +30,7 @@ class Tool:
     name: str
     param_names: tuple
     impl: Callable[[Any], None]
-    # 可写槽位与前置条件由静态工具表填上；执行控制本步不核验它们，前置条件只在行动选择时用。
+    # 可写槽位与前置条件由静态工具表填上；执行控制本步不核验它们，前置条件只在调用选择时用。
     writable_slots: frozenset | None = None  # 可写槽位：槽位名的集合；None 表示由参数决定（询问写入目标所指的槽位）
     preconditions: Any = None  # 前置条件：函数（只读数据, 已求值的参数）→（成立与否, 说明, 命中值）
     required_auth: Any = None  # 本步只预留
@@ -87,37 +87,37 @@ def ask(ctx, task_def) -> None:
     回答不是字符串属于程序错误，同样记「已失败」并写明原因。
     task_def 由建工具表时用 partial 绑定，执行上下文里没有它。
     """
-    action = ctx.action
-    params = action.params
+    call = ctx.call
+    params = call.params
     target = params["target"]
     slot, path = target["slot"], list(target.get("path", []))
     utterance = generate_utterance(task_def, params)
     question = ctx.outbox.put(Message(
         kind="question",
-        sender=TOOL_SOURCE_PREFIX + action.tool,
+        sender=TOOL_SOURCE_PREFIX + call.tool,
         recipient="user",
         in_reply_to=None,
         content={"utterance": utterance, "params": copy.deepcopy(params)},
-        action_id=action.action_id,
+        call_id=call.call_id,
     ))
-    ctx.set_status(ActionStatus.WAITING, f"已向使用者提问，问题 {question.seq}")
+    ctx.set_status(CallStatus.WAITING, f"已向使用者提问，问题 {question.seq}")
     message = ctx.inbox.take(
         match=lambda m: m.kind == "answer" and m.in_reply_to == question.seq,
         block=True,
-        waiter=action.action_id,
+        waiter=call.call_id,
     )
     if message is None:
-        ctx.set_status(ActionStatus.FAILED, "没有可用的回答")
+        ctx.set_status(CallStatus.FAILED, "没有可用的回答")
         return
     if not isinstance(message.content, str):
-        ctx.set_status(ActionStatus.FAILED, f"回答不是字符串：{type(message.content).__name__}")
+        ctx.set_status(CallStatus.FAILED, f"回答不是字符串：{type(message.content).__name__}")
         return
     value = understand_answer(task_def, params, message.content)
     old = copy.deepcopy(ctx.data_view.get(slot))
-    action.result = value
-    action.changes = [Change(slot, old, set_at(old, path, value), action.action_id)]
+    call.result = value
+    call.changes = [Change(slot, old, set_at(old, path, value), call.call_id)]
     # 终态事件带返回值，所以先填返回值再记状态。
-    ctx.set_status(ActionStatus.SUCCEEDED, "回答到达")
+    ctx.set_status(CallStatus.SUCCEEDED, "回答到达")
 
 
 # ───────────────────────── 材料接入登记用的领域工具 ─────────────────────────
@@ -138,50 +138,50 @@ INCLUDED = "是"  # 回答理解本步原样返回，所以这里认的是回答
 
 def list_dir(ctx) -> None:
     """列目录：从只读数据的「目录」槽位取目录名，查样例表，把文件名列表写进「文件总表」。"""
-    action = ctx.action
+    call = ctx.call
     directory = ctx.data_view.get("目录")
     if directory not in SAMPLE_DIRS:
-        ctx.set_status(ActionStatus.FAILED, f"样例表里没有目录：{directory!r}")
+        ctx.set_status(CallStatus.FAILED, f"样例表里没有目录：{directory!r}")
         return
     names = [entry["文件名"] for entry in SAMPLE_DIRS[directory]]
-    action.result = names
-    action.changes = [Change("文件总表", copy.deepcopy(ctx.data_view.get("文件总表")), names, action.action_id)]
-    ctx.set_status(ActionStatus.SUCCEEDED, f"列出 {len(names)} 个文件")
+    call.result = names
+    call.changes = [Change("文件总表", copy.deepcopy(ctx.data_view.get("文件总表")), names, call.call_id)]
+    ctx.set_status(CallStatus.SUCCEEDED, f"列出 {len(names)} 个文件")
 
 
 def register_file(ctx) -> None:
     """登记文件：按参数序号从样例表取该文件的类型、大小、页数，
     给「材料清单」追加一项（是否纳入为 None），「登记进度」加一。"""
-    action = ctx.action
-    index = action.params["index"]
+    call = ctx.call
+    index = call.params["index"]
     entries = SAMPLE_DIRS.get(ctx.data_view.get("目录"), [])
     if not 0 <= index < len(entries):
-        ctx.set_status(ActionStatus.FAILED, f"样例表里没有序号 {index} 的文件")
+        ctx.set_status(CallStatus.FAILED, f"样例表里没有序号 {index} 的文件")
         return
     entry = entries[index]
     old_list = copy.deepcopy(ctx.data_view.get("材料清单"))
     item = {**entry, "是否纳入": None}
     old_progress = ctx.data_view.get("登记进度")
-    action.result = copy.deepcopy(item)
-    action.changes = [
-        Change("材料清单", old_list, old_list + [item], action.action_id),
-        Change("登记进度", old_progress, old_progress + 1, action.action_id),
+    call.result = copy.deepcopy(item)
+    call.changes = [
+        Change("材料清单", old_list, old_list + [item], call.call_id),
+        Change("登记进度", old_progress, old_progress + 1, call.call_id),
     ]
-    ctx.set_status(ActionStatus.SUCCEEDED, f"登记文件 {entry['文件名']}")
+    ctx.set_status(CallStatus.SUCCEEDED, f"登记文件 {entry['文件名']}")
 
 
 def generate_manifest(ctx) -> None:
     """生成清单文件：把「材料清单」里纳入的项拼成固定格式的文本作为返回值，
     把固定路径写进「清单文件路径」。不落盘。"""
-    action = ctx.action
+    call = ctx.call
     items = ctx.data_view.get("材料清单") or []
     included = [item for item in items if item["是否纳入"] == INCLUDED]
     lines = [f"材料清单（共 {len(included)} 项）"]
     lines += [f"{n}. {item['文件名']}，{item['类型']}，{item['大小']} 字节，{item['页数']} 页"
               for n, item in enumerate(included, start=1)]
-    action.result = "\n".join(lines)
-    action.changes = [Change("清单文件路径", copy.deepcopy(ctx.data_view.get("清单文件路径")), MANIFEST_PATH, action.action_id)]
-    ctx.set_status(ActionStatus.SUCCEEDED, f"清单含 {len(included)} 项，写到 {MANIFEST_PATH}")
+    call.result = "\n".join(lines)
+    call.changes = [Change("清单文件路径", copy.deepcopy(ctx.data_view.get("清单文件路径")), MANIFEST_PATH, call.call_id)]
+    ctx.set_status(CallStatus.SUCCEEDED, f"清单含 {len(included)} 项，写到 {MANIFEST_PATH}")
 
 
 # ───────────────────────── 术语澄清用的两个工具：内部调用模型 ─────────────────────────
@@ -246,16 +246,16 @@ def _draft_count(pack) -> int:
                and event.payload["new"] is not None)
 
 
-def draft_definition(ctx, call, task_def=None, read_events=None, system_prompt="") -> None:
+def draft_definition(ctx, call_model, task_def=None, read_events=None, system_prompt="") -> None:
     """生成术语释义：首稿与改稿同一个实现，按「修改意见」是不是空分支。
 
     首稿读「术语」与可选的「原文片段」；改稿另读上一稿与「修改意见」，写完把「修改意见」清空。
-    回答去掉首尾空白后写进「释义草稿」；行动的返回值是这次模型调用的完整记录。
+    回答去掉首尾空白后写进「释义草稿」；工具调用的返回值是这次模型调用的完整记录。
     模型调用失败（模型服务不可达、回放时录制文件里查不到）时记已失败，说明就是那条错误的一句话。
     """
     from tod_kernel.context import ContextPack, SEG_ORDER, render  # 同上，函数内导入
 
-    action = ctx.action
+    call = ctx.call
     pack = _pack(task_def, ctx, read_events)
     feedback = ctx.data_view.get(FEEDBACK_SLOT)
     revising = feedback is not None
@@ -278,21 +278,21 @@ def draft_definition(ctx, call, task_def=None, read_events=None, system_prompt="
                     ContextPack.shape(SHAPE_TEXT, DRAFT_SHAPE_TEXT)]
     request = Request(system=system_prompt, user=render(segments), shape=SHAPE_TEXT)
     try:
-        reply = call(request)
+        reply = call_model(request)
     except LLMError as exc:
-        ctx.set_status(ActionStatus.FAILED, exc.brief)
+        ctx.set_status(CallStatus.FAILED, exc.brief)
         return
     draft = reply.text.strip()
-    changes = [Change(DRAFT_SLOT, copy.deepcopy(ctx.data_view.get(DRAFT_SLOT)), draft, action.action_id)]
+    changes = [Change(DRAFT_SLOT, copy.deepcopy(ctx.data_view.get(DRAFT_SLOT)), draft, call.call_id)]
     if revising:  # 意见已经落实到这一稿里，清空，否则下一次循环又会被当成待改
-        changes.append(Change(FEEDBACK_SLOT, copy.deepcopy(feedback), None, action.action_id))
-    action.result = _call_record(reply, segments, {"（文本）": DRAFT_SLOT}, draft)
-    action.changes = changes
+        changes.append(Change(FEEDBACK_SLOT, copy.deepcopy(feedback), None, call.call_id))
+    call.result = _call_record(reply, segments, {"（文本）": DRAFT_SLOT}, draft)
+    call.changes = changes
     # 终态事件带返回值，所以先填返回值再记状态。
-    ctx.set_status(ActionStatus.SUCCEEDED, f"模型写出第 {drafts + 1} 稿，{len(draft)} 字")
+    ctx.set_status(CallStatus.SUCCEEDED, f"模型写出第 {drafts + 1} 稿，{len(draft)} 字")
 
 
-def judge_reply(ctx, call, task_def=None, read_events=None, system_prompt="") -> None:
+def judge_reply(ctx, call_model, task_def=None, read_events=None, system_prompt="") -> None:
     """判读回复：使用者看过草稿后的那句话是确认还是修改，输出形状是 JSON。
 
     判为确认就把确认文本写进「确认释义」，判为修改就把修改意见写进「修改意见」，两种都把「回复」清空。
@@ -301,7 +301,7 @@ def judge_reply(ctx, call, task_def=None, read_events=None, system_prompt="") ->
     """
     from tod_kernel.context import ContextPack, render
 
-    action = ctx.action
+    call = ctx.call
     pack = _pack(task_def, ctx, read_events)
     segments = [pack.progress(f"已有第 {_draft_count(pack)} 稿。"),
                 pack.dialogue(),
@@ -310,29 +310,29 @@ def judge_reply(ctx, call, task_def=None, read_events=None, system_prompt="") ->
                 ContextPack.shape(SHAPE_JSON, JUDGE_SHAPE_TEXT, api_note=True)]
     request = Request(system=system_prompt, user=render(segments), shape=SHAPE_JSON, json_schema=JUDGE_JSON_SCHEMA)
     try:
-        reply = call(request)
+        reply = call_model(request)
     except LLMError as exc:
-        ctx.set_status(ActionStatus.FAILED, exc.brief)
+        ctx.set_status(CallStatus.FAILED, exc.brief)
         return
     parsed, problem = _parse_judgement(reply.text)
     if problem is not None:
-        action.result = _call_record(reply, segments, {}, None)
-        ctx.set_status(ActionStatus.FAILED, f"{problem}：{reply.text.strip()[:200]}")
+        call.result = _call_record(reply, segments, {}, None)
+        ctx.set_status(CallStatus.FAILED, f"{problem}：{reply.text.strip()[:200]}")
         return
     decision = parsed["决定"]
     old_reply = copy.deepcopy(ctx.data_view.get(REPLY_SLOT))
     if decision == JUDGE_CONFIRM:
         writes = {"决定": None, "确认文本": CONFIRMED_SLOT, "修改意见": None}
         changes = [Change(CONFIRMED_SLOT, copy.deepcopy(ctx.data_view.get(CONFIRMED_SLOT)),
-                          parsed["确认文本"].strip(), action.action_id)]
+                          parsed["确认文本"].strip(), call.call_id)]
     else:
         writes = {"决定": None, "确认文本": None, "修改意见": FEEDBACK_SLOT}
         changes = [Change(FEEDBACK_SLOT, copy.deepcopy(ctx.data_view.get(FEEDBACK_SLOT)),
-                          parsed["修改意见"].strip(), action.action_id)]
-    changes.append(Change(REPLY_SLOT, old_reply, None, action.action_id))  # 判读过了就清空，下一次循环才好再问
-    action.result = _call_record(reply, segments, writes, parsed)
-    action.changes = changes
-    ctx.set_status(ActionStatus.SUCCEEDED, f"判为「{decision}」")
+                          parsed["修改意见"].strip(), call.call_id)]
+    changes.append(Change(REPLY_SLOT, old_reply, None, call.call_id))  # 判读过了就清空，下一次循环才好再问
+    call.result = _call_record(reply, segments, writes, parsed)
+    call.changes = changes
+    ctx.set_status(CallStatus.SUCCEEDED, f"判为「{decision}」")
 
 
 def _parse_judgement(text):
@@ -368,21 +368,21 @@ def _call_record(reply, segments, writes, parsed) -> dict:
 
 
 # ───────────────────────── 告知异常 ─────────────────────────
-# 通用工具，对所有任务都登记，不是某个任务的领域工具。行动选择在三种情形下直接构造它的候选，它不走前置条件：
+# 通用工具，对所有任务都登记，不是某个任务的领域工具。调用选择在三种情形下直接构造它的候选，它不走前置条件：
 # 一趟走完阶段目标仍未达成；循环段次数到「最多」仍未满足「重复直到」；阶段越过最后一个而任务未完成。
 
 EXCEPTION_TOOL = "告知异常"
 EXCEPTION_PARAM_NAMES = ("阶段", "未达成目标", "步骤现况", "当前步", "可选措施")
 REDO = "重做本阶段"  # 给使用者看的措施名
-REDO_RESULT = "重做"  # 行动的返回值；任务定义据它把当前步退回该阶段起点
+REDO_RESULT = "重做"  # 工具调用的返回值；任务定义据它把当前步退回该阶段起点
 ABORT_BY_USER = "主动终止"
 ABORT_UNABLE = "被动终止"
 EXCEPTION_OPTIONS = (REDO, ABORT_BY_USER, ABORT_UNABLE)
-# 使用者的选择 → （行动终态, 返回值, 说明）
+# 使用者的选择 → （工具调用终态, 返回值, 说明）
 EXCEPTION_OUTCOMES = {
-    REDO: (ActionStatus.SUCCEEDED, REDO_RESULT, "使用者选择重做本阶段"),
-    ABORT_BY_USER: (ActionStatus.FAILED, "主动终止", "使用者主动终止"),
-    ABORT_UNABLE: (ActionStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
+    REDO: (CallStatus.SUCCEEDED, REDO_RESULT, "使用者选择重做本阶段"),
+    ABORT_BY_USER: (CallStatus.FAILED, "主动终止", "使用者主动终止"),
+    ABORT_UNABLE: (CallStatus.FAILED, "被动终止", "任务无法继续，使用者确认终止"),
 }
 
 
@@ -430,31 +430,31 @@ def report_exception(ctx) -> None:
     主动终止、被动终止记已失败，说明区分两种终止，由循环抛内核错误。
     取不到回答（收件箱已关闭）记已失败；回答不是三个可选措施之一，也记已失败并写明回答原文。
     """
-    action = ctx.action
-    params = action.params
+    call = ctx.call
+    params = call.params
     question = ctx.outbox.put(Message(
         kind="question",
-        sender=TOOL_SOURCE_PREFIX + action.tool,
+        sender=TOOL_SOURCE_PREFIX + call.tool,
         recipient="user",
         in_reply_to=None,
         content={"utterance": exception_utterance(params), "params": copy.deepcopy(params)},
-        action_id=action.action_id,
+        call_id=call.call_id,
     ))
-    ctx.set_status(ActionStatus.WAITING, f"已向使用者告知异常，问题 {question.seq}")
+    ctx.set_status(CallStatus.WAITING, f"已向使用者告知异常，问题 {question.seq}")
     message = ctx.inbox.take(
         match=lambda m: m.kind == "answer" and m.in_reply_to == question.seq,
         block=True,
-        waiter=action.action_id,
+        waiter=call.call_id,
     )
     if message is None:
-        ctx.set_status(ActionStatus.FAILED, "没有可用的回答")
+        ctx.set_status(CallStatus.FAILED, "没有可用的回答")
         return
     outcome = EXCEPTION_OUTCOMES.get(message.content) if isinstance(message.content, str) else None
     if outcome is None:
-        ctx.set_status(ActionStatus.FAILED, f"回答不是可选措施之一：{message.content}")
+        ctx.set_status(CallStatus.FAILED, f"回答不是可选措施之一：{message.content}")
         return
     status, result, note = outcome
-    action.result = result
+    call.result = result
     # 终态事件带返回值，所以先填返回值再记状态。
     ctx.set_status(status, note)
 
@@ -619,14 +619,14 @@ def system_prompt_for(task_def, tool_names) -> str:
                                domain_rules_of(task_def))
 
 
-def build_table(task_def, tool_names=("ask",), call=None, read_events=None) -> ToolTable:
+def build_table(task_def, tool_names=("ask",), call_model=None, read_events=None) -> ToolTable:
     """按任务建运行工具表：登记给定名字的工具，另外恒登记「告知异常」。
 
     工具名、参数名清单、前置条件、可写槽位、类别、一句话说明从静态工具表取；询问工具用 partial 绑定任务定义，
     两个内部调用模型的工具另外绑上模型调用件、任务定义、读事件函数与这次任务的系统提示，
     所以运行工具表与任务绑定，每个任务各建一张。
-    call 是 llm.make_caller 做出来的函数，read_events 是宿主给的「把至今的事件读出来」的函数（上下文包要用），
-    两者都由程序入口（验证脚本、控制台）准备；任务用到这两个工具而没给 call 时，在这里就报错，不等到跑起来才失败。
+    call_model 是 llm.make_caller 做出来的函数（给模型发一次请求），read_events 是宿主给的「把至今的事件读出来」的函数（上下文包要用），
+    两者都由程序入口（验证脚本、控制台）准备；任务用到这两个工具而没给 call_model 时，在这里就报错，不等到跑起来才失败。
     read_events 没给时上下文包按「没有事件」处理，对话历史与修订记录会是空的。
     """
     table = ToolTable()
@@ -638,9 +638,9 @@ def build_table(task_def, tool_names=("ask",), call=None, read_events=None) -> T
         spec = STATIC_TOOLS[name]
         impl = _IMPLS[name](task_def)
         if name in MODEL_INSTRUCTIONS:
-            if call is None:
-                raise KernelError(f"任务用到工具 {name!r}，但建工具表时没有给模型调用件（build_table 的 call 参数）")
-            impl = functools.partial(impl, call=call, task_def=task_def, read_events=read_events,
+            if call_model is None:
+                raise KernelError(f"任务用到工具 {name!r}，但建工具表时没有给模型调用件（build_table 的 call_model 参数）")
+            impl = functools.partial(impl, call_model=call_model, task_def=task_def, read_events=read_events,
                                      system_prompt=system_prompt)
         table.register(Tool(name=spec.name, param_names=spec.param_names, impl=impl,
                             writable_slots=spec.writable_slots, preconditions=spec.preconditions,

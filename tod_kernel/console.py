@@ -8,7 +8,7 @@
 本模块是宿主一侧的东西，验证脚本（verify.py）导入它的宿主循环与预设应答者；反过来，本模块只在跑场景时
 才在函数内部导入验证脚本，避免两个模块在加载时互相等待。
 
-用法：`python3 -m tod_kernel.console [--config 配置文件] [--show-actions]`
+用法：`python3 -m tod_kernel.console [--config 配置文件] [--show-calls]`
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from pathlib import Path
 
 from tod_kernel import llm
 from tod_kernel.kernel import (
-    ACTION_PROPOSED,
-    ACTION_STATUS_CHANGED,
+    CALL_PROPOSED,
+    CALL_STATUS_CHANGED,
     INBOX,
     LOOP_STARTED,
     MAILBOX_CLOSED,
-    TERMINAL_ACTION_STATUSES,
+    TERMINAL_CALL_STATUSES,
     Message,
 )
 
@@ -41,7 +41,7 @@ def target_key(target: dict) -> tuple:
 
 # ───────────────────────── 应答者 ─────────────────────────
 # 应答者只回答一件事：这一问的回答是什么。返回字符串就是回答，返回 None 表示没有回答，
-# 宿主随即关闭收件箱（内核那边的询问行动因此记已失败）。
+# 宿主随即关闭收件箱（内核那边的询问工具调用因此记已失败）。
 
 
 class PresetAnswerer:
@@ -109,13 +109,13 @@ def host_loop(inbox, outbox, answerer, show: bool = False) -> None:
         if show and answerer.preset:
             print(f"{PRESET_ANSWER_PREFIX}{answer}", flush=True)
         inbox.put(Message(
-            kind="answer", sender="user", recipient=question.action_id,
-            in_reply_to=question.seq, content=answer, action_id=question.action_id,
+            kind="answer", sender="user", recipient=question.call_id,
+            in_reply_to=question.seq, content=answer, call_id=question.call_id,
         ))
 
 
-class ActionPrinter:
-    """显示行动：每个行动结束时打印一行（第几次迭代、步骤说明、结果）。加了「显示行动」开关才挂上。"""
+class CallPrinter:
+    """显示工具调用：每个工具调用结束时打印一行（第几次迭代、步骤说明、结果）。加了「显示工具调用」开关才挂上。"""
 
     def __init__(self):
         self.loop_no = 0
@@ -125,21 +125,21 @@ class ActionPrinter:
     def __call__(self, event) -> None:
         if event.name == LOOP_STARTED:
             self.loop_no = event.payload["loop_no"]
-        elif event.name == ACTION_PROPOSED:
-            self.loop_of[event.action_id] = self.loop_no
-            self.note_of[event.action_id] = event.payload["basis"][1]
-        elif event.name == ACTION_STATUS_CHANGED and event.payload["new_status"] in TERMINAL_ACTION_STATUSES:
-            aid = event.action_id
+        elif event.name == CALL_PROPOSED:
+            self.loop_of[event.call_id] = self.loop_no
+            self.note_of[event.call_id] = event.payload["basis"][1]
+        elif event.name == CALL_STATUS_CHANGED and event.payload["new_status"] in TERMINAL_CALL_STATUSES:
+            aid = event.call_id
             status = event.payload["new_status"].value
             note = event.payload.get("note") or ""
-            print(f"（行动 {aid}：第 {self.loop_of.get(aid, self.loop_no)} 次迭代，"
+            print(f"（工具调用 {aid}：第 {self.loop_of.get(aid, self.loop_no)} 次迭代，"
                   f"{self.note_of.get(aid, '')}，{status}，{note}）", flush=True)
 
 
 # ───────────────────────── 预设场景 ─────────────────────────
 
 
-def run_preset(index: int, show_actions: bool = False):
+def run_preset(index: int, show_calls: bool = False):
     """跑一个预设场景：问答照样打印，断言照样跑，逐条断言不打印，跑完打印通过条数或第一条失败。
 
     返回这个场景的断言记账本（Checker），调用方据它定退出状态；验证脚本那组检查也拿它比对断言条数。
@@ -150,7 +150,7 @@ def run_preset(index: int, show_actions: bool = False):
     verify.SHOW_EXCHANGES = True
     verify.PRINT_EVENTS = False  # 控制台上要看的是问答，不是事件流水
     verify.PRINT_CHECKS = False
-    verify.EXTRA_SUBSCRIBERS = (ActionPrinter(),) if show_actions else ()
+    verify.EXTRA_SUBSCRIBERS = (CallPrinter(),) if show_calls else ()
     print(f"── 跑「{title}」 ──")
     try:
         checker = scenario()
@@ -223,21 +223,21 @@ def ask_initial_input(task_def) -> dict:
 
 
 def closed_before_failure(run) -> int | None:
-    """宿主关过收件箱（使用者按 Ctrl-D 不再回答）而随后有行动失败时，返回那个行动的编号，否则返回空。
+    """宿主关过收件箱（使用者按 Ctrl-D 不再回答）而随后有工具调用失败时，返回那个工具调用的编号，否则返回空。
 
     这是给通用检查里「邮箱关闭」那几条断言用的：关过与没关过，该看的事实不一样。
     """
     closed = [e for e in run.all_events if e.name == MAILBOX_CLOSED and e.payload["box"] == INBOX]
-    error_action = getattr(run.error, "action", None)
-    if closed and error_action is not None:
-        return error_action.action_id
+    failed_call = getattr(run.error, "call", None)
+    if closed and failed_call is not None:
+        return failed_call.call_id
     return None
 
 
-def run_free_input(config: dict, show_actions: bool = False) -> int:
+def run_free_input(config: dict, show_calls: bool = False) -> int:
     """自由输入：选一份任务定义文件，使用者敲的话原样进收件箱，模型是真的。
 
-    跑完只做与内容无关的通用检查（事件序号连续、每个行动有始有终、每条回答对应一个问题、运行文件写得出读得回）；
+    跑完只做与内容无关的通用检查（事件序号连续、每个工具调用有始有终、每条回答对应一个问题、运行文件写得出读得回）；
     依赖具体回答的断言对临场输入不成立，不跑；模型答得对不对由使用者自己看。
     """
     from tod_kernel import verify
@@ -262,8 +262,8 @@ def run_free_input(config: dict, show_actions: bool = False) -> int:
     call = llm.make_caller(config)
     print(f"── 开始跑「{task_def.NAME}」，任务标识 {task_id}。回答不下去时按 Ctrl-D 结束 ──")
     run = verify.run_scenario(task_id, task_def, answers={}, tool_names=tool_names_of(task_def),
-                              console=False, call=call, answerer=KeyboardAnswerer(), show=True,
-                              subscribers=(ActionPrinter(),) if show_actions else ())
+                              console=False, call_model=call_model, answerer=KeyboardAnswerer(), show=True,
+                              subscribers=(CallPrinter(),) if show_calls else ())
     print("── 跑完了 ──")
     if run.error is not None:
         print(f"任务没有跑到完成：{run.error}")
@@ -312,7 +312,7 @@ def print_menu() -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="任务型智能体最小内核的控制台：在终端里一问一答地跑任务。")
     parser.add_argument("--config", default=None, help="配置文件路径；不给就用包目录下的 config.json，它不存在时用 config.example.json")
-    parser.add_argument("--show-actions", action="store_true", help="每个行动结束时打印一行（第几次迭代、步骤说明、结果）")
+    parser.add_argument("--show-calls", action="store_true", help="每个工具调用结束时打印一行（第几次迭代、步骤说明、结果）")
     args = parser.parse_args(argv)
 
     config = llm.load_config(args.config)
@@ -326,11 +326,11 @@ def main(argv=None) -> int:
     if number == 0:
         return run_everything()
     if number == free:
-        return run_free_input(config, show_actions=args.show_actions)
+        return run_free_input(config, show_calls=args.show_calls)
     from tod_kernel import verify
 
     if 1 <= number <= len(verify.SCENARIOS):
-        checker = run_preset(number, show_actions=args.show_actions)
+        checker = run_preset(number, show_calls=args.show_calls)
         return 0 if checker.passed == len(checker.results) else 1
     print("没有这个编号。")
     return 1

@@ -379,15 +379,15 @@ ul.goals li.ok b{color:#15803d}
 "use strict";
 // 本页不写死任何任务名、槽位名、工具名；只认识内核固定的事件名词表与循环五步的名称。
 const LABELS = {
-  TASK_STATUS_CHANGED: "任务状态变化", DATA_CHANGED: "数据变更", ACTION_PROPOSED: "行动提出",
-  ACTION_STATUS_CHANGED: "行动状态变化", MESSAGE_PUT: "消息放入", MESSAGE_TAKEN: "消息取出",
+  TASK_STATUS_CHANGED: "任务状态变化", DATA_CHANGED: "数据变更", CALL_PROPOSED: "工具调用提出",
+  CALL_STATUS_CHANGED: "工具调用状态变化", MESSAGE_PUT: "消息放入", MESSAGE_TAKEN: "消息取出",
   MAILBOX_CLOSED: "邮箱关闭", TASK_ENDED: "任务结束", TASK_STARTED: "任务开始", LOOP_STARTED: "一次迭代开始",
-  CHECK_DONE_RESULT: "结果检查结论", CONTROL_RESULT: "执行控制结论", EXECUTE_CALL: "行动执行调用",
+  CHECK_DONE_RESULT: "结果检查结论", CONTROL_RESULT: "执行控制结论", EXECUTE_CALL: "调用执行调用",
   MAILBOX_WAIT: "邮箱等待", TASK_DEFINITION_ERROR: "任务定义错误",
 };
 // 第三步第十二项起结果检查挪到迭代末尾，进循环前另有一次「启动检查」；更早的运行文件结果检查在迭代开头。
-const STEP_NAMES = ["第 1 步 行动选择", "第 2 步 执行控制", "第 3 步 行动执行", "第 4 步 状态更新", "第 5 步 结果检查"];
-const OLD_STEP_NAMES = ["第 1 步 结果检查", "第 2 步 行动选择", "第 3 步 执行控制", "第 4 步 行动执行", "第 5 步 状态更新"];
+const STEP_NAMES = ["第 1 步 调用选择", "第 2 步 执行控制", "第 3 步 调用执行", "第 4 步 状态更新", "第 5 步 结果检查"];
+const OLD_STEP_NAMES = ["第 1 步 结果检查", "第 2 步 调用选择", "第 3 步 执行控制", "第 4 步 调用执行", "第 5 步 状态更新"];
 const BOX = { inbox: "收件箱", outbox: "发件箱" };
 const EXTERNAL_SENDERS = ["host", "user"];
 const PROPOSED = "已提出", FAILED = "已失败";
@@ -492,18 +492,18 @@ function buildRecord(file, events) {
   const ended = events.filter(e => e.name === "TASK_ENDED");
   r.ended = ended.length ? ended[ended.length - 1].payload : null;
   r.definitionErrors = events.filter(e => e.name === "TASK_DEFINITION_ERROR");
-  r.actions = new Map();
-  for (const e of events) if (e.name === "ACTION_PROPOSED") r.actions.set(e.action_id, { proposed: e, events: [] });
-  for (const e of events) if (r.actions.has(e.action_id)) r.actions.get(e.action_id).events.push(e);
+  r.calls = new Map();
+  for (const e of events) if (e.name === "CALL_PROPOSED") r.calls.set(e.call_id, { proposed: e, events: [] });
+  for (const e of events) if (r.calls.has(e.call_id)) r.calls.get(e.call_id).events.push(e);
   r.slots = r.started ? Object.keys(r.started.slots) : [];
   for (const e of events) if (e.name === "DATA_CHANGED" && !r.slots.includes(e.payload.slot)) r.slots.push(e.payload.slot);
-  // 与槽位有关的行动：写过它的，以及参数里任何位置提到它的。
-  r.actionSlots = new Map();
-  for (const [aid, info] of r.actions) {
+  // 与槽位有关的工具调用：写过它的，以及参数里任何位置提到它的。
+  r.callSlots = new Map();
+  for (const [aid, info] of r.calls) {
     const set = new Set();
     for (const slot of r.slots) if (mentions(info.proposed.payload.params, slot)) set.add(slot);
     for (const e of info.events) if (e.name === "DATA_CHANGED") set.add(e.payload.slot);
-    r.actionSlots.set(aid, set);
+    r.callSlots.set(aid, set);
   }
   // 按迭代、按步切分。按事件的实际结构判断：第一个「结果检查结论」在第一个「迭代开始」之前，就是结果检查在迭代末尾的新结构。
   const firstCheck = events.findIndex(e => e.name === "CHECK_DONE_RESULT");
@@ -530,14 +530,14 @@ function buildRecord(file, events) {
     if (r.checkAtEnd) {
       if (e.name === "CHECK_DONE_RESULT") step = 4;
       current.steps[step].push(e);
-      if (step === 0 && e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 1;
+      if (step === 0 && e.name === "CALL_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 1;
       else if (e.name === "CONTROL_RESULT") step = 2;
       else if (e.name === "EXECUTE_CALL" && e.payload.phase === "return") step = 3;
       continue;
     }
     current.steps[step].push(e);
     if (e.name === "CHECK_DONE_RESULT" && !e.payload.done) step = 1;
-    else if (step === 1 && e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 2;
+    else if (step === 1 && e.name === "CALL_STATUS_CHANGED" && e.payload.new_status === PROPOSED) step = 2;
     else if (e.name === "CONTROL_RESULT") step = 3;
     else if (e.name === "EXECUTE_CALL" && e.payload.phase === "return") step = 4;
   }
@@ -548,7 +548,7 @@ function buildRecord(file, events) {
 }
 function slotsOfEvent(r, e) {
   if (e.name === "DATA_CHANGED") return [e.payload.slot];
-  return r.actionSlots.has(e.action_id) ? [...r.actionSlots.get(e.action_id)] : [];
+  return r.callSlots.has(e.call_id) ? [...r.callSlots.get(e.call_id)] : [];
 }
 // 「任务开始」事件里 rules 的值由加载器按阶段与步骤生成，形如「阶段名 › 第 n 步 步骤说明」「阶段名 › 告知异常」「阶段名 › 自主 › 工具名」；
 // 分不出阶段的值（第零步、第一步写出的旧文件）返回 null，调用方原样显示。
@@ -603,7 +603,7 @@ function groupText(st, group) {
   return `${group.single ? "这一步会重复" : "这几步一起重复"} · 重复直到${until === "目标成立" ? "" : " "}${until} · 最多 ${operandText(group.max)} 次`;
 }
 // 任务概览的「阶段与步骤」：有任务定义结构时列出目标、步骤组（重复直到、最多）与步骤（全局号、说明、工具）；
-// 旧文件只有依据说明，列全局号与说明，工具名从实际提出过的行动里补。预留的告知异常条目不显示。
+// 旧文件只有依据说明，列全局号与说明，工具名从实际提出过的工具调用里补。预留的告知异常条目不显示。
 function stagesHTML(model) {
   const { def } = model;
   const stepHTML = step => {
@@ -653,32 +653,32 @@ function describeHTML(e, r) {
       return `槽位「${esc(p.slot)}」：${lines.map(l => `<span class="diff-line">${esc(l)}</span>`).join("")}来源 ${esc(p.source)}`
         + ((typeof p.new === "object" && p.new !== null) ? toggleHTML(`${jsonText(p.old)} → ${jsonText(p.new)}`) : "");
     }
-    case "ACTION_PROPOSED": return `工具 ${esc(p.tool)}，参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}，依据 ${esc(basisText(p.basis))}`;
-    case "ACTION_STATUS_CHANGED": return `${esc(p.new_status)}，说明：${esc(p.note)}` + ("result" in p ? `，返回值 ${resultHTML(p.result)}` : "");
+    case "CALL_PROPOSED": return `工具 ${esc(p.tool)}，参数 ${esc(paramsSummary(p.params))}，提出者 ${esc(p.proposer)}，依据 ${esc(basisText(p.basis))}`;
+    case "CALL_STATUS_CHANGED": return `${esc(p.new_status)}，说明：${esc(p.note)}` + ("result" in p ? `，返回值 ${resultHTML(p.result)}` : "");
     case "MESSAGE_PUT": case "MESSAGE_TAKEN": return messageHTML(p);
     case "MAILBOX_CLOSED": return `${BOX[p.box] || esc(p.box)}，发起方 ${esc(p.sender)}，不会再有消息`;
     case "TASK_ENDED": return `终态 ${esc(p.final_status)}，原因：${esc(p.reason)}`;
     case "TASK_STARTED": return `任务定义 ${esc(p.task_def_name)}`;
     case "LOOP_STARTED": return `第 ${esc(p.loop_no)} 次迭代`;
     case "CHECK_DONE_RESULT": return `已完成 = ${p.done ? "是" : "否"}`;
-    case "CONTROL_RESULT": return `行动 ${esc(p.action_id)}，结论 ${esc(p.verdict)}，核验：${esc(p.checked)}`;
-    case "EXECUTE_CALL": return `行动 ${esc(p.action_id)}，工具 ${esc(p.tool)}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}`;
-    case "MAILBOX_WAIT": return `${BOX[p.box] || esc(p.box)}，行动 ${esc(plain(p.action_id))}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}` + ("wait_ms" in p ? `，等待 ${esc(p.wait_ms)} 毫秒` : "");
-    case "TASK_DEFINITION_ERROR": return `原因：${esc(p.reason)}，行动选择原始输出 ${esc(plain(p.raw_output))}`;
+    case "CONTROL_RESULT": return `工具调用 ${esc(p.call_id)}，结论 ${esc(p.verdict)}，核验：${esc(p.checked)}`;
+    case "EXECUTE_CALL": return `工具调用 ${esc(p.call_id)}，工具 ${esc(p.tool)}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}`;
+    case "MAILBOX_WAIT": return `${BOX[p.box] || esc(p.box)}，工具调用 ${esc(plain(p.call_id))}，阶段 ${esc(p.phase)}，线程 ${esc(p.thread)}` + ("wait_ms" in p ? `，等待 ${esc(p.wait_ms)} 毫秒` : "");
+    case "TASK_DEFINITION_ERROR": return `原因：${esc(p.reason)}，调用选择原始输出 ${esc(plain(p.raw_output))}`;
     default: return esc(jsonText(p));
   }
 }
 function finalStatusOf(r) {
   if (r.ended) return { status: String(r.ended.final_status), reason: r.ended.reason };
   const kernelClosed = r.events.some(e => e.name === "MAILBOX_CLOSED" && e.payload.box === "outbox" && !EXTERNAL_SENDERS.includes(e.payload.sender));
-  const failed = r.events.filter(e => e.name === "ACTION_STATUS_CHANGED" && e.payload.new_status === FAILED);
+  const failed = r.events.filter(e => e.name === "CALL_STATUS_CHANGED" && e.payload.new_status === FAILED);
   if (r.definitionErrors.length || kernelClosed) {
     return { status: "内核错误", reason: r.definitionErrors.length ? r.definitionErrors[r.definitionErrors.length - 1].payload.reason : (failed.length ? failed[failed.length - 1].payload.note : "") };
   }
   return { status: "未结束", reason: "" };
 }
-function questionUtterance(r, actionId) {
-  const info = r.actions.get(actionId);
+function questionUtterance(r, callId) {
+  const info = r.calls.get(callId);
   if (!info) return null;
   const q = info.events.find(e => isQuestionSent(e));
   return q ? utteranceOf(q.payload.content) : null;
@@ -820,7 +820,7 @@ function buildPath(r) {
   if (!hasStepEvents) { atNow = data[CURSOR]; atText = ""; }
   const initialCursor = atNow;
   const initialText = atText;
-  const toolOf = new Map(), counts = new Map(), loopOfAction = new Map();
+  const toolOf = new Map(), counts = new Map(), loopOfCall = new Map();
   let previousCursor = initialCursor;
   const iters = r.loops.map((loop, i) => {
     const evs = loop.steps.flat();
@@ -830,21 +830,21 @@ function buildPath(r) {
     const it = { k: i + 1, no: loop.no, data: JSON.parse(JSON.stringify(data)), changed, cursorBefore: previousCursor,
       lastSeq: evs.length ? evs[evs.length - 1].seq : 0,
       done: evs.some(e => e.name === "CHECK_DONE_RESULT" && e.payload.done),
-      defError: evs.some(e => e.name === "TASK_DEFINITION_ERROR"), action: null, row: null };
+      defError: evs.some(e => e.name === "TASK_DEFINITION_ERROR"), call: null, row: null };
     it.cursor = hasStepEvents ? atNow : data[CURSOR];
     it.atText = hasStepEvents ? atText : "";
     previousCursor = it.cursor;
-    const prop = evs.find(e => e.name === "ACTION_PROPOSED");
+    const prop = evs.find(e => e.name === "CALL_PROPOSED");
     if (prop) {
-      const p = prop.payload, info = r.actions.get(prop.action_id);
-      const history = info.events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+      const p = prop.payload, info = r.calls.get(prop.call_id);
+      const history = info.events.filter(e => e.name === "CALL_STATUS_CHANGED");
       const last = history.length ? history[history.length - 1].payload : null;
       const answer = info.events.find(e => e.name === "MESSAGE_TAKEN" && e.payload.box === "inbox");
       const number = Array.isArray(p.basis) ? Number(p.basis[0]) : null;
       const ref = def.byNumber.get(number) || null;
-      it.action = { aid: prop.action_id, tool: p.tool, basis: p.basis, ref, number,
+      it.call = { aid: prop.call_id, tool: p.tool, basis: p.basis, ref, number,
         status: last ? last.new_status : "—", note: last ? last.note : "", result: last && "result" in last ? last.result : undefined,
-        utterance: questionUtterance(r, prop.action_id), answer: answer ? answer.payload.content : undefined };
+        utterance: questionUtterance(r, prop.call_id), answer: answer ? answer.payload.content : undefined };
       if (ref) {
         // 落在路径图的哪一行：告知异常画在它报的那个阶段的第一行。
         it.row = ref.kind === "exception" ? def.firstRow.get(ref.stage) : def.rowOf.get(number);
@@ -854,9 +854,9 @@ function buildPath(r) {
         }
       }
       it.exception = Boolean(ref && ref.kind === "exception");
-      it.redo = it.exception && it.action.result === REDO_RESULT;
-      it.failed = it.action.status === FAILED;
-      loopOfAction.set(prop.action_id, it.k);
+      it.redo = it.exception && it.call.result === REDO_RESULT;
+      it.failed = it.call.status === FAILED;
+      loopOfCall.set(prop.call_id, it.k);
     }
     return it;
   });
@@ -871,7 +871,7 @@ function buildPath(r) {
   const finalIndex = stageIndexOf(finalCursor);
   const exceptions = new Map();
   for (const it of iters) if (it.exception) {
-    const name = it.action.ref.stage.name;
+    const name = it.call.ref.stage.name;
     if (!exceptions.has(name)) exceptions.set(name, []);
     exceptions.get(name).push(it);
   }
@@ -880,8 +880,8 @@ function buildPath(r) {
     exceptions: exceptions.get(st.name) || [],
     stoppedHere: !completed && hasCursor && st.index === finalIndex,
   }));
-  const redos = iters.filter(it => it.redo).map(it => ({ it, from: it.cursorBefore ? it.cursorBefore["阶段"] : null, to: it.action.ref.stage.name }));
-  return { run: r, startData, def, iters, toolOf, counts, loopOfAction, fin, completed, hasCursor, reached, status, redos,
+  const redos = iters.filter(it => it.redo).map(it => ({ it, from: it.cursorBefore ? it.cursorBefore["阶段"] : null, to: it.call.ref.stage.name }));
+  return { run: r, startData, def, iters, toolOf, counts, loopOfCall, fin, completed, hasCursor, reached, status, redos,
            finalCursor, hasStepEvents, initialText };
 }
 
@@ -893,7 +893,7 @@ function buildPath(r) {
 // 告知异常＝挂在阶段下方的红菱形，前面接一个「阶段目标？」菱形；重做＝红色虚线回边；终止＝红边到红旗。
 const DG = { MAIN_Y: 150, NODE_H: 56, COND_H: 58, GAP: 40, GAP_COND: 54, CPAD: 18, STAGE_GAP: 34,
              TOP: 84, BOT: 48, EXC_DY: 220, EXC_ROW: 170, TOPY: 34, BACK: 96, REDO: 124, SKIP: 74 };
-const DG_PASS_DONE = "一趟走完";  // 告知异常依据里的「异常种类」：这一趟行动选择走到了阶段末尾，也就是越过了整个步骤组
+const DG_PASS_DONE = "一趟走完";  // 告知异常依据里的「异常种类」：这一趟调用选择走到了阶段末尾，也就是越过了整个步骤组
 
 // 菱形里的字拆成两行：先按空格找最均衡的切分点，没有空格就按字数对半切。
 function dgWrap(text) {
@@ -928,10 +928,10 @@ function dgJudgeSeq(no, yes) {
   });
   return runs.map(run => run.from === run.to ? `第 ${run.from} 次${run.r}` : `第 ${run.from} 到 ${run.to} 次${run.r}`).join(" · ");
 }
-// 跳过没有留痕时，原因取上一个行动返回值里的判读结果（模型调用记录的解析结果），页面不重算前置条件。
+// 跳过没有留痕时，原因取上一个工具调用返回值里的判读结果（模型调用记录的解析结果），页面不重算前置条件。
 function dgJudged(model, k) {
   const it = model.iters[k - 1];
-  const res = it && it.action ? it.action.result : undefined;
+  const res = it && it.call ? it.call.result : undefined;
   if (typeof res === "string") return [...res].length <= 12 ? res : null;
   if (res && typeof res === "object" && !Array.isArray(res) && res.parsed && typeof res.parsed === "object" && !Array.isArray(res.parsed))
     for (const v of Object.values(res.parsed)) if (typeof v === "string" && v && [...v].length <= 12) return v;
@@ -943,7 +943,7 @@ function dgOverlay(model) {
   const { def, iters } = model;
   const execs = new Map();          // 步骤号 → [{it, k, who}]：被哪几次迭代执行过
   for (const it of iters) {
-    const a = it.action;
+    const a = it.call;
     if (!a || !a.ref || a.ref.kind === "exception" || a.number === null || a.number === undefined) continue;
     if (!execs.has(a.number)) execs.set(a.number, []);
     execs.get(a.number).push({ it: it.no, k: it.k, who: it.role || "sys", failed: Boolean(it.failed) });
@@ -953,7 +953,7 @@ function dgOverlay(model) {
     for (const s of item.group.steps) groupOf.set(s.number, item.group);
   const rounds = new Map(), lastIn = new Map();   // 组首步骤号 → [{it, k}]：每一轮从哪次迭代开始
   for (const it of iters) {
-    const a = it.action;
+    const a = it.call;
     if (!a || a.number === null || a.number === undefined) continue;
     const group = groupOf.get(a.number);
     if (!group) continue;
@@ -968,7 +968,7 @@ function dgOverlay(model) {
   for (const st of def.stages) for (const item of st.items || []) if (item.group) {
     const group = item.group, list = [];
     for (const it of iters) {
-      const a = it.action;
+      const a = it.call;
       if (!a || !a.ref) continue;
       const stage = a.ref.kind === "step" ? a.ref.step.stage : a.ref.stage;
       if (stage !== st) continue;
@@ -979,7 +979,7 @@ function dgOverlay(model) {
         list.push({ it: it.no, k: it.k });
       }
     }
-    // 任务完成时那一次判断没有留下行动：结果检查为真之后不再做行动选择，图上仍要画出这一次「是」。
+    // 任务完成时那一次判断没有留下工具调用：结果检查为真之后不再做调用选择，图上仍要画出这一次「是」。
     if (!list.length && (rounds.get(group.first) || []).length && model.status[st.index].achieved)
       list.push({ it: null, k: iters.length + 1, last: true });
     yeses.set(group.first, list);
@@ -987,7 +987,7 @@ function dgOverlay(model) {
   const skips = new Map();          // 步骤号 → [{it, k, reason}]：被跳过几次、什么原因
   const add = (number, entry) => { if (!skips.has(number)) skips.set(number, []); skips.get(number).push(entry); };
   for (const it of iters) {
-    const a = it.action;
+    const a = it.call;
     const hit = a && Array.isArray(a.basis) && a.basis.length === 3 ? a.basis[2] : null;
     const trail = hit && typeof hit === "object" ? hit["选择经过"] : null;
     for (const entry of (trail && Array.isArray(trail["跳过步骤"]) ? trail["跳过步骤"] : [])) {
@@ -1132,7 +1132,7 @@ function buildDigraph(model) {
     const node = byId.get(`n${number}`);
     if (!link || !link.next || !node || node.never) return;
     const refs = dgRefs(list);
-    const where = list[0].traced ? (refs ? `${refs} 那次行动选择里` : "行动选择里") : (refs ? `${refs} 之后` : "");
+    const where = list[0].traced ? (refs ? `${refs} 那次调用选择里` : "调用选择里") : (refs ? `${refs} 之后` : "");
     edges.push({ from: link.prev, to: link.next, kind: "skip", depth: DG.SKIP,
       label: `跳过「${fit(node.title, 11, 150)}」· ${list.length} 次${where ? `（${where}）` : ""}\n${fit(list[0].reason, 11, 420)}`,
       lx: 0, ly: -2, full: list[0].reason });
@@ -1159,9 +1159,9 @@ function buildDigraph(model) {
     const redos = L.exceptions.filter(it => it.redo);
     if (redos.length && L.entry) edges.push({ from: xid, to: L.entry, kind: "redo", depth: DG.REDO,
       label: `使用者选「重做本阶段」· ${redos.length} 次（${redos.map(it => `#${it.no}`).join("、")} 之后）→ 回到${L.exitIsCond ? "判断" : "阶段起点"}`, ly: -4 });
-    const stopped = L.exceptions.filter(it => it.action && typeof it.action.result === "string" && it.action.result !== REDO_RESULT);
+    const stopped = L.exceptions.filter(it => it.call && typeof it.call.result === "string" && it.call.result !== REDO_RESULT);
     if (stopped.length) endNode = { x: exc.x + 300, y, ok: false, from: xid,
-      label: `选「${stopped[stopped.length - 1].action.result}」· ${stopped.length} 次（${stopped.map(it => `#${it.no}`).join("、")}）` };
+      label: `选「${stopped[stopped.length - 1].call.result}」· ${stopped.length} 次（${stopped.map(it => `#${it.no}`).join("、")}）` };
     bump(y + 40 + (redos.length ? DG.REDO + 30 : 40));
   });
 
@@ -1286,7 +1286,7 @@ function renderDigraph(g) {
       n.its.forEach((b, i) => {
         // 迭代号从左往右按次序读（最早的在左），整串靠框的右下角对齐
         const bx = x0 + n.w - 12 - (n.its.length - 1 - i) * 21;
-        s += `<g class="dg-badge-g" data-k="${b.k}"><title>第 ${b.it} 次迭代走的这一步${b.failed ? "，这次行动已失败" : ""}</title>`
+        s += `<g class="dg-badge-g" data-k="${b.k}"><title>第 ${b.it} 次迭代走的这一步${b.failed ? "，这次工具调用已失败" : ""}</title>`
           + `<circle class="dg-badge ${b.who}${b.failed ? " failed" : ""}" cx="${bx}" cy="${y0 + n.h - 13}" r="9"/>`
           + `<text class="dg-badge-t" x="${bx}" y="${y0 + n.h - 10}">${b.it}</text></g>`;
       });
@@ -1307,7 +1307,7 @@ function digraphHTML(model) {
     <div class="legend"><span><i class="dot sys"></i>系统自己做</span><span><i class="dot usr"></i>问了使用者</span><span><i class="dot mdl"></i>工具内调了模型</span>
       <span style="color:var(--sys)">━ 走完一次回到判断（回边）</span><span style="color:var(--ink3)">┄ 跳过的旁路</span>
       <span style="color:var(--good)">━ 判断为是，出循环</span><span style="color:var(--bad)">┄ 重做退回 ／ ━ 终止</span><span style="color:var(--ink3)">┄ 没到过</span>
-      <span><i class="dot" style="background:var(--panel);border:2.5px solid var(--bad)"></i>这次行动已失败</span></div>
+      <span><i class="dot" style="background:var(--panel);border:2.5px solid var(--bad)"></i>这次工具调用已失败</span></div>
     <div class="scroll">${renderDigraph(g)}</div></section>`;
 }
 
@@ -1318,7 +1318,7 @@ function markRoles(r, model) {
   model.iters.forEach((it, i) => { it.role = iterationRole(r, it, r.loops[i].steps.flat()); });
   model.roles = new Map();  // 步骤号 → 这一步的角色，取它第一次执行时那次迭代的角色
   for (const it of model.iters) {
-    const number = it.action && it.action.number;
+    const number = it.call && it.call.number;
     if (number && !model.roles.has(number)) model.roles.set(number, it.role);
   }
 }
@@ -1380,8 +1380,8 @@ function pathChartHTML(model) {
     }
   }
   for (const it of pts) {
-    const cx = x(it.k), cy = y(it.row), a = it.action;
-    const tip = `第 ${it.no} 次迭代 · 行动 ${a.aid} · ${a.tool} · ${basisText(a.basis)} · ${a.status}`;
+    const cx = x(it.k), cy = y(it.row), a = it.call;
+    const tip = `第 ${it.no} 次迭代 · 工具调用 ${a.aid} · ${a.tool} · ${basisText(a.basis)} · ${a.status}`;
     if (it.exception) {
       const outcome = a.result !== undefined ? a.result : (a.answer !== undefined ? plain(a.answer) : a.status);
       svg += `<g class="rp-ptg" data-k="${it.k}"><title>${esc(tip)}</title><rect class="rp-pt bad" x="${cx - 6}" y="${cy - 6}" width="12" height="12" transform="rotate(45 ${cx} ${cy})"/>`
@@ -1397,11 +1397,11 @@ function pathChartHTML(model) {
       <input id="tl-slider" type="range" min="1" max="${N}" value="${N}" aria-label="迭代">
       <button id="tl-next">下一次迭代 ▶</button><span class="tl-val" id="tl-label"></span></div>`;
   return `<section id="path-chart"><h2>时间轴与路径图</h2>
-    <p class="hint">拖到第 k 次迭代：这张图上第 k 个点、运行有向图上第 k 个迭代号圆点与协同记录里那张卡一起高亮，右栏「此刻的状态」显示那次迭代结束时的当前步、行动、阶段目标与槽位值（都从事件重建），变过的槽位标黄。横轴是迭代，纵轴是定义里的位置（自上而下按文件顺序${def.structured ? "，按阶段分带，带内每一步一行" : ""}）。正常运行是一条向下的阶梯；同一高度连续几个点是这段循环在重复；向上的红色虚线是「重做」退回；红色菱形是告知异常那一次迭代，画在它报的阶段那一行。悬停或点击选中一次迭代，其余几处一起高亮。</p>
+    <p class="hint">拖到第 k 次迭代：这张图上第 k 个点、运行有向图上第 k 个迭代号圆点与协同记录里那张卡一起高亮，右栏「此刻的状态」显示那次迭代结束时的当前步、工具调用、阶段目标与槽位值（都从事件重建），变过的槽位标黄。横轴是迭代，纵轴是定义里的位置（自上而下按文件顺序${def.structured ? "，按阶段分带，带内每一步一行" : ""}）。正常运行是一条向下的阶梯；同一高度连续几个点是这段循环在重复；向上的红色虚线是「重做」退回；红色菱形是告知异常那一次迭代，画在它报的阶段那一行。悬停或点击选中一次迭代，其余几处一起高亮。</p>
     ${timeline}
     <div class="legend"><span><i class="sw" style="background:var(--sys)"></i>只有系统</span>
       <span><i class="sw" style="background:var(--usr)"></i>问了使用者</span>
-      <span><i class="sw" style="background:var(--mdl)"></i>工具内调了模型</span><span><i class="sw bad"></i>✕ 告知异常（旁注使用者的选择）</span><span><i class="sw back"></i>↶ 重做退回（虚线）</span><span><i class="sw" style="border:2.5px solid var(--bad);border-radius:50%"></i>行动已失败</span>${def.structured ? `<span><i class="sw" style="border:1.5px solid var(--ink3);border-radius:50%;background:transparent"></i>没执行过的步骤</span>` : ""}</div>
+      <span><i class="sw" style="background:var(--mdl)"></i>工具内调了模型</span><span><i class="sw bad"></i>✕ 告知异常（旁注使用者的选择）</span><span><i class="sw back"></i>↶ 重做退回（虚线）</span><span><i class="sw" style="border:2.5px solid var(--bad);border-radius:50%"></i>工具调用已失败</span>${def.structured ? `<span><i class="sw" style="border:1.5px solid var(--ink3);border-radius:50%;background:transparent"></i>没执行过的步骤</span>` : ""}</div>
     <div class="scroll"><svg class="rp" id="path-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="路径图" data-l="${L}" data-col="${COL}">${svg}</svg></div></section>`;
 }
 
@@ -1411,7 +1411,7 @@ function nowPanelHTML(model) {
   if (!model.iters.length) return "";
   return `<aside class="stream-right">
     <div class="now-card"><h3>当前步</h3><div class="big" id="tl-cursor"></div><div class="muted" id="tl-cursor-sub"></div></div>
-    <div class="now-card"><h3>这次迭代的行动</h3><div id="tl-action"></div></div>
+    <div class="now-card"><h3>这次迭代的工具调用</h3><div id="tl-call"></div></div>
     <div class="now-card"><h3>阶段目标</h3><ul class="goals" id="tl-goals"></ul></div>
     <div class="now-card"><h3>槽位 <span class="muted">标签＝谁填的</span></h3><div class="scroll"><table class="now-kv" id="tl-slots"></table></div></div>
   </aside>`;
@@ -1439,7 +1439,7 @@ function goalsHTML(model, it) {
 function cursorNote(model, it) {
   if (it.redo) return "本次迭代使用者选「重做本阶段」，当前步退回该阶段起点";
   if (it.done) return "结果检查为真，任务完成";
-  if (it.failed) return "行动已失败，当前步不动";
+  if (it.failed) return "工具调用已失败，当前步不动";
   const before = it.cursorBefore, after = it.cursor, byName = model.def.byName;
   if (before && after && byName.has(before["阶段"]) && byName.has(after["阶段"])) {
     const i0 = byName.get(before["阶段"]).index, i1 = byName.get(after["阶段"]).index;
@@ -1476,19 +1476,19 @@ function selectIteration(model, k) {
   document.getElementById("tl-cursor").textContent =
     it.atText || positionText(positionOf(model.def, it.cursor));
   document.getElementById("tl-cursor-sub").textContent = cursorNote(model, it);
-  const a = it.action;
-  document.getElementById("tl-action").innerHTML = a
-    ? `<span class="pill ${it.exception ? "bad" : ""}">行动 ${a.aid}</span> <b>${esc(a.tool)}</b> <span class="pill ${it.failed ? "bad" : ""}">${esc(a.status)}</span>`
+  const a = it.call;
+  document.getElementById("tl-call").innerHTML = a
+    ? `<span class="pill ${it.exception ? "bad" : ""}">工具调用 ${a.aid}</span> <b>${esc(a.tool)}</b> <span class="pill ${it.failed ? "bad" : ""}">${esc(a.status)}</span>`
       + `<div class="muted">${esc(basisText(a.basis))}</div>`
       + (a.utterance !== null ? `<div style="margin-top:4px">话：${esc(a.utterance)}</div>` : "")
       + (a.answer !== undefined ? `<div>回答：<b>${esc(plain(a.answer))}</b></div>` : "")
       + (a.note ? `<div class="muted">说明：${esc(a.note)}</div>` : "")
-    : `<div class="muted">${it.done ? "结果检查为真，任务完成，不提行动" : (it.defError ? "任务定义错误，未提出行动" : "这次迭代没有提出行动")}</div>`;
+    : `<div class="muted">${it.done ? "结果检查为真，任务完成，不提工具调用" : (it.defError ? "任务定义错误，未提出工具调用" : "这次迭代没有提出工具调用")}</div>`;
   const upTo = it.lastSeq;
   document.getElementById("tl-slots").innerHTML =
     slotRowsHTML(model.run, it.data, it.changed, "当前值", false, writerLabels(model.run, upTo), true);
   document.getElementById("tl-goals").innerHTML = goalsHTML(model, it);
-  document.querySelectorAll("#actions .card").forEach(e => e.classList.toggle("hi", Number(e.dataset.k) === k));
+  document.querySelectorAll("#calls .card").forEach(e => e.classList.toggle("hi", Number(e.dataset.k) === k));
   document.querySelectorAll("#timeline .iv-card[data-k]").forEach(e => e.classList.toggle("hi", Number(e.dataset.k) === k));
 }
 function bindPath(model) {
@@ -1525,14 +1525,14 @@ function bindPath(model) {
   }
   // 点有向图上的一个步骤：跳到协同记录里它的第一张卡；点某个迭代号圆点：跳到那一次迭代。
   document.querySelectorAll("#dg-svg .dg-node[data-number]").forEach(box => box.addEventListener("click", () => {
-    const it = model.iters.find(x => x.action && x.action.number === Number(box.dataset.number) && !x.exception);
+    const it = model.iters.find(x => x.call && x.call.number === Number(box.dataset.number) && !x.exception);
     if (it) go(it.k, true);
   }));
   document.querySelectorAll("#dg-svg .dg-badge-g[data-k]").forEach(badge => badge.addEventListener("click", ev => {
     ev.stopPropagation();
     go(Number(badge.dataset.k), true);
   }));
-  // 点协同记录的卡：右栏与有向图一起跳到那一刻（行动卡片那一块已由协同记录取代）。
+  // 点协同记录的卡：右栏与有向图一起跳到那一刻（工具调用卡片那一块已由协同记录取代）。
   document.querySelectorAll("#timeline .iv-card[data-k]").forEach(card => card.addEventListener("click", e => {
     if (e.target.closest("details, a, button, input, .iv-toggle, .iv-fn")) return;
     go(Number(card.dataset.k));
@@ -1561,7 +1561,7 @@ async function renderIndex() {
       <button id="compare" disabled>对比勾选的两次运行</button>
       <span class="muted" id="checked-count"></span>
     </div>
-    <div class="scroll"><table class="index"><thead><tr><th>对比</th><th>开始时刻</th><th>任务定义</th><th>任务标识</th><th>终态</th><th>原因</th><th>迭代数</th><th>行动数</th><th>事件数</th><th>耗时毫秒</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="scroll"><table class="index"><thead><tr><th>对比</th><th>开始时刻</th><th>任务定义</th><th>任务标识</th><th>终态</th><th>原因</th><th>迭代数</th><th>工具调用数</th><th>事件数</th><th>耗时毫秒</th></tr></thead><tbody id="rows"></tbody></table></div>
     <p class="hint">点一行看运行详情；勾选两行后点「对比」。开始时刻标 * 的是旧命名文件，时刻取自文件修改时间。页面不自动刷新，要看新的运行请刷新。</p>
   </section>`;
   document.getElementById("f-task").value = state.taskFilter;
@@ -1585,7 +1585,7 @@ function drawRows() {
       <td class="mono">${esc(r.started_at)}${r.started_at_source === "文件名" ? "" : " *"}</td>
       <td>${esc(r.task_def_name || "（无任务开始事件）")}</td><td class="mono">${esc(r.task_id)}</td>
       <td class="status ${cls}">${esc(r.final_status)}</td><td class="reason">${esc(r.reason)}</td>
-      <td>${r.loops}</td><td>${r.actions}</td><td>${r.events}</td><td>${r.duration_ms}</td></tr>`;
+      <td>${r.loops}</td><td>${r.calls}</td><td>${r.events}</td><td>${r.duration_ms}</td></tr>`;
   }).join("") || `<tr><td colspan="10" class="muted">没有符合条件的运行。</td></tr>`;
   document.getElementById("index-count").textContent = `显示 ${rows.length} / ${state.runs.length} 次运行`;
   tbody.querySelectorAll("tr[data-file]").forEach(tr => {
@@ -1602,7 +1602,7 @@ function updateCompareButton() {
 }
 
 // ───────────── 视图：这次任务的系统提示与上下文变化（第四步 4.9 节）─────────────
-// 两块的数据都来自「在工具里调模型」那些行动的返回值：调用记录。旧运行文件里没有这些键，两块就不画。
+// 两块的数据都来自「在工具里调模型」那些工具调用的返回值：调用记录。旧运行文件里没有这些键，两块就不画。
 
 function cut(text, n) {
   const value = String(text === null || text === undefined ? "" : text);
@@ -1610,11 +1610,11 @@ function cut(text, n) {
 }
 function modelCallsOf(r) {
   const calls = [];
-  for (const [aid, info] of r.actions) {
-    const terminal = info.events.filter(e => e.name === "ACTION_STATUS_CHANGED" && "result" in e.payload);
+  for (const [aid, info] of r.calls) {
+    const terminal = info.events.filter(e => e.name === "CALL_STATUS_CHANGED" && "result" in e.payload);
     const record = terminal.length ? terminal[terminal.length - 1].payload.result : null;
     if (record && typeof record === "object" && !Array.isArray(record) && record.system_prompt_hash) {
-      calls.push({ aid, tool: info.proposed.payload.tool, k: r.path ? r.path.loopOfAction.get(aid) : null, record });
+      calls.push({ aid, tool: info.proposed.payload.tool, k: r.path ? r.path.loopOfCall.get(aid) : null, record });
     }
   }
   return calls.sort((a, b) => a.aid - b.aid);
@@ -1726,7 +1726,7 @@ async function renderRun(file) {
   document.getElementById("crumb").textContent = ` / ${file} · 全程 ${spanSec.toFixed(1)} 秒${modeText}`;
   document.getElementById("filters-slot").innerHTML = filtersHTML(r);
   const pathViews = r.started ? digraphHTML(r.path) + pathChartHTML(r.path) : "";
-  // 第四步 4.9 节：迭代视图、行动卡片、槽位轨迹三块由协同记录与右栏「此刻的状态」取代。
+  // 第四步 4.9 节：迭代视图、工具调用卡片、槽位轨迹三块由协同记录与右栏「此刻的状态」取代。
   app.innerHTML = collabHTML(r) + overviewHTML(r) + deliverablesHTML(r) + pathViews + systemPromptHTML(r) + contextChangeHTML(r)
     + iterationsHTML(r);
   document.querySelectorAll("[data-scroll-to]").forEach(el => el.addEventListener("click", () => {
@@ -1748,7 +1748,7 @@ function filtersHTML(r) {
       <label><input type="radio" name="origin" value="kernel"> 只看内核</label>
       <label><input type="radio" name="origin" value="tool"> 只看工具实现</label>
       <label><input type="radio" name="origin" value="external"> 只看外部</label></fieldset>
-    <label>行动 <select id="f-action"><option value="">全部</option>${[...r.actions.keys()].map(a => `<option value="${a}">行动 ${a}</option>`).join("")}</select></label>
+    <label>工具调用 <select id="f-call"><option value="">全部</option>${[...r.calls.keys()].map(a => `<option value="${a}">工具调用 ${a}</option>`).join("")}</select></label>
     <label>槽位 <select id="f-slot"><option value="">全部</option>${r.slots.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}</select></label>
     <span id="f-count" class="muted"></span></nav>`;
 }
@@ -1771,7 +1771,7 @@ function toolCategoryOf(r, tool) {
   return spec ? spec.category : "";
 }
 function writerLabels(r, upToSeq) {
-  // 每个槽位最后一次是谁写的：初始化写的记「启动输入」；行动写的看它用的工具属哪一类，
+  // 每个槽位最后一次是谁写的：初始化写的记「启动输入」；工具调用写的看它用的工具属哪一类，
   // 工具内部调了模型的记「模型」。旧运行文件没有类别，标签留空。
   const labels = new Map();
   const empty = v => v === null || v === undefined;
@@ -1782,10 +1782,10 @@ function writerLabels(r, upToSeq) {
     if (!empty(e.payload.old) && empty(e.payload.new)) { labels.set(e.payload.slot, "已清空"); continue; }
     // 启动时就没给值的槽位没人填过，不挂标签。
     if (typeof source !== "number") { labels.set(e.payload.slot, empty(e.payload.new) ? "" : "启动输入"); continue; }
-    const info = r.actions.get(source);
+    const info = r.calls.get(source);
     if (!info) { labels.set(e.payload.slot, ""); continue; }
     const tool = info.proposed.payload.tool;
-    const terminal = info.events.filter(ev => ev.name === "ACTION_STATUS_CHANGED" && "result" in ev.payload);
+    const terminal = info.events.filter(ev => ev.name === "CALL_STATUS_CHANGED" && "result" in ev.payload);
     const record = terminal.length ? terminal[terminal.length - 1].payload.result : null;
     const byModel = record && typeof record === "object" && !Array.isArray(record) && record.system_prompt_hash;
     // 工具表上登记过「这一槽位的内容来自谁」就照它写：判读回复写进确认释义的是使用者的裁定，
@@ -1859,8 +1859,8 @@ function boolCellHTML(field, v) {
 function writerResult(r, slot) {
   const writes = r.events.filter(e => e.name === "DATA_CHANGED" && e.payload.slot === slot && typeof e.payload.source === "number" && isFilled(e.payload.new));
   if (!writes.length) return null;
-  const aid = writes[writes.length - 1].payload.source, info = r.actions.get(aid);
-  const done = info ? info.events.filter(e => e.name === "ACTION_STATUS_CHANGED" && "result" in e.payload) : [];
+  const aid = writes[writes.length - 1].payload.source, info = r.calls.get(aid);
+  const done = info ? info.events.filter(e => e.name === "CALL_STATUS_CHANGED" && "result" in e.payload) : [];
   return { aid, content: done.length ? done[done.length - 1].payload.result : undefined };
 }
 function startedAtText(r) {
@@ -1921,7 +1921,7 @@ function deliverableCard(r, item, completed) {
     const content = writer && writer.content !== undefined ? (typeof writer.content === "string" ? writer.content : jsonText(writer.content)) : null;
     body = present ? `<div class="dl-file"><div class="dl-ico"></div><div style="min-width:0"><div class="dl-nm">${esc(String(path).split("/").pop())}</div><div class="dl-pth">${esc(path)}</div>`
       + (content !== null ? `<details class="tg" open><summary><span class="tg-open">展开内容</span><span class="tg-close">收起内容</span></summary><pre>${esc(content)}</pre></details>`
-        + `<div class="dl-foot">内容取自写入「${esc(slot)}」的那条行动（行动 ${writer.aid}）的返回值。</div>` : `<div class="dl-foot">没有找到写入这个路径的行动返回值。</div>`)
+        + `<div class="dl-foot">内容取自写入「${esc(slot)}」的那条工具调用（工具调用 ${writer.aid}）的返回值。</div>` : `<div class="dl-foot">没有找到写入这个路径的工具调用返回值。</div>`)
       + `</div></div>` : "";
   }
   return { present, missing, html: present ? head(tag, wide) + body + (missing.length && present ? `<div class="dl-missing">缺：${esc(missing.join("；"))}。</div>` : "") + `</div></div>` : "" };
@@ -1986,7 +1986,7 @@ function overviewHTML(r) {
   const nState = r.events.filter(e => e.kind === "state").length;
   rows.push(["事件数", `共 ${r.events.length} 个：状态事件 ${nState} 个，追踪事件 ${r.events.length - nState} 个；耗时 ${r.events.length ? ((r.events[r.events.length - 1].ts - r.t0) * 1000).toFixed(3) : 0} 毫秒`]);
   const nException = r.path.iters.filter(it => it.exception).length, nRedo = r.path.redos.length;
-  rows.push(["循环", `共 ${r.loops.length} 次迭代，提出行动 ${r.actions.size} 个` + (nException ? `，告知异常 ${nException} 次，其中重做 ${nRedo} 次` : "")]);
+  rows.push(["循环", `共 ${r.loops.length} 次迭代，提出工具调用 ${r.calls.size} 个` + (nException ? `，告知异常 ${nException} 次，其中重做 ${nRedo} 次` : "")]);
   const sources = {};
   for (const e of r.events) sources[e.source] = (sources[e.source] || 0) + 1;
   rows.push(["记录方", Object.entries(sources).map(([k, v]) => `${esc(k)} 发布 ${v} 个`).join("；")]);
@@ -1997,7 +1997,7 @@ function overviewHTML(r) {
 // 不在迭代内的事件归「开始」卡与收尾卡；原始事件一条不丢、序号不变。叙事全部由事件数据生成，页面不复制谓词逻辑。
 const STEP_KEYS_NEW = ["select", "control", "execute", "update", "check"];
 const STEP_KEYS_OLD = ["check", "select", "control", "execute", "update"];
-const STEP_LABEL = { select: "行动选择", control: "执行控制", execute: "行动执行", update: "状态更新", check: "结果检查" };
+const STEP_LABEL = { select: "调用选择", control: "执行控制", execute: "调用执行", update: "状态更新", check: "结果检查" };
 const SUCCEEDED = "已成功", APPROVED = "已获准", WAITING = "等待中";
 let ivRowSeq = 0;
 
@@ -2006,7 +2006,7 @@ function fnHTML(e) { return e ? `<a class="iv-fn" data-one="${e.seq}">#${e.seq}<
 function named1(events, name, test) { return events.find(e => e.name === name && (!test || test(e))); }
 function ivEventRowHTML(r, e) {
   const origin = originOf(e);
-  return `<tr data-seq="${e.seq}" data-kind="${e.kind}" data-origin="${origin}" data-action="${e.action_id === null ? "" : e.action_id}" data-slots="${esc(JSON.stringify(slotsOfEvent(r, e)))}"${origin === "external" ? ` class="ext"` : ""}>`
+  return `<tr data-seq="${e.seq}" data-kind="${e.kind}" data-origin="${origin}" data-call="${e.call_id === null ? "" : e.call_id}" data-slots="${esc(JSON.stringify(slotsOfEvent(r, e)))}"${origin === "external" ? ` class="ext"` : ""}>`
     + `<td class="n">#${e.seq} +${relMs(r, e)} ms</td><td class="nm"><span class="iv-tag ${e.kind}">${e.kind === "state" ? "状态" : "追踪"}</span> ${esc(LABELS[e.name] || e.name)}</td>`
     + `<td class="d">${describeHTML(e, r)}</td><td class="who">${esc(e.source)}</td></tr>`;
 }
@@ -2024,7 +2024,7 @@ function targetText(target) {
   if (!target || typeof target !== "object") return plain(target);
   return `${target.slot}${(target.path || []).map(p => typeof p === "number" ? `[${p}]` : `.${p}`).join("")}`;
 }
-function actionCallText(tool, params) {
+function callText(tool, params) {
   if (tool === EXCEPTION_TOOL_NAME) return tool;
   if (params && params.target) return `${tool}(${targetText(params.target)})`;
   const s = paramsSummary(params);
@@ -2056,13 +2056,13 @@ function changeText(p) {
 
 // ① 为什么选它：从依据的「选择经过」生成；告知异常写三种异常各自的句子；旧文件没有选择经过，只写依据。
 function whyHTML(r, it, events, dataBefore) {
-  const prop = named1(events, "ACTION_PROPOSED"), registered = named1(events, "ACTION_STATUS_CHANGED");
+  const prop = named1(events, "CALL_PROPOSED"), registered = named1(events, "CALL_STATUS_CHANGED");
   const err = named1(events, "TASK_DEFINITION_ERROR");
-  if (!prop) return err ? `任务定义错误：${esc(err.payload.reason)}${fnHTML(err)}。行动选择没有给出候选，内核报错结束。` : "这次迭代没有提出行动。";
-  const tail = `<div class="iv-sub">行动登记为已提出${fnHTML(registered)}</div>`;
+  if (!prop) return err ? `任务定义错误：${esc(err.payload.reason)}${fnHTML(err)}。调用选择没有给出候选，内核报错结束。` : "这次迭代没有提出工具调用。";
+  const tail = `<div class="iv-sub">工具调用登记为已提出${fnHTML(registered)}</div>`;
   if (it.exception) return exceptionWhyHTML(r, it, prop, dataBefore) + tail;
   const def = r.path.def, basis = prop.payload.basis, hit = Array.isArray(basis) ? basis[2] : null;
-  const ref = it.action && it.action.ref, stage = ref ? ref.stage : null, step = ref && ref.kind === "step" ? ref.step : null;
+  const ref = it.call && it.call.ref, stage = ref ? ref.stage : null, step = ref && ref.kind === "step" ? ref.step : null;
   const trail = hit && typeof hit === "object" && hit["选择经过"];
   const bindings = step && step.params ? refBindings(step.params, prop.payload.params, "", []) : [];
   const bindHTML = bindings.length ? `<div class="iv-sub">参数由引用求出：${esc(bindings.join("；"))}${fnHTML(prop)}</div>` : "";
@@ -2106,7 +2106,7 @@ function exceptionWhyHTML(r, it, prop, dataBefore) {
 }
 // ② 执行控制
 function controlHTML(events) {
-  const st = named1(events, "ACTION_STATUS_CHANGED"), res = named1(events, "CONTROL_RESULT");
+  const st = named1(events, "CALL_STATUS_CHANGED"), res = named1(events, "CONTROL_RESULT");
   if (!st && !res) return "没有到执行控制。";
   const verdict = st && st.payload.new_status === APPROVED ? `获准${fnHTML(st)}。` : `被拒绝：${esc(st ? st.payload.note : "")}${fnHTML(st)}。`;
   const checked = res && res.payload.checked ? `<span class="iv-sub">核验：${esc(res.payload.checked)}${fnHTML(res)}${res.payload.checked === "恒允许" ? "，本步一律获准，不核前置条件与授权" : ""}。</span>` : "";
@@ -2116,9 +2116,9 @@ function controlHTML(events) {
 function executeHTML(r, it, events) {
   const enter = named1(events, "EXECUTE_CALL", e => e.payload.phase === "enter");
   if (!enter) return "没有执行。";
-  const statuses = events.filter(e => e.name === "ACTION_STATUS_CHANGED");
+  const statuses = events.filter(e => e.name === "CALL_STATUS_CHANGED");
   const final = [...statuses].reverse().find(e => e.payload.new_status !== WAITING);
-  const tool = enter.payload.tool, params = it.action ? r.actions.get(it.action.aid).proposed.payload.params : {};
+  const tool = enter.payload.tool, params = it.call ? r.calls.get(it.call.aid).proposed.payload.params : {};
   const questions = events.filter(isQuestionSent);
   if (!questions.length) {
     const chips = Object.entries(params || {}).map(([k, v]) => `<span class="iv-chip">${esc(k)}＝${esc(brief(v))}</span>`).join("");
@@ -2126,7 +2126,7 @@ function executeHTML(r, it, events) {
     if (!final) return call;
     const record = final.payload.result;
     const inModel = record && typeof record === "object" && !Array.isArray(record) && record.system_prompt_hash;
-    const blocks = inModel ? modelBlocksHTML(record, r.modelChanged && r.modelChanged.get(enter.action_id)) : "";
+    const blocks = inModel ? modelBlocksHTML(record, r.modelChanged && r.modelChanged.get(enter.call_id)) : "";
     if (final.payload.new_status === SUCCEEDED) {
       if (inModel) {
         return `${call}这一步在工具内部调了模型：${esc(final.payload.note)}${fnHTML(final)}。${blocks}`;
@@ -2145,10 +2145,10 @@ function executeHTML(r, it, events) {
     const wait = named1(events, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end");
     const closed = named1(events, "MAILBOX_CLOSED", e => e.payload.box === "inbox");
     const sys = `<div class="iv-msg"><div class="who">系统 → 使用者</div><div><div class="bub">${esc(utteranceOf(q.payload.content) || plain(q.payload.content))}${fnHTML(q)}</div>`
-      + `<div class="meta">发件箱 · 问题 #${esc(qno)}${tool === EXCEPTION_TOOL_NAME ? " · 带异常报告" : ""}${waiting ? ` · 行动记「等待中」${fnHTML(waiting)}` : ""}${hostTake ? ` · 宿主取走${fnHTML(hostTake)}` : ""}</div></div></div>`;
+      + `<div class="meta">发件箱 · 问题 #${esc(qno)}${tool === EXCEPTION_TOOL_NAME ? " · 带异常报告" : ""}${waiting ? ` · 工具调用记「等待中」${fnHTML(waiting)}` : ""}${hostTake ? ` · 宿主取走${fnHTML(hostTake)}` : ""}</div></div></div>`;
     const user = answer
       ? `<div class="iv-msg user"><div class="who">使用者</div><div><div class="bub">${esc(plain(answer.payload.content))}${fnHTML(answer)}</div>`
-        + `<div class="meta">收件箱 · 回复问题 #${esc(qno)}${wait ? ` · 行动 ${esc(enter.action_id)} 等了 ${esc(wait.payload.wait_ms)} ms 取到` : ""}${fnHTML(inTake)}</div></div></div>`
+        + `<div class="meta">收件箱 · 回复问题 #${esc(qno)}${wait ? ` · 工具调用 ${esc(enter.call_id)} 等了 ${esc(wait.payload.wait_ms)} ms 取到` : ""}${fnHTML(inTake)}</div></div></div>`
       : `<div class="iv-msg user"><div class="who">使用者</div><div><div class="meta">没有回答${closed ? `：收件箱已关闭${fnHTML(closed)}` : ""}</div></div></div>`;
     return sys + user;
   }).join("");
@@ -2167,7 +2167,7 @@ function updateHTML(r, it, events) {
   const changes = events.filter(e => e.name === "DATA_CHANGED");
   const steps = events.filter(e => e.name === STEP_CHANGED);
   if (!changes.length && !steps.length)
-    return it.failed ? "没有数据变更，当前步也不动：行动失败，内核随即报错结束。" : "没有数据变更，当前步也没动。";
+    return it.failed ? "没有数据变更，当前步也不动：工具调用失败，内核随即报错结束。" : "没有数据变更，当前步也没动。";
   const chips = changes.map(e => e.payload.slot === CURSOR
     ? `<span class="iv-chip cur">当前步 → ${esc(positionText(positionOf(r.path.def, e.payload.new)))}${fnHTML(e)}</span>`
     : `<span class="iv-chip new">${esc(changeText(e.payload))}${fnHTML(e)}</span>`).join("")
@@ -2183,8 +2183,8 @@ function checkHTML(r, it, events, next) {
   const oldNote = r.checkAtEnd ? "" : `<span class="iv-sub">旧格式：结果检查在迭代开头。</span>`;
   if (check.payload.done) return `已完成${fnHTML(check)}。全部阶段目标成立，任务完成。${oldNote}`;
   let judged = "";
-  if (r.checkAtEnd && it.cursor && next && next.action) {
-    const S = it.cursor["阶段"], hit = Array.isArray(next.action.basis) ? next.action.basis[2] : null, trail = hit && hit["选择经过"];
+  if (r.checkAtEnd && it.cursor && next && next.call) {
+    const S = it.cursor["阶段"], hit = Array.isArray(next.call.basis) ? next.call.basis[2] : null, trail = hit && hit["选择经过"];
     if (it.redo) judged = `下一次迭代从『${esc(S)}』阶段起点重走。`;
     else if (next.exception) judged = `下一次迭代报告异常。`;
     else if (trail) judged = (trail["前进"] || []).includes(S) ? `『${esc(S)}』目标已成立，下一次迭代前进。` : `『${esc(S)}』目标还不成立，下一次迭代继续。`;
@@ -2196,7 +2196,7 @@ function stepClass(key, it, events) {
   if (!events.length) return "none";
   const failed = it.failed;
   if (key === "select") return it.exception || events.some(e => e.name === "TASK_DEFINITION_ERROR") ? "bad" : "info";
-  if (key === "control") { const st = named1(events, "ACTION_STATUS_CHANGED"); return st && st.payload.new_status !== APPROVED ? "skip" : "ok"; }
+  if (key === "control") { const st = named1(events, "CALL_STATUS_CHANGED"); return st && st.payload.new_status !== APPROVED ? "skip" : "ok"; }
   if (key === "execute") {
     if (!named1(events, "EXECUTE_CALL")) return "skip";
     if (failed) return "bad";
@@ -2208,9 +2208,9 @@ function stepClass(key, it, events) {
 function iterationRole(r, it, all) {
   if (it.exception) return "exc";
   if (all.some(isQuestionSent)) return "usr";
-  const a = it.action;
-  if (a && r.actions.has(a.aid)) {
-    const terminal = r.actions.get(a.aid).events.filter(e => e.name === "ACTION_STATUS_CHANGED" && "result" in e.payload);
+  const a = it.call;
+  if (a && r.calls.has(a.aid)) {
+    const terminal = r.calls.get(a.aid).events.filter(e => e.name === "CALL_STATUS_CHANGED" && "result" in e.payload);
     const record = terminal.length ? terminal[terminal.length - 1].payload.result : null;
     if (record && typeof record === "object" && !Array.isArray(record) && record.system_prompt_hash) return "mdl";
   }
@@ -2224,19 +2224,19 @@ function iterationCardHTML(r, loop, index) {
   const all = loop.steps.flat();
   const start = named1(all, "LOOP_STARTED");
   const dataBefore = index ? model.iters[index - 1].data : model.startData;
-  const a = it.action, ref = a && a.ref;
+  const a = it.call, ref = a && a.ref;
   const defError = all.some(e => e.name === "TASK_DEFINITION_ERROR");
   let where = "";
   if (ref && ref.kind === "exception") {
-    const params = r.actions.get(a.aid).proposed.payload.params;
+    const params = r.calls.get(a.aid).proposed.payload.params;
     const at = params["当前步"] || params["游标"] || {};
     where = at["阶段"] !== undefined && at["阶段"] !== ref.stage.name ? `当前步在『${esc(at["阶段"])}』末尾 · 报告『${esc(ref.stage.name)}』阶段` : `报告『${esc(ref.stage.name)}』阶段`;
   } else if (ref && ref.kind === "step") {
     where = `${ref.stage.name === null ? "" : `阶段『${esc(ref.stage.name)}』· `}第 ${ref.step.number} 步「${esc(ref.step.note)}」`;
   } else if (defError) where = "任务定义错误";
-  const waitEv = a ? named1(all, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end" && e.action_id === a.aid) : null;
+  const waitEv = a ? named1(all, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end" && e.call_id === a.aid) : null;
   let res;
-  if (!a) res = { cls: "bad", text: defError ? "✕ 任务定义错误" : "没有行动" };
+  if (!a) res = { cls: "bad", text: defError ? "✕ 任务定义错误" : "没有工具调用" };
   else if (it.exception) res = { cls: "bad", text: a.answer !== undefined ? `✕ 异常 → 使用者选「${plain(a.answer)}」` : "✕ 异常 → 没有回答" };
   else if (it.failed) res = { cls: "bad", text: "✕ 失败" };
   else if (waitEv) res = { cls: "wait", text: `✓ 成功 · 等待使用者 ${Number(waitEv.payload.wait_ms).toFixed(1)} ms` };
@@ -2258,7 +2258,7 @@ function iterationCardHTML(r, loop, index) {
   const role = iterationRole(r, it, all);
   return `<article class="iv-card role-${role}${bad ? " bad" : ""}" data-k="${index + 1}" data-role="${role}">
     <div class="iv-hd"><span class="no">第 ${esc(loop.no)} 次迭代${fnHTML(start)}</span>${where ? `<span class="where">${where}</span>` : ""}
-      ${a ? `<span class="act">行动 ${esc(a.aid)} · ${esc(actionCallText(a.tool, r.actions.get(a.aid).proposed.payload.params))}</span>` : ""}
+      ${a ? `<span class="act">工具调用 ${esc(a.aid)} · ${esc(callText(a.tool, r.calls.get(a.aid).proposed.payload.params))}</span>` : ""}
       <span class="res ${res.cls}">${esc(res.text)}</span><span class="ms">${duration} ms</span></div>
     <div class="iv-steps">${steps}</div>
     <div class="iv-story">${rows}</div></article>`;
@@ -2274,10 +2274,10 @@ function startCardHTML(r) {
   if (r.startCheck.length) {
     const check = named1(r.startCheck, "CHECK_DONE_RESULT"), first = model.iters[0];
     let text = check && check.payload.done ? `已完成${fnHTML(check)}，任务不进循环就结束。` : `未完成${fnHTML(check)}。`;
-    const hit = first && first.action && Array.isArray(first.action.basis) ? first.action.basis[2] : null, trail = hit && hit["选择经过"];
-    if (trail && first.action.ref) {
+    const hit = first && first.call && Array.isArray(first.call.basis) ? first.call.basis[2] : null, trail = hit && hit["选择经过"];
+    if (trail && first.call.ref) {
       const moved = [...(trail["前进"] || []).map(n => `『${esc(n)}』目标已成立`), ...(trail["跳过阶段"] || []).map(([n, w]) => `『${esc(n)}』${esc(w)}`)];
-      text += `${moved.length ? moved.join("，") + "；" : ""}从『${esc(first.action.ref.stage.name)}』开始。<span class="iv-sub">目标判定取自第一次迭代的选择经过。</span>`;
+      text += `${moved.length ? moved.join("，") + "；" : ""}从『${esc(first.call.ref.stage.name)}』开始。<span class="iv-sub">目标判定取自第一次迭代的选择经过。</span>`;
     }
     rows += ivRowHTML(r, "启动检查", text, r.startCheck);
   }
@@ -2367,9 +2367,9 @@ function bindFilters() {
   const apply = () => {
     const kind = document.querySelector("input[name=kind]:checked").value;
     const origin = document.querySelector("input[name=origin]:checked").value;
-    const action = document.getElementById("f-action").value;
+    const call = document.getElementById("f-call").value;
     const slot = document.getElementById("f-slot").value;
-    const active = kind !== "all" || origin !== "all" || Boolean(action) || Boolean(slot);
+    const active = kind !== "all" || origin !== "all" || Boolean(call) || Boolean(slot);
     const slotsOf = el => { try { return JSON.parse(el.dataset.slots || "[]"); } catch (_) { return []; } };
     const section = document.getElementById("timeline");
     if (section) section.classList.toggle("dim", active);
@@ -2383,7 +2383,7 @@ function bindFilters() {
     document.querySelectorAll("#timeline .iv-evs tr[data-seq]").forEach(row => {
       total++;
       const ok = active && (kind === "all" || row.dataset.kind === kind) && (origin === "all" || row.dataset.origin === origin)
-        && (!action || row.dataset.action === action) && (!slot || slotsOf(row).includes(slot));
+        && (!call || row.dataset.call === call) && (!slot || slotsOf(row).includes(slot));
       row.classList.toggle("fm", ok);
       if (!ok) return;
       hits++;
@@ -2396,22 +2396,22 @@ function bindFilters() {
       const v = document.querySelector(`#timeline .iv-v[data-row="${box.id}"]`);
       if (v) v.classList.add("match");
     });
-    document.querySelectorAll(".card").forEach(card => card.classList.toggle("faded", Boolean((action && card.dataset.action !== action) || (slot && !slotsOf(card).includes(slot)))));
+    document.querySelectorAll(".card").forEach(card => card.classList.toggle("faded", Boolean((call && card.dataset.call !== call) || (slot && !slotsOf(card).includes(slot)))));
     document.querySelectorAll(".slot-row").forEach(row => row.classList.toggle("faded", Boolean(slot && !slotsOf(row).includes(slot))));
     document.getElementById("f-count").textContent = active ? `迭代视图里高亮 ${hits} / ${total} 个事件` : `共 ${total} 个事件`;
   };
   document.querySelectorAll("input[name=kind], input[name=origin]").forEach(i => i.addEventListener("change", apply));
-  document.getElementById("f-action").addEventListener("change", apply);
+  document.getElementById("f-call").addEventListener("change", apply);
   document.getElementById("f-slot").addEventListener("change", apply);
   apply();
 }
 
 // ───────────── 视图：对比 ─────────────
-function actionRow(r, info) {
+function callRow(r, info) {
   if (!info) return null;
   const p = info.proposed.payload;
-  const history = info.events.filter(e => e.name === "ACTION_STATUS_CHANGED");
-  const u = questionUtterance(r, info.proposed.action_id);
+  const history = info.events.filter(e => e.name === "CALL_STATUS_CHANGED");
+  const u = questionUtterance(r, info.proposed.call_id);
   return {
     tool: p.tool,
     what: u !== null ? u : paramsSummary(p.params),
@@ -2431,16 +2431,16 @@ async function renderCompare(a, b) {
   const head = r => {
     const fin = finalStatusOf(r);
     return `<b>${esc(r.started ? r.started.task_def_name : "（无任务开始事件）")}</b><br><code>${esc(r.file)}</code><br>`
-      + `终态 <b>${esc(fin.status)}</b>${fin.reason ? `，${esc(fin.reason)}` : ""}；${r.loops.length} 次迭代，${r.actions.size} 个行动`
+      + `终态 <b>${esc(fin.status)}</b>${fin.reason ? `，${esc(fin.reason)}` : ""}；${r.loops.length} 次迭代，${r.calls.size} 个工具调用`
       + `<br><a href="#run=${encodeURIComponent(r.file)}">看详情</a>`;
   };
-  const la = [...left.actions.values()], ra = [...right.actions.values()];
+  const la = [...left.calls.values()], ra = [...right.calls.values()];
   const n = Math.max(la.length, ra.length);
   const fields = [["tool", "工具"], ["what", "话或参数"], ["status", "终态"], ["slots", "变更的槽位"]];
   let differing = 0;
   const rows = [];
   for (let i = 0; i < n; i++) {
-    const x = actionRow(left, la[i]), y = actionRow(right, ra[i]);
+    const x = callRow(left, la[i]), y = callRow(right, ra[i]);
     const cells = side => fields.map(([key]) => {
       const mine = side === "l" ? x : y, other = side === "l" ? y : x;
       if (!mine) return `<td class="absent" data-field="${key}">（无）</td>`;
@@ -2466,11 +2466,11 @@ async function renderCompare(a, b) {
     <div class="scroll"><table class="compare"><thead><tr><th></th><th>左</th><th>右</th></tr></thead>
       <tbody><tr><td class="no">运行</td><td>${head(left)}</td><td>${head(right)}</td></tr></tbody></table></div>
   </section>
-  <section id="compare-actions">
-    <h2>行动序列 <small class="muted">按位置对齐；${differing} / ${n} 行有不同，黄色是不同处，灰色是相同处，「（无）」表示该侧没有这一行</small></h2>
+  <section id="compare-calls">
+    <h2>工具调用序列 <small class="muted">按位置对齐；${differing} / ${n} 行有不同，黄色是不同处，灰色是相同处，「（无）」表示该侧没有这一行</small></h2>
     <div class="scroll"><table class="compare"><thead><tr><th rowspan="2">行</th><th colspan="4">左</th><th colspan="4">右</th></tr>
       <tr>${fields.map(([, label]) => `<th>${label}</th>`).join("")}${fields.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead>
-      <tbody>${rows.join("") || `<tr><td colspan="9" class="muted">两次运行都没有行动。</td></tr>`}</tbody></table></div>
+      <tbody>${rows.join("") || `<tr><td colspan="9" class="muted">两次运行都没有工具调用。</td></tr>`}</tbody></table></div>
   </section>
   <section id="compare-data">
     <h2>终态数据 <small class="muted">逐槽位并排；${slotDiffering} / ${slots.length} 个槽位不同</small></h2>
