@@ -22,6 +22,7 @@ from tod_kernel.kernel import (
     MESSAGE_PUT,
     MESSAGE_TAKEN,
     STATE,
+    STEP_CHANGED,
     TASK_DEFINITION_ERROR,
     TASK_ENDED,
     TASK_STARTED,
@@ -77,6 +78,19 @@ def replay_data(events) -> dict:
         if event.kind == STATE and event.name == DATA_CHANGED:
             data[event.payload["slot"]] = event.payload["new"]
     return data
+
+
+def replay_step(events):
+    """重放：从空起按序应用给定事件里的每个「当前步变化」，得到那一刻的当前步。
+
+    与 replay_data 同一种做法，只是当前步不在任务数据里，自己有一种状态事件（第四步 4.10 节）。
+    旧运行文件里没有这种事件，返回 None。
+    """
+    step = None
+    for event in sorted(events, key=lambda e: e.seq):
+        if event.kind == STATE and event.name == STEP_CHANGED:
+            step = event.payload["new"]
+    return step
 
 
 def action_history(events, action_id) -> list[Event]:
@@ -367,6 +381,7 @@ class MemoryCollector:
 _LABELS = {
     TASK_STATUS_CHANGED: "任务状态变化",
     DATA_CHANGED: "数据变更",
+    STEP_CHANGED: "当前步变化",
     ACTION_PROPOSED: "行动提出",
     ACTION_STATUS_CHANGED: "行动状态变化",
     MESSAGE_PUT: "消息放入",
@@ -444,6 +459,8 @@ class ConsolePrinter:
             return f"{_show(p['old_status'])} → {_show(p['new_status'])}"
         if event.name == DATA_CHANGED:
             return f"槽位「{p['slot']}」 {_show(p['old'])} → {_show(p['new'])}，来源 {p['source']}"
+        if event.name == STEP_CHANGED:
+            return f"{p['text']}（{_show(p['old'])} → {_show(p['new'])}），来源 {p['source']}"
         if event.name == ACTION_PROPOSED:
             return f"工具 {p['tool']}，参数 {p['params']}，提出者 {p['proposer']}，依据 {p['basis']}"
         if event.name == ACTION_STATUS_CHANGED:

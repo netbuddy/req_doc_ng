@@ -16,13 +16,16 @@
 每个步骤必填一句「说明」，由任务作者写这一步做什么；依据说明、告知异常的话与观测台都用它，不用工具标识。
 
 执行语义（行动选择每次迭代做一次，只读数据，不读行动记录，不写任何东西）：
-- 位置存在保留槽位「游标」里，记的是已经完成了什么：{"阶段": 阶段名, "已完成步骤": 本阶段最近一次成功执行的步骤的全局步骤号,
-  "已完成轮数": 已完成步骤所在步骤组已完整走过的轮数}。阶段刚进入时后两项为 null；已完成步骤不在组里时已完成轮数为 null；
-  自主规划阶段已完成步骤恒为 null，已完成轮数记已进行的回合数。加载器把它加进槽位表，初始是第一个阶段的起点（null、null）。
-- 阶段游标只向前走：当前阶段目标成立就前进到后面第一个目标未达成的阶段的起点，从不自动后退。
-- 一趟从已完成步骤的下一步起往后走，跳过引用为 null 或前置条件不成立的步骤；选中一步时候选带游标新值，已完成步骤就是它。
-- 三种异常构造「告知异常」候选：一趟走完阶段目标仍未达成；步骤组轮数到「最多」仍未满足「重复直到」（含同一次行动选择里
-  组内一轮零候选）；阶段游标越过最后一个阶段而任务未完成。选重做时由告知异常工具把游标写回。
+- 任务进行到哪叫「当前步」（第四步 4.10 节），是任务对象上的一个字段，不在任务数据里，内核只保管不解读。
+  它记的是最近成功完成的那一步的地址，沿定义三层从外到内写：{"阶段": 阶段名, "循环": {"起", "止", "第几次"}, "步骤": 阶段内序号}。
+  「循环」只在这一步落在循环段（阶段里连续几步的循环执行）里时才有，「起」「止」是该段在本阶段内的起止序号；
+  阶段刚开始一步都没做时只有「阶段」这一层。阶段内序号从 1 起。
+- 本模块提供五个接口：INITIAL_STEP（初始当前步）、select_action(data, step)、record_step(step, action)、step_text、step_view。
+- 阶段只向前走：当前阶段目标成立就前进到后面第一个目标未达成的阶段的起点，从不自动后退。
+- 一趟从当前步的下一步起往后走，跳过引用为 null 或前置条件不成立的步骤。
+- 三种异常构造「告知异常」候选：一趟走完阶段目标仍未达成；循环段次数到「最多」仍未满足「重复直到」（含同一次行动选择里
+  段内一次零候选）；阶段越过最后一个而任务未完成。使用者选重做时由 record_step 把当前步退回该阶段起点。
+- 当前步不合法（阶段不存在、步骤或循环不属于这个阶段）时抛 DefinitionError，由内核报任务定义错误。
 """
 
 from __future__ import annotations
@@ -33,14 +36,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tod_kernel.tools import CURSOR_SLOT, EXCEPTION_OPTIONS, EXCEPTION_TOOL, STATIC_TOOLS
+from tod_kernel.kernel import ActionStatus, DefinitionError
+from tod_kernel.tools import EXCEPTION_OPTIONS, EXCEPTION_TOOL, REDO_RESULT, STATIC_TOOLS
 
 # 文件里的键。
 KEY_NAME = "名字"
 KEY_SLOTS = "槽位"
 KEY_STAGES = "阶段列表"
 KEY_DELIVERABLES = "交付物"
+KEY_DOMAIN_RULES = "领域规矩"  # 可选块：写给模型看的领域写法要求，原样进系统提示
 TOP_KEYS = (KEY_NAME, KEY_SLOTS, KEY_STAGES, KEY_DELIVERABLES)
+TOP_OPTIONAL_KEYS = (KEY_DOMAIN_RULES,)
 
 # 交付物的键与形态。形态决定来源槽位应当是什么类型：表单是若干标量槽位，表格是带「项」的列表型，文本与文件是文本型。
 DELIV_NAME = "名字"
@@ -94,16 +100,19 @@ REF_FIRST_NULL = "首个为空项"
 REF_FIRST_NULL_FIELD = "首个为空项字段"
 REF_KEYS = (REF_SLOT, REF_LENGTH, REF_FIRST_NULL, REF_FIRST_NULL_FIELD)
 
-# 游标的三项。
-CURSOR_STAGE = "阶段"
-CURSOR_STEP = "已完成步骤"
-CURSOR_ROUND = "已完成轮数"
-# 告知异常参数「游标」的四项：游标的槽位值加上已完成步骤的说明。
+# 当前步的三层。
+STEP_STAGE = "阶段"
+STEP_LOOP = "循环"
+STEP_INDEX = "步骤"
+LOOP_FROM = "起"
+LOOP_TO = "止"
+LOOP_NTH = "第几次"
+# 告知异常参数「当前步」的几项：当前步的三层加上这一步的说明与「是段尾」。
 AT_STAGE = "阶段"
-AT_NUMBER = "已完成步骤"
+AT_INDEX = "步骤"
 AT_NOTE = "说明"
-AT_ROUND = "已完成轮数"
-AT_GROUP_LAST = "是组尾"
+AT_LOOP = "循环"
+AT_LOOP_LAST = "是段尾"
 
 NO_PRECONDITION = "无前置条件"
 REF_NULL_NOTE = "参数引用为空"
@@ -113,12 +122,12 @@ TRAIL_FORWARD = "前进"
 TRAIL_SKIPPED_STAGES = "跳过阶段"
 TRAIL_SKIPPED_STEPS = "跳过步骤"
 REASON_GOAL_HOLDS = "目标成立"
-REASON_UNTIL_HOLDS = "重复直到已成立，越过整组"
-REASON_LIMIT_NULL = "最多为空，越过整组"
+REASON_UNTIL_HOLDS = "重复直到已成立，越过整段循环"
+REASON_LIMIT_NULL = "最多为空，越过整段循环"
 # 告知异常依据命中值里的「异常种类」。
 EXCEPTION_KIND_KEY = "异常种类"
 KIND_PASS_DONE = "一趟走完"
-KIND_GROUP_LIMIT = "组到上限"
+KIND_GROUP_LIMIT = "循环到上限"
 KIND_BROKEN = "后续破坏"
 INITIAL_INPUT = "初始输入"
 
@@ -145,7 +154,7 @@ class Step:
     note: str  # 任务作者写的一句话说明
     tool: str
     params: Any  # 原文参数，含引用
-    pos: int  # 阶段内序号，从 0 起，也是游标的「步骤」
+    pos: int  # 阶段内序号，从 0 起（当前步里的「步骤」是它加一）
     group: Any  # 所在步骤组；不在组里时为 None
 
 
@@ -168,9 +177,9 @@ class Stage:
     max: Any  # 自主规划阶段的回合上限；固定步骤阶段为 None
     exception_number: int  # 本阶段「告知异常」的依据序号
 
-    def start_cursor(self) -> dict:
-        """本阶段的起点：已完成步骤与已完成轮数都是 null。"""
-        return {CURSOR_STAGE: self.name, CURSOR_STEP: None, CURSOR_ROUND: None}
+    def start_step(self) -> dict:
+        """本阶段的起点：一步都没做完，所以只有「阶段」这一层。"""
+        return {STEP_STAGE: self.name}
 
 
 class TaskDefinition:
@@ -189,6 +198,10 @@ class TaskDefinition:
         self.TEMPLATES = templates
         self._stages = stages
         self._stage_index = {stage.name: index for index, stage in enumerate(stages)}
+        # 依据序号 → 这一步属于哪个阶段、是哪一步；告知异常的依据序号 → 报异常的那个阶段。record_step 靠这两张表认路。
+        self._step_of_number = {step.number: (stage, step) for stage in stages for step in stage.steps}
+        self._exception_stage = {stage.exception_number: stage for stage in stages}
+        self.INITIAL_STEP = stages[0].start_step() if stages else {}
 
     # ── 内核调用的两个函数 ──
 
@@ -196,51 +209,137 @@ class TaskDefinition:
         """任务完成：每个阶段的目标都成立。只看槽位数据。"""
         return all(_holds_all(stage.goal, data) for stage in self._stages)
 
-    def select_action(self, data):
-        """行动选择：返回（工具名, 参数, 依据, 游标新值）或告知异常的（工具名, 参数, 依据）；
-        游标所指的阶段不存在、或全部阶段目标都已成立时返回 None。只读，不写任何东西。"""
-        cursor = data.get(CURSOR_SLOT)
-        index = self._stage_index.get(cursor.get(CURSOR_STAGE)) if isinstance(cursor, dict) else None
-        if index is None:
-            return None
-        stage = self._stages[index]
+    def stage_goal_holds(self, stage_name, data) -> bool:
+        """某个阶段的目标此刻成立没有。上下文包写「任务进度」段时用它；没有这个阶段名时当作成立。"""
+        index = self._stage_index.get(stage_name)
+        return True if index is None else _holds_all(self._stages[index].goal, data)
+
+    def select_action(self, data, step):
+        """行动选择：返回（工具名, 参数, 依据）——普通一步或告知异常；全部阶段目标都已成立时返回 None。
+
+        只读，不写任何东西。step 是当前步；它不合法时抛 DefinitionError，由内核报任务定义错误。
+        """
+        stage, position = self._locate(step)
+        here = step
+        index = self._stage_index[stage.name]
         record = _PassRecord()
         if _holds_all(stage.goal, data):
-            # 阶段游标只向前走：跳过目标已成立的阶段，停在后面第一个目标未达成的阶段。
+            # 阶段只向前走：跳过目标已成立的阶段，停在后面第一个目标未达成的阶段。
             ahead = next((i for i in range(index + 1, len(self._stages)) if not _holds_all(self._stages[i].goal, data)), None)
             if ahead is None:
                 # 越过最后一个阶段而任务未完成：前面某个已过阶段的目标被破坏，报第一个目标未达成的阶段。
                 broken = next((s for s in self._stages if not _holds_all(s.goal, data)), None)
-                return None if broken is None else self._exception(broken, data, cursor, KIND_BROKEN)
+                return None if broken is None else self._exception(broken, data, here, KIND_BROKEN)
             record.trail[TRAIL_FORWARD].append(stage.name)
             record.trail[TRAIL_SKIPPED_STAGES].extend([s.name, REASON_GOAL_HOLDS] for s in self._stages[index + 1:ahead])
             stage = self._stages[ahead]
-            cursor = stage.start_cursor()
+            here = stage.start_step()
+            position = (("enter", 0), 0)
         if stage.type == TYPE_PLANNED:
             raise NotImplementedError(f"「自主规划」阶段本步不运行：{stage.name}")
-        return self._walk(stage, data, cursor, record)
+        return self._walk(stage, data, here, position, record)
+
+    # ── 当前步的四个接口（另一个是 INITIAL_STEP） ──
+
+    def record_step(self, step, action):
+        """记录本步：行动到终态后，把这个行动做的那一步记进当前步并返回新值。纯函数，不读任务数据。
+
+        三条规则：行动没成功不动；告知异常且返回值是「重做」则回到该阶段起点；
+        其余写该步的阶段与阶段内序号，落在循环段里时带上这段循环的起止与第几次。
+        """
+        if getattr(action, "status", None) is not ActionStatus.SUCCEEDED:
+            return step
+        number = action.basis[0] if isinstance(action.basis, tuple) and action.basis else None
+        reported = self._exception_stage.get(number)
+        if reported is not None:
+            return reported.start_step() if action.result == REDO_RESULT else step
+        located = self._step_of_number.get(number)
+        if located is None:
+            raise DefinitionError(f"行动的依据序号不是任何一步，记不了当前步：{number!r}")
+        stage, done = located
+        new = {STEP_STAGE: stage.name}
+        if done.group is not None:
+            new[STEP_LOOP] = {LOOP_FROM: done.group.first + 1, LOOP_TO: done.group.last + 1,
+                              LOOP_NTH: _nth_time(step, stage, done)}
+        new[STEP_INDEX] = done.pos + 1
+        return new
+
+    def step_text(self, step) -> str:
+        """一句人话，给界面与提示词。读不懂的当前步照实说，不抛错——它只负责显示。"""
+        view = self.step_view(step)
+        if view is None:
+            return f"当前步：读不出来（{step!r}）"
+        parts = [f"当前步：『{view[AT_STAGE]}』阶段"]
+        loop = view.get(AT_LOOP)
+        if loop is not None:
+            limit = loop.get("最多")
+            # 上限写死成数字就直接写数字，写成引用（例如文件总表的长度）就照引用的意思写。
+            limit_text = "" if limit is None else f"（最多 {operand_text(limit) if isinstance(limit, dict) else limit} 次）"
+            span = (f"第 {loop[LOOP_FROM]} 步" if loop[LOOP_FROM] == loop[LOOP_TO]
+                    else f"第 {loop[LOOP_FROM]} 到第 {loop[LOOP_TO]} 步")
+            parts.append(f"{span}循环的第 {loop[LOOP_NTH]} 次{limit_text}")
+        if view.get(AT_INDEX) is None:
+            parts.append("还没有做完任何一步")
+        else:
+            parts.append(f"做完了第 {view[AT_INDEX]} 步『{view[AT_NOTE]}』")
+        return "，".join(parts)
+
+    def step_view(self, step) -> dict | None:
+        """结构化投影（阶段名、阶段内序号、步骤说明、循环起止与第几次与上限、是不是段尾），给观测台画图，页面不自己算。
+
+        读不出来时返回 None（旧运行文件或宿主给了别的东西时，显示那一侧自己兜底）。
+        """
+        if not isinstance(step, dict):
+            return None
+        index = self._stage_index.get(step.get(STEP_STAGE))
+        if index is None:
+            return None
+        stage = self._stages[index]
+        number = step.get(STEP_INDEX)
+        if not (isinstance(number, int) and not isinstance(number, bool) and 1 <= number <= len(stage.steps)):
+            return {AT_STAGE: stage.name, AT_INDEX: None, AT_NOTE: None, AT_LOOP: None, AT_LOOP_LAST: None}
+        done = stage.steps[number - 1]
+        loop = None
+        if done.group is not None:
+            raw = step.get(STEP_LOOP) if isinstance(step.get(STEP_LOOP), dict) else {}
+            loop = {LOOP_FROM: done.group.first + 1, LOOP_TO: done.group.last + 1,
+                    LOOP_NTH: raw.get(LOOP_NTH), "最多": done.group.max}
+        return {AT_STAGE: stage.name, AT_INDEX: number, AT_NOTE: done.note, AT_LOOP: loop,
+                AT_LOOP_LAST: None if done.group is None else done.group.last == done.pos}
+
+    def _locate(self, step):
+        """当前步 → （阶段, 一趟的起点状态）。不合法就抛 DefinitionError。"""
+        if not isinstance(step, dict):
+            raise DefinitionError(f"当前步不是一个字典：{step!r}")
+        name = step.get(STEP_STAGE)
+        index = self._stage_index.get(name)
+        if index is None:
+            raise DefinitionError(f"当前步所指的阶段不存在：{name!r}")
+        stage = self._stages[index]
+        return stage, _position_of(stage, step)
 
     # ── 一趟 ──
 
-    def _walk(self, stage, data, cursor, record):
-        """从游标的步骤起往后走：推定起点状态后驱动「进入」「组内」「一轮结束」三状态机，直到得出结局。
+    def _walk(self, stage, data, here, position, record):
+        """从当前步的下一步起往后走：驱动「进入」「段内」「一次走完」三状态机，直到得出结局。
 
-        cursor 是这一趟起点的游标（前进过阶段时是新阶段的起点）。结局是候选、告知异常候选或 None（任务定义缺口）。
-        record 记本次行动选择的经过（组首走起过的组、选择经过），候选的依据命中值带上选择经过。
+        here 是这一趟起点的当前步（前进过阶段时是新阶段的起点），只在构造告知异常时用来报位置。
+        position 是由 here 推出的起点状态。结局是候选、告知异常候选或 None（任务定义缺口）。
+        record 记本次行动选择的经过（段首走起过的循环段、选择经过），候选的依据命中值带上选择经过。
         """
-        (kind, pos), rounds = _initial_state(stage.steps, cursor)
+        (kind, pos), rounds = position
         handlers = {"enter": self._enter, "in": self._in_group, "round_end": self._round_end}
         while True:
-            outcome = handlers[kind](stage, data, cursor, pos, rounds, record)
+            outcome = handlers[kind](stage, data, here, pos, rounds, record)
             if isinstance(outcome, _Outcome):
                 return outcome.value
             (kind, pos), rounds = outcome
 
-    def _enter(self, stage, data, cursor, pos, rounds, record):
-        """「进入」：pos 是阶段内序号（从 0 起，内部用）。走过末尾是一趟走完；普通步骤试一次；步骤组先查「最多」与「重复直到」再决定进不进。"""
+    def _enter(self, stage, data, here, pos, rounds, record):
+        """「进入」：pos 是阶段内序号（从 0 起，内部用）。走过末尾是一趟走完；普通步骤试一次；循环段先查「最多」与「重复直到」再决定进不进。"""
         steps = stage.steps
         if pos >= len(steps):
-            return _Outcome(self._exception(stage, data, cursor, KIND_PASS_DONE))  # 一趟走完，目标仍未达成
+            return _Outcome(self._exception(stage, data, here, KIND_PASS_DONE))  # 一趟走完，目标仍未达成
         step = steps[pos]
         if step.group is None:
             candidate = self._try_step(stage, step, data, 0, record)
@@ -250,16 +349,16 @@ class TaskDefinition:
         if not _valid_limit(limit):
             return _Outcome(None)  # 「最多」求出的既不是 null 也不是非负整数：任务定义缺口，行动选择返回空，由内核报任务定义错误
         if limit is None or _holds_all(group.until, data):
-            # 「最多」为 null 跳过整个组；「重复直到」已成立，零轮越过整个组
+            # 「最多」为 null 跳过整段循环；「重复直到」已成立，一次不走越过整段
             reason = REASON_LIMIT_NULL if limit is None else REASON_UNTIL_HOLDS
             record.trail[TRAIL_SKIPPED_STEPS].extend([s.number, reason] for s in steps[group.first:group.last + 1])
             return ("enter", group.last + 1), rounds
         if limit == 0:
-            return _Outcome(self._exception(stage, data, cursor, KIND_GROUP_LIMIT))  # 「最多」为 0 而「重复直到」不成立：一轮都不许跑，按异常处理
+            return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 「最多」为 0 而「重复直到」不成立：一次都不许跑，按异常处理
         return ("in", group.first), 0
 
-    def _in_group(self, stage, data, cursor, pos, rounds, record):
-        """「组内」：试组内的一步。试中就是候选；组尾试不中就结束这一轮（轮数加一），否则往组内下一步。"""
+    def _in_group(self, stage, data, here, pos, rounds, record):
+        """「段内」：试循环段里的一步。试中就是候选；段尾试不中就结束这一次（次数加一），否则往段内下一步。"""
         step = stage.steps[pos]
         group = step.group
         if pos == group.first:
@@ -270,8 +369,8 @@ class TaskDefinition:
             return _Outcome(candidate)
         return (("round_end", pos), rounds + 1) if is_last else (("in", pos + 1), rounds)
 
-    def _round_end(self, stage, data, cursor, pos, rounds, record):
-        """「一轮结束」：pos 是组尾，rounds 已含这一轮。先看「重复直到」，再看「最多」与轮数，最后看本次是否一轮零候选。"""
+    def _round_end(self, stage, data, here, pos, rounds, record):
+        """「一次走完」：pos 是段尾，rounds 已含这一次。先看「重复直到」，再看「最多」与次数，最后看本次是否段内一次零候选。"""
         group = stage.steps[pos].group
         if _holds_all(group.until, data):
             return ("enter", group.last + 1), 0
@@ -281,16 +380,16 @@ class TaskDefinition:
         if limit is None:
             return ("enter", group.last + 1), 0
         if rounds >= limit:
-            return _Outcome(self._exception(stage, data, cursor, KIND_GROUP_LIMIT))  # 轮数到「最多」仍未满足停止条件
+            return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 次数到「最多」仍未满足停止条件
         if group.first in record.walked_from_first:
-            return _Outcome(self._exception(stage, data, cursor, KIND_GROUP_LIMIT))  # 本次行动选择里组内一轮零候选，不回组首
+            return _Outcome(self._exception(stage, data, here, KIND_GROUP_LIMIT))  # 本次行动选择里段内一次零候选，不回段首
         return ("in", group.first), rounds
 
     def _try_step(self, stage, step, data, rounds_after, record):
-        """求一个步骤：引用为 null 或前置条件不成立返回 None 并记进选择经过；成立返回（工具名, 参数, 依据, 游标新值）。
+        """求一个步骤：引用为 null 或前置条件不成立返回 None 并记进选择经过；成立返回（工具名, 参数, 依据）。
 
-        游标新值的已完成步骤就是这一步的全局步骤号；这一步在步骤组里时已完成轮数取 rounds_after，不在组里时为 null。
-        依据的命中值是前置条件返回的命中值字典，外加「选择经过」键。
+        依据的命中值是前置条件返回的命中值字典，外加「选择经过」键。当前步不在这里写，由 record_step 在行动成功后记。
+        rounds_after 现在只给状态机用（段尾试中时这一次就算走完），不再进候选。
         """
         params = _evaluate_params(step.params, data)
         if params is None:
@@ -300,15 +399,15 @@ class TaskDefinition:
         if not ok:
             record.trail[TRAIL_SKIPPED_STEPS].append([step.number, f"前置条件不成立：{note}"])
             return None
-        cursor = {CURSOR_STAGE: stage.name, CURSOR_STEP: step.number, CURSOR_ROUND: rounds_after if step.group is not None else None}
         hit = {**(hit if isinstance(hit, dict) else {} if hit is None else {"命中值": hit}), TRAIL_KEY: copy.deepcopy(record.trail)}
-        return (step.tool, params, (step.number, self._notes[step.number], hit), (CURSOR_SLOT, cursor))
+        return (step.tool, params, (step.number, self._notes[step.number], hit))
 
-    def _exception(self, stage, data, cursor, kind):
-        """构造「告知异常」候选：五个参数，依据的命中值是这份异常报告外加「异常种类」键；不带游标新值，游标只由重做写回。
+    def _exception(self, stage, data, here, kind):
+        """构造「告知异常」候选：五个参数，依据的命中值是这份异常报告外加「异常种类」键。
 
-        kind 是三种异常之一：一趟走完目标仍未达成；步骤组到上限（含组内一轮零候选）；已过阶段的目标被后续阶段破坏。
+        kind 是三种异常之一：一趟走完目标仍未达成；循环段到上限（含段内一次零候选）；已过阶段的目标被后续阶段破坏。
         异常种类只进依据的命中值，不进告知异常工具的参数。
+        报的位置是这一趟起点的当前步 here；刚换阶段时它是新阶段的起点，与存着的当前步不是同一个值，这笔账仍记在第四步 4.10 节。
         """
         unmet = []
         for predicate in stage.goal:
@@ -327,23 +426,26 @@ class TaskDefinition:
             "阶段": stage.name,
             "未达成目标": unmet,
             "步骤现况": status,
-            "游标": self._position(cursor),
+            "当前步": self._position(here),
             "可选措施": list(EXCEPTION_OPTIONS),
         }
         number = stage.exception_number
         return (EXCEPTION_TOOL, params, (number, self._notes[number], {**copy.deepcopy(params), EXCEPTION_KIND_KEY: kind}))
 
 
-    def _position(self, cursor):
-        """告知异常参数「游标」：游标的三项加上已完成步骤的说明与「是组尾」。
+    def _position(self, here):
+        """告知异常参数「当前步」：阶段、阶段内序号、这一步的说明、循环（起、止、第几次）、是不是段尾。
 
-        已完成步骤为 null 时说明是 null；「是组尾」在已完成步骤不在组里或为 null 时是 null。
+        阶段起点时序号与说明都是 null；「是段尾」在这一步不在循环段里或还没做完任何一步时是 null。
         """
-        stage = self._stages[self._stage_index[cursor[CURSOR_STAGE]]]
-        done = _completed_step(stage.steps, cursor)
-        group_last = None if done is None or done.group is None else done.group.last == done.pos
-        return {AT_STAGE: stage.name, AT_NUMBER: cursor[CURSOR_STEP], AT_NOTE: done.note if done else None,
-                AT_ROUND: cursor[CURSOR_ROUND], AT_GROUP_LAST: group_last}
+        view = self.step_view(here)
+        if view is None:
+            return {AT_STAGE: here.get(STEP_STAGE) if isinstance(here, dict) else None,
+                    AT_INDEX: None, AT_NOTE: None, AT_LOOP: None, AT_LOOP_LAST: None}
+        loop = view[AT_LOOP]
+        return {AT_STAGE: view[AT_STAGE], AT_INDEX: view[AT_INDEX], AT_NOTE: view[AT_NOTE],
+                AT_LOOP: None if loop is None else {LOOP_FROM: loop[LOOP_FROM], LOOP_TO: loop[LOOP_TO], LOOP_NTH: loop[LOOP_NTH]},
+                AT_LOOP_LAST: view[AT_LOOP_LAST]}
 
 
 class _PassRecord:
@@ -365,33 +467,63 @@ class _Outcome:
         self.value = value
 
 
-def _completed_step(steps, cursor):
-    """游标的已完成步骤对应的 Step；已完成步骤为 null 返回 None。"""
-    number = cursor[CURSOR_STEP]
-    return None if number is None else next((step for step in steps if step.number == number), None)
+def _position_of(stage, step):
+    """由当前步推定一趟的起点状态，返回（（状态, 阶段内序号）, 已走完的次数）。状态机内部用阶段内序号（从 0 起）定位步骤。
 
-
-def _initial_state(steps, cursor):
-    """由游标推定一趟的起点状态，返回（（状态, 阶段内序号）, 轮数）。状态机内部用阶段内序号（从 0 起）定位步骤。
-
-    以「登记一个问一个」变体为例（列目录第 1 步；登记与确认阶段是一个组，组内第 2 步登记、第 3 步询问）：
-    - 已完成步骤 null：阶段起点 →「进入」，从第一步起，进组前先查「重复直到」；
-    - 已完成第 3 步、已完成 1 轮：刚走完组尾，这一轮已计入 →「一轮结束」，先判「重复直到」再决定回组首还是越过；
-    - 已完成第 2 步、已完成 0 轮：组内还有下一步 →「组内」，从第 3 步起；
-    - 已完成的步骤不在组里 →「进入」，从它的下一步起。
-    已完成步骤在本阶段找不到时从末尾之后进入，一趟立即走完，按异常告知使用者。
+    - 没有「步骤」这一层：阶段起点 →「进入」，从第一步起，进循环段前先查「重复直到」；
+    - 这一步是某个循环段的段尾：刚走完一次，这一次已计入 →「一次走完」，先判「重复直到」再决定回段首还是越过；
+    - 这一步在循环段里但不是段尾 →「段内」，从下一步起；
+    - 这一步不在循环段里 →「进入」，从它的下一步起。
+    「第几次」记的是含这一次在内的次数，所以落在段尾时已走完的次数就是它，落在段中时是它减一。
+    结构不合法（有循环没步骤、序号越界、循环段对不上、第几次不是正整数）一律抛 DefinitionError。
     """
-    done = _completed_step(steps, cursor)
-    if cursor[CURSOR_STEP] is None:
+    steps = stage.steps
+    if STEP_INDEX not in step:
+        if step.get(STEP_LOOP) is not None:
+            raise DefinitionError(f"当前步有「{STEP_LOOP}」却没有「{STEP_INDEX}」：{step!r}")
         return ("enter", 0), 0
-    if done is None:
-        return ("enter", len(steps)), 0
-    group, rounds = done.group, cursor[CURSOR_ROUND] or 0
-    if group is not None and group.last == done.pos:
-        return ("round_end", done.pos), rounds
-    if group is not None:
-        return ("in", done.pos + 1), rounds
-    return ("enter", done.pos + 1), 0
+    number = step[STEP_INDEX]
+    if not (isinstance(number, int) and not isinstance(number, bool) and 1 <= number <= len(steps)):
+        raise DefinitionError(f"当前步的步骤 {number!r} 不在『{stage.name}』阶段的 1 到 {len(steps)} 之内")
+    done = steps[number - 1]
+    loop = step.get(STEP_LOOP)
+    if done.group is None:
+        if loop is not None:
+            raise DefinitionError(f"『{stage.name}』阶段第 {number} 步不在循环段里，当前步却写了「{STEP_LOOP}」")
+        return ("enter", done.pos + 1), 0
+    if not isinstance(loop, dict):
+        raise DefinitionError(f"『{stage.name}』阶段第 {number} 步在循环段里，当前步却没有「{STEP_LOOP}」这一层")
+    want = (done.group.first + 1, done.group.last + 1)
+    if (loop.get(LOOP_FROM), loop.get(LOOP_TO)) != want:
+        raise DefinitionError(f"当前步的循环段 {loop.get(LOOP_FROM)}–{loop.get(LOOP_TO)} 与"
+                              f"『{stage.name}』阶段第 {number} 步所在的循环段 {want[0]}–{want[1]} 对不上")
+    nth = loop.get(LOOP_NTH)
+    if not (isinstance(nth, int) and not isinstance(nth, bool) and nth >= 1):
+        raise DefinitionError(f"当前步的「{LOOP_NTH}」不是正整数：{nth!r}")
+    if done.group.last == done.pos:
+        return ("round_end", done.pos), nth
+    return ("in", done.pos + 1), nth - 1
+
+
+def _nth_time(step, stage, done):
+    """这一步是这段循环的第几次。
+
+    第四步 4.10 节写的判据是「上一步是该段最后一步、这次又回到第一步则加 1」；这里放宽成
+    「同一阶段、同一循环段里，这一步的阶段内序号不比上一步大就加 1，否则沿用」（2026-09-16 主会话裁定）：
+    循环段的最后几步被前置条件跳过时，上一步停在段中，按字面判据就永远不加一了。
+    进入这段循环之前（阶段起点、循环段外、换了阶段或换了循环段）一律从 1 起。
+    """
+    if not isinstance(step, dict) or step.get(STEP_STAGE) != stage.name:
+        return 1
+    loop = step.get(STEP_LOOP)
+    if not isinstance(loop, dict) or (loop.get(LOOP_FROM), loop.get(LOOP_TO)) != (done.group.first + 1, done.group.last + 1):
+        return 1
+    nth, before = loop.get(LOOP_NTH), step.get(STEP_INDEX)
+    if not (isinstance(nth, int) and not isinstance(nth, bool) and nth >= 1):
+        return 1
+    if not (isinstance(before, int) and not isinstance(before, bool)):
+        return 1
+    return nth + 1 if done.pos + 1 <= before else nth
 
 
 def _precondition(tool_name, data, params):
@@ -685,7 +817,7 @@ def load(path, name=None, initial=None) -> TaskDefinition:
     """加载一份任务定义文件，返回新的任务定义对象（每次调用都是新对象）。
 
     name：覆盖文件里的名字。initial：初始输入，即启动一次任务时给定的输入，槽位名到值，覆盖文件里的默认值；
-    槽位必须在文件里存在，不能给保留槽位「游标」。文件或初始输入不合格抛加载错误（LoadError），带文件路径与出错位置。
+    槽位必须在文件里存在。文件或初始输入不合格抛加载错误（LoadError），带文件路径与出错位置。
     主干顺序：读文件、查顶层四块、解析槽位元数据（得默认值与提问句式）、查交付物、查初始输入、解析阶段与步骤、生成说明表、建对象。
     """
     path = str(path)
@@ -693,29 +825,88 @@ def load(path, name=None, initial=None) -> TaskDefinition:
     check = _Checker(path)
     _check_top(check, raw)
     slots, templates = _parse_slots(check, raw[KEY_SLOTS])
-    check.slots = slots  # 引用只能指向任务作者写的槽位，不含「游标」
+    check.slots = slots  # 引用只能指向任务作者写的槽位
     _check_deliverables(check, raw[KEY_DELIVERABLES], raw[KEY_SLOTS])
     _check_initial(check, initial, slots)
     parsed, number = _parse_stages(check, raw[KEY_STAGES])
     definition, notes, stages = _build_definition(parsed, number)
     definition[KEY_SLOTS] = copy.deepcopy(raw[KEY_SLOTS])
     definition[KEY_DELIVERABLES] = copy.deepcopy(raw[KEY_DELIVERABLES])
+    if KEY_DOMAIN_RULES in raw:
+        definition[KEY_DOMAIN_RULES] = raw[KEY_DOMAIN_RULES]
     if initial is not None:
         slots.update(copy.deepcopy(initial))
-    slots[CURSOR_SLOT] = stages[0].start_cursor()
     name_out = raw[KEY_NAME] if name is None else name
     return TaskDefinition(name_out, slots, definition, notes, templates, tuple(stages), copy.deepcopy(raw[KEY_DELIVERABLES]))
 
 
+# ───────────────────────── 系统提示用的任务定义摘要（第四步 4.8 节）─────────────────────────
+# 摘要是写给模型看的一段话，不是把定义文件的 JSON 塞过去：槽位与各自的说明、阶段与目标、交付物各一句。
+# 内容全部来自定义文件，任务期间不变，所以它进系统提示而不进用户内容。
+
+
+def operand_text(operand) -> str:
+    """把引用或字面量写成一句人话：槽位引用写槽位名，长度引用写「X 的长度」，字面量原样。"""
+    if isinstance(operand, dict):
+        if REF_SLOT in operand:
+            return f"{operand[REF_SLOT]}"
+        if REF_LENGTH in operand:
+            return f"{operand[REF_LENGTH]} 的长度"
+        if REF_FIRST_NULL in operand:
+            return f"{operand[REF_FIRST_NULL][0]} 里首个 {operand[REF_FIRST_NULL][1]} 为空的项"
+        if REF_FIRST_NULL_FIELD in operand:
+            target = operand[REF_FIRST_NULL_FIELD]
+            return f"{target[0]} 里首个 {target[1]} 为空的项的 {target[2]}"
+    return str(operand)
+
+
+def predicate_text(predicate) -> str:
+    """谓词写成一句不带当前值的话，用在摘要与进度陈述里；带当前值的那份在 _goal_text 里，给告知异常用。"""
+    kind = predicate.get(PREDICATE)
+    if kind == PRED_NOT_NULL:
+        return f"{predicate[REF_SLOT]}不为空"
+    if kind == PRED_EQUAL:
+        return f"{operand_text(predicate['左'])} 等于 {operand_text(predicate['右'])}"
+    return f"{predicate[REF_SLOT]} 里没有 {predicate['字段']} 为空的项"
+
+
+def _group_rounds_text(stage) -> str:
+    """阶段里若有循环段且上限是个整数，摘要里补一句说明它最多循环几次。上限写成引用的（如文件总表的长度）不写死数字。"""
+    for step in stage.get(STAGE_STEPS, []) or []:
+        limit = step.get(GROUP_MAX)
+        if GROUP_STEPS in step and isinstance(limit, int) and not isinstance(limit, bool):
+            return f"；这几步走完一遍算一次循环，最多 {limit} 次"
+    return ""
+
+
+def summary_text(task_def) -> str:
+    """任务定义摘要：槽位（含说明）、阶段（含目标）、交付物，拼成一段话。"""
+    definition = task_def.DEFINITION
+    slots = [f"{name}（{meta.get(SLOT_NOTE, '')}）" for name, meta in definition[KEY_SLOTS].items()]
+    stages = []
+    for stage in definition[DEF_STAGES]:
+        goal = "、".join(predicate_text(item) for item in stage.get(STAGE_GOAL, []) or [])
+        stages.append(f"{stage[STAGE_NAME]}（目标：{goal}{_group_rounds_text(stage)}）")
+    delivs = "；".join(f"{item[DELIV_NAME]}，来源{item[DELIV_SOURCE]}，{item[DELIV_FORM]}"
+                      for item in definition.get(KEY_DELIVERABLES, []) or [])
+    return (f"槽位（任务的数据项，每项一个名字一个值）：{'、'.join(slots)}。"
+            f"阶段：{'、'.join(stages)}。交付物：{delivs}。")
+
+
+def domain_rules_of(task_def):
+    """任务定义的可选块「领域规矩」，没有就是 None。"""
+    return task_def.DEFINITION.get(KEY_DOMAIN_RULES)
+
+
 def _check_top(check, raw) -> None:
-    """顶层四块：键齐全、类型正确、槽位表不占用「游标」。"""
-    check.dict_with(raw, "顶层", TOP_KEYS)
+    """顶层四块必填、「领域规矩」可选：键齐全、类型正确。"""
+    check.dict_with(raw, "顶层", TOP_KEYS, TOP_OPTIONAL_KEYS)
+    if KEY_DOMAIN_RULES in raw and not (isinstance(raw[KEY_DOMAIN_RULES], str) and raw[KEY_DOMAIN_RULES].strip()):
+        check.fail(KEY_DOMAIN_RULES, "应当是非空字符串（写给模型看的领域写法要求）")
     if not isinstance(raw[KEY_NAME], str) or not raw[KEY_NAME]:
         check.fail(KEY_NAME, "应当是非空字符串")
     if not isinstance(raw[KEY_SLOTS], dict):
         check.fail(KEY_SLOTS, "应当是对象（槽位名到槽位元数据）")
-    if CURSOR_SLOT in raw[KEY_SLOTS]:
-        check.fail(f"{KEY_SLOTS}.{CURSOR_SLOT}", f"「{CURSOR_SLOT}」是保留槽位，由加载器自动加入，任务定义不得使用这个名字")
     if not isinstance(raw[KEY_STAGES], list) or not raw[KEY_STAGES]:
         check.fail(KEY_STAGES, "应当是非空数组")
     if not isinstance(raw[KEY_DELIVERABLES], list):
@@ -756,13 +947,11 @@ def _check_deliverables(check, deliverables, slot_metas) -> None:
 
 
 def _check_initial(check, initial, slots) -> None:
-    """初始输入：是字典、不给「游标」、槽位都在文件里存在。"""
+    """初始输入：是字典、槽位都在文件里存在。"""
     if initial is None:
         return
     if not isinstance(initial, dict):
         check.fail(INITIAL_INPUT, "应当是字典")
-    if CURSOR_SLOT in initial:
-        check.fail(INITIAL_INPUT, f"「{CURSOR_SLOT}」是保留槽位，不能作为初始输入")
     unknown = [slot for slot in initial if slot not in slots]
     if unknown:
         check.fail(INITIAL_INPUT, f"槽位不存在：{'、'.join(map(str, unknown))}")

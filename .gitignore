@@ -52,3 +52,6 @@ backend/var/
 
 # tod_kernel run records (JSONL and generated HTML)
 /runs/
+
+# 最小内核的真实模型服务配置（地址、模型名、模式）；入库的是 config.example.json
+tod_kernel/config.json

@@ -9,9 +9,8 @@
   "properties": {
     "名字": {"type": "string", "minLength": 1},
     "槽位": {
-      "description": "槽位名到槽位元数据。「游标」是加载器自动加入的保留槽位，不得出现。",
+      "description": "槽位名到槽位元数据。",
       "type": "object",
-      "not": {"required": ["游标"]},
       "additionalProperties": {"$ref": "#/$defs/槽位元数据"}
     },
     "阶段列表": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/阶段"}},
@@ -19,6 +18,11 @@
       "description": "任务完成后交出什么。来源槽位是否存在、形态与槽位类型是否匹配是语义检查，由加载器做。",
       "type": "array",
       "items": {"$ref": "#/$defs/交付物"}
+    },
+    "领域规矩": {
+      "description": "可选。写给模型看的这个领域的写法要求，原样进系统提示的「领域规矩」段。",
+      "type": "string",
+      "minLength": 1
     }
   },
   "$defs": {

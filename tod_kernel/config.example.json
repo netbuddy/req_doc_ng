@@ -1,0 +1,8 @@
+{
+  "mode": "回放",
+  "base_url": "http://127.0.0.1:8080/v1",
+  "model": "qwen3.8-27b",
+  "timeout_s": 120,
+  "recording_path": "task_defs/recordings/glossary.json",
+  "print_calls": false
+}

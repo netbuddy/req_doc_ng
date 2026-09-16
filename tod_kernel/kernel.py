@@ -26,6 +26,18 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
+class DefinitionError(Exception):
+    """任务定义自己检出的错误，带一句可读的原因。
+
+    由任务定义的行动选择等接口抛出（例如当前步的结构不合法），内核捕获后发「任务定义错误」追踪事件、再抛内核错误。
+    内核不判断原因内容，只把它原样带走。
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class KernelError(Exception):
     """内核错误：行动执行失败，或创建行动之前发现的任务定义错误。
 
@@ -46,6 +58,7 @@ class TaskStatus(enum.Enum):
 
 
 class ActionStatus(enum.Enum):
+    CANDIDATE = "候选"  # 行动选择刚返回、还没登记：没有编号，不进事件流
     PROPOSED = "已提出"
     APPROVED = "已获准"
     REJECTED = "已拒绝"  # 本步无人置，留给执行控制的真实核验
@@ -60,6 +73,7 @@ TERMINAL_ACTION_STATUSES = (ActionStatus.SUCCEEDED, ActionStatus.FAILED)
 # 事件名：内核固定的词表，每种事件的内容字典有固定的键。
 TASK_STATUS_CHANGED = "TASK_STATUS_CHANGED"  # old_status, new_status
 DATA_CHANGED = "DATA_CHANGED"  # slot, old, new, source
+STEP_CHANGED = "STEP_CHANGED"  # old, new, source, text, view（后两项向任务定义取回原样放入，内核不解读）
 ACTION_PROPOSED = "ACTION_PROPOSED"  # tool, params, proposer, basis
 ACTION_STATUS_CHANGED = "ACTION_STATUS_CHANGED"  # new_status, note（终态另有 result）
 MESSAGE_PUT = "MESSAGE_PUT"  # kind, sender, recipient, content, seq
@@ -70,6 +84,7 @@ TASK_ENDED = "TASK_ENDED"  # final_status, reason
 STATE_EVENT_NAMES = (
     TASK_STATUS_CHANGED,
     DATA_CHANGED,
+    STEP_CHANGED,
     ACTION_PROPOSED,
     ACTION_STATUS_CHANGED,
     MESSAGE_PUT,
@@ -127,33 +142,36 @@ class Change:
 
 
 @dataclass(frozen=True)
+class StepChange:
+    """当前步的一次更新，与变更一样放进变更组，由唯一写入口 update_state 写入。
+
+    新值与来源由任务定义与内核循环给出，内核不解读新值的内容。source：行动编号，初始化时为「初始化」。
+    """
+
+    new: Any
+    source: Any
+
+
+@dataclass(frozen=True)
 class EndRecord:
     final_status: TaskStatus
     reason: str
 
 
-@dataclass(frozen=True)
-class Candidate:
-    """候选行动：行动选择的返回，尚未登记成行动。"""
-
-    tool: str
-    params: dict
-    basis: Any  # 选择规则返回的依据，原样存放，内核不解释
-    proposer: str  # "selector" 或 "user"
-    # 游标新值：（槽位名, 新值），由任务定义随候选给出，为空表示不动；行动成功时在状态更新里作为一条变更与工具的
-    # 变更组一起写入，来源是同一个行动编号，行动失败或被拒绝时不写。内核不解释槽位名与新值。
-    cursor_update: tuple | None = None
-
-
 @dataclass
 class Action:
-    """行动：工具的一次调用。状态经过与执行前快照不存在这里，由事件流推出。"""
+    """行动：工具的一次调用。状态经过与执行前快照不存在这里，由事件流推出。
 
-    action_id: int
+    行动选择返回的也是行动，只是还没登记：那时它的编号为空、状态是「候选」，不在行动表里，也没有事件提到它。
+    登记（register_action）给它编号、放进行动表、把状态改成「已提出」，从这一刻起它出现在事件流里。
+    「是候选还是正式行动」不另设属性，由状态表达（2026-09-16 用户裁定）。
+    """
+
     tool: str
     params: dict
     proposer: str  # "selector" 或 "user"
     basis: Any  # 选择规则返回的依据，原样存放，内核不解释
+    action_id: int | None = None  # 候选时为空，登记时才给编号
     status: Any = None
     result: Any = None
     changes: list = field(default_factory=list)
@@ -169,6 +187,7 @@ class Task:
     stream: "EventStream"
     status: TaskStatus = TaskStatus.NOT_STARTED
     data: dict = field(default_factory=dict)
+    step: Any = None  # 当前步：任务进行到哪，由任务定义给出形状，内核只保管与传递，不解读内容
     init_changes: list = field(default_factory=list)
     actions: dict = field(default_factory=dict)  # 行动表：行动编号 → 行动，按登记顺序排列
     end_record: EndRecord | None = None
@@ -394,7 +413,10 @@ _ALLOWED_TASK_TRANSITIONS = {
 
 
 def update_state(task: Task, item) -> None:
-    """唯一写入口。更新项二选一：变更组（Change 列表），或任务状态（TaskStatus）。"""
+    """唯一写入口。更新项二选一：更新组（Change 与 StepChange 的列表），或任务状态（TaskStatus）。
+
+    当前步与数据变更同在一个更新组里，所以一次行动带来的改动一次写完，事件流里不会出现半截状态。
+    """
     if isinstance(item, TaskStatus):
         old = task.status
         if (old, item) not in _ALLOWED_TASK_TRANSITIONS:
@@ -404,8 +426,11 @@ def update_state(task: Task, item) -> None:
         return
     if isinstance(item, list):
         for change in item:
+            if isinstance(change, StepChange):
+                _write_step(task, change)
+                continue
             if not isinstance(change, Change):
-                raise KernelError(f"变更组里有不是变更的项：{change!r}")
+                raise KernelError(f"更新组里有不是变更、也不是当前步更新的项：{change!r}")
             current = task.data.get(change.slot)
             if current != change.old:
                 raise KernelError(f"旧值不符：槽位 {change.slot!r} 当前为 {current!r}，变更声明为 {change.old!r}")
@@ -417,7 +442,22 @@ def update_state(task: Task, item) -> None:
                 action_id=source_action,
             )
         return
-    raise KernelError(f"更新项既不是变更组也不是任务状态：{item!r}")
+    raise KernelError(f"更新项既不是更新组也不是任务状态：{item!r}")
+
+
+def _write_step(task: Task, change: StepChange) -> None:
+    """写当前步：真变了才发「当前步变化」。事件里的 text 与 view 向任务定义取回原样放入，内核不解读内容。
+
+    载荷的键与其余事件一样用英文（键是标识符，值才是中文，2026-09-16 主会话裁定）。
+    """
+    old = task.step
+    if change.new == old:
+        return
+    task.step = change.new
+    payload = {"old": copy.deepcopy(old), "new": copy.deepcopy(change.new), "source": change.source,
+               "text": task.task_def.step_text(change.new), "view": task.task_def.step_view(change.new)}
+    task.update_publisher.publish(STEP_CHANGED, payload,
+                                  action_id=change.source if _is_action_id(change.source) else None)
 
 
 def _is_action_id(value) -> bool:
@@ -444,43 +484,37 @@ def set_status(task: Task, action: Action, status: ActionStatus, note: str, publ
     (publisher or task.loop_publisher).publish(ACTION_STATUS_CHANGED, payload, action_id=action.action_id)
 
 
-def select_action(task: Task) -> Candidate:
-    """行动选择：调选择规则，到工具表核对工具名与参数名，返回候选。
+def select_action(task: Task) -> Action:
+    """行动选择：把数据的只读视图与当前步交给选择规则，到工具表核对工具名与参数名，返回一个状态是「候选」、编号为空的行动。
 
-    只返回候选，不创建行动、不发状态事件、不改任务。选择规则返回空、工具未登记、
+    不登记、不发任何事件、不改任务。选择规则返回空、抛任务定义错误、工具未登记、
     参数名不符都是任务定义错误：先发「任务定义错误」追踪事件，再抛携带原始输出的内核错误。
     """
-    raw = task.task_def.select_action(types.MappingProxyType(task.data))
+    try:
+        raw = task.task_def.select_action(types.MappingProxyType(task.data), task.step)
+    except DefinitionError as error:
+        _definition_error(task, error.reason, None)
     if raw is None:
         _definition_error(task, "选择规则返回空", raw)
-    if not (isinstance(raw, tuple) and len(raw) in (3, 4)):
-        _definition_error(task, "选择规则的返回不是（工具名, 参数, 依据）三元组或（工具名, 参数, 依据, 游标新值）四元组", raw)
-    tool_name, params, basis = raw[:3]
-    cursor_update = raw[3] if len(raw) == 4 else None
-    if cursor_update is not None and not (isinstance(cursor_update, tuple) and len(cursor_update) == 2
-                                          and isinstance(cursor_update[0], str)):
-        _definition_error(task, "游标新值不是（槽位名, 新值）二元组", raw)
+    if not (isinstance(raw, tuple) and len(raw) == 3):
+        _definition_error(task, "选择规则的返回不是（工具名, 参数, 依据）三元组", raw)
+    tool_name, params, basis = raw
     tool = task.tools.get(tool_name)
     if tool is None:
         _definition_error(task, f"工具未登记：{tool_name!r}", raw)
     if not isinstance(params, dict) or set(params) != set(tool.param_names):
         _definition_error(task, f"参数名与工具的参数名清单不符：{tool_name!r}", raw)
-    return Candidate(tool=tool_name, params=dict(params), basis=basis, proposer="selector", cursor_update=cursor_update)
+    return Action(tool=tool_name, params=dict(params), basis=basis, proposer="selector",
+                  status=ActionStatus.CANDIDATE)
 
 
-def register_action(task: Task, candidate: Candidate) -> int:
-    """登记行动：写入点之一。把候选包成行动，编号取任务的下一个编号并递增，放进任务的行动表，
+def register_action(task: Task, action: Action) -> int:
+    """登记行动：写入点之一。给候选行动编号（取任务的下一个编号并递增），放进任务的行动表，
     同一处发「行动提出」，再记「已提出」。返回行动编号，之后按编号从行动表取用。
 
     候选可以来自行动选择，将来也可以来自使用者的主动输入；登记是所有候选共用的入口。
     """
-    action = Action(
-        action_id=task.next_action_id,
-        tool=candidate.tool,
-        params=dict(candidate.params),
-        proposer=candidate.proposer,
-        basis=candidate.basis,
-    )
+    action.action_id = task.next_action_id
     task.next_action_id += 1
     task.actions[action.action_id] = action
     task.loop_publisher.publish(
@@ -508,10 +542,11 @@ def control(task: Task, action: Action) -> None:
 
 @dataclass(frozen=True)
 class ExecContext:
-    """工具实现拿到的全部东西：本行动、任务数据的只读视图、收件箱、发件箱、绑好任务、本行动与记录方的记状态。"""
+    """工具实现拿到的全部东西：本行动、任务数据的只读视图、当前步、收件箱、发件箱、绑好任务、本行动与记录方的记状态。"""
 
     action: Action
     data_view: types.MappingProxyType
+    step: Any  # 当前步：这一刻最近完成的是哪一步，工具拼上下文包时用，内核不解读
     inbox: Any
     outbox: Any
     set_status: Callable[[ActionStatus, str], None]
@@ -528,6 +563,7 @@ def execute(task: Task, action: Action) -> None:
     ctx = ExecContext(
         action=action,
         data_view=types.MappingProxyType(task.data),
+        step=copy.deepcopy(task.step),
         inbox=task.inbox,
         outbox=task.outbox,
         set_status=functools.partial(
@@ -572,10 +608,14 @@ def _run(task: Task) -> Task:
     loop.publish(TASK_STARTED, {
         "slots": dict(task_def.SLOTS),
         "definition": copy.deepcopy(task_def.DEFINITION),
-        "tools": {name: list(tool.param_names) for name, tool in tools.items()},
+        "tools": {name: {"param_names": list(tool.param_names), "category": tool.category, "summary": tool.summary,
+                         **({"writer_roles": dict(tool.writer_roles)} if tool.writer_roles else {})}
+                  for name, tool in tools.items()},
         "task_def_name": task_def.NAME,
     })
     update_state(task, task.init_changes)
+    # 初始当前步也进事件流（来源「初始化」），否则靠重放看历史的人拿不到起点。
+    update_state(task, [StepChange(copy.deepcopy(task_def.INITIAL_STEP), INIT_SOURCE)])
     update_state(task, TaskStatus.RUNNING)
     # 进循环前先做一次结果检查（不发「迭代开始」）：初始即完成时不进循环。
     if _check_and_finish(task):
@@ -584,7 +624,8 @@ def _run(task: Task) -> Task:
     while True:
         loop_no += 1
         loop.publish(LOOP_STARTED, {"loop_no": loop_no})
-        # 第 1 步：行动选择只返回候选，登记行动是写入点。迭代开头取主动类消息的位置留在这里，本步不实现。
+        # 第 1 步：行动选择只返回候选（一个编号为空、状态是「候选」的行动），登记行动是写入点。
+        # 迭代开头取主动类消息的位置留在这里，本步不实现。
         candidate = select_action(task)
         action_id = register_action(task, candidate)
         action = task.actions[action_id]
@@ -599,12 +640,13 @@ def _run(task: Task) -> Task:
         if action.status == ActionStatus.APPROVED:
             execute(task, action)
         # 第 4 步：状态更新。行动在登记时已经在行动表里，这里不再单独记录。
-        # 候选带游标新值且行动已成功时，把它作为一条变更接在工具的变更组后面一起写入，来源是同一个行动编号；
-        # 行动失败或被拒绝时不写游标。
-        if candidate.cursor_update is not None and action.status == ActionStatus.SUCCEEDED:
-            slot, new = candidate.cursor_update
-            action.changes = list(action.changes) + [Change(slot, copy.deepcopy(task.data.get(slot)), new, action.action_id)]
-        update_state(task, action.changes)
+        # 记录本步：把这个行动做的那一步交给任务定义记进当前步，与工具的变更组同一次写入（唯一写入口，不会出现半截状态）。
+        # 行动没成功时任务定义会原样返回，当前步不动，也就不发事件。
+        try:
+            new_step = task_def.record_step(copy.deepcopy(task.step), action)
+        except DefinitionError as error:
+            _definition_error(task, error.reason, None)
+        update_state(task, list(action.changes) + [StepChange(new_step, action.action_id)])
         if action.status == ActionStatus.FAILED:
             raise KernelError("行动失败", action=action)
         # 第 5 步：结果检查挪到每次迭代末尾，紧跟状态更新；成立就结束，所以迭代数等于行动数。
