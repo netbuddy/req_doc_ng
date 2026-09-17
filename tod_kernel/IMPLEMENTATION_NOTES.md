@@ -8826,3 +8826,343 @@ kernel.py 里现在搜不到「游标」「cursor」，taskdef.py 也搜不到�
 - **改动文件**：
   - 新增：`prompt_pack.py`、`prompts/对话理解.json`、`prompts/生成术语释义.json`、`prompts/答疑.json`；
   - 修改：`tools.py`、`context.py`、`observatory.html`、`verify.py`、`task_defs/recordings/glossary.json`、`task_defs/recordings/对话理解标注集.json`、`IMPLEMENTATION_NOTES.md`。
+
+## 专项：代码拆分（2026-09-18，纯搬家不改行为）
+
+### 结论
+
+- **结果**：tools.py 拆成包 `tools/`（六个模块）；taskdef.py 拆成两块，加载与谓词求值留在 `taskdef.py`，当前步与对话模式放进新文件 `taskdef_step.py`；verify.py 拆成包 `verify/`：共用部分放 base，场景与检查分 intake、glossary、eval 三个文件，外加机器检查子包 `machine/`（九组检查一组一个文件），入口是 `verify/__main__.py`。
+- **验证**：`python3 -m tod_kernel.verify` 回放全过，退出码 0，断言仍是 1152 条。
+- **没有动的**：
+  - kernel.py、录制文件、提示词包都没有改；请求哈希没有变，回放时每一条录制都查得到。
+  - 对外入口不变：`python3 -m tod_kernel.verify`、`console`、`observe` 照旧运行，外部照旧写 `from tod_kernel.tools import …`、`from tod_kernel.taskdef import …`。
+- **核对方法**：用 AST（抽象语法树，把源码解析成结构再比）逐个比对拆分前后的每个函数、类、方法与常量。只有下一节列出的几处不同，其余逐字相同。
+
+### 不是纯搬运的几处（都不改行为）
+
+1. **工具表的登记方式**：原来 tools.py 里的 `STATIC_TOOLS`、`_IMPLS`、`MODEL_TOOLS` 三个字典，按条目拆到各工具模块里，每个模块自己登记。
+   - 每个工具模块都有 `TOOL_SPECS`（工具规格）与 `TOOL_IMPLS`（工具实现）；glossary、understanding、patterns 三个内部调模型的模块另有 `MODEL_TOOLS`。
+   - `tools/base.py` 末尾把它们合并成原来的三个字典。`STATIC_TOOLS` 按拆分前的工具顺序重排，每一条的写法原样不动。
+2. **任务定义类**：`TaskDefinition` 的 21 个方法（调用选择、记录本步、当前步显示、插入段、一趟往后走的状态机、告知异常候选）搬进 `taskdef_step.py` 的混入类 `StepMixin`，方法体逐字相同。
+   - `TaskDefinition` 留在 `taskdef.py`，只剩 `__init__`、`is_done`、`stage_goal_holds`，写成 `class TaskDefinition(StepMixin)`。
+   - 这个类挪到了 `taskdef.py` 文件末尾，原因是 `taskdef_step.py` 要从 `taskdef.py` 导入谓词求值助手，这些助手必须先定义好。
+3. **导入顺序**：有两处模块互相引用，只能在文件末尾导入，都写了注释说明原因。
+   - `tools/base.py` 在末尾才导入各工具模块，因为各工具模块在顶部从 base 取 ToolSpec 等名字。
+   - `taskdef.py` 在末尾才导入 `taskdef_step`，原因同第 2 条。
+4. **验证脚本里的路径**：文件下沉了一层目录，所以 `verify/base.py` 里的 `TASK_DEFS_DIR`、`RUNS_DIR` 各多写一层 `.parent`，指向的目录不变。
+5. **`check_kernel_is_task_agnostic` 的两处查找范围**，都是为了不因拆分而漏查：
+   - 查「游标」「cursor」时，任务定义加载器的源码把 `taskdef_step.py` 也拼进来一起查；
+   - 查「行动」「Action」「action_id」时，原来只找包目录下的 `*.py`，现在递归找，子目录 `tools/`、`verify/` 也查；跳过的仍是这条检查自己所在的文件。
+   - 断言条数不变。
+6. **`console_transcript_checks`**：这条检查要用场景表，场景表在 `verify/__init__.py`，而 `__init__` 导入本模块，所以改在函数里导入 `SCENARIOS`。
+7. **console.py 的五处读写**：`SHOW_EXCHANGES`、`PRINT_EVENTS`、`PRINT_CHECKS`、`EXTRA_SUBSCRIBERS` 这四个开关与 `LAST_RUN` 住在 `verify.base`，console.py 改为读写 `verify.base.X`。原因是给包对象的属性赋值，传不到 base 模块里。`verify/__init__.py` 不导出这五个名字，免得读到过时的副本。控制台其余用法（`verify.SCENARIOS`、`verify.run_scenario` 等）都经 `verify/__init__.py` 原样导出。
+8. **说明文字**：包说明 `tod_kernel/__init__.py`、`taskdef.py` 的模块说明补写了文件分工；新文件各有一段模块说明。
+
+### 各文件行数前后对比
+
+| 拆分前 | 行数 | 拆分后 | 行数 |
+|---|---|---|---|
+| tools.py | 1392 | tools/__init__.py | 42 |
+| | | tools/base.py | 239 |
+| | | tools/dialogue.py | 291 |
+| | | tools/understanding.py | 662 |
+| | | tools/patterns.py | 92 |
+| | | tools/intake.py | 119 |
+| | | tools/glossary.py | 120 |
+| taskdef.py | 1492 | taskdef.py | 986 |
+| | | taskdef_step.py | 547 |
+| verify.py | 2979 | verify/__init__.py | 94 |
+| | | verify/__main__.py | 10 |
+| | | verify/base.py | 726 |
+| | | verify/intake.py | 341 |
+| | | verify/glossary.py | 520 |
+| | | verify/eval.py | 158 |
+| | | verify/machine/__init__.py | 18 |
+| | | verify/machine/observatory.py | 173 |
+| | | verify/machine/schema.py | 52 |
+| | | verify/machine/round_clause.py | 35 |
+| | | verify/machine/current_step.py | 109 |
+| | | verify/machine/update_group.py | 69 |
+| | | verify/machine/llm_modes.py | 138 |
+| | | verify/machine/context_pack.py | 173 |
+| | | verify/machine/console_transcript.py | 56 |
+| | | verify/machine/understanding.py | 478 |
+| console.py | 383 | console.py | 383 |
+
+拆分后的总行数比拆分前多，多出来的是各文件的模块说明、导入语句与登记块。第一版的 verify/machine.py 装了九组机器检查，有 1217 行；主会话裁定再拆，现在是子包 `verify/machine/`，一组检查一个文件。检查组表仍在 verify/__init__.py，顺序不变；`verify/machine/__init__.py` 只按这个顺序导出各组的名字。九组文件之间没有相互引用。
+
+### 函数、类与方法的去向
+
+常量跟着用它们的代码走，去向列在表后。表里「方法」一行指原 `TaskDefinition` 的方法。
+
+| 原文件 | 新文件 | 名字 | 种类 |
+|---|---|---|---|
+| tools.py | tools/base.py | `Tool` | 类 |
+| tools.py | tools/base.py | `ToolTable` | 类 |
+| tools.py | tools/base.py | `ToolTable.__init__` | 方法 |
+| tools.py | tools/base.py | `ToolTable.register` | 方法 |
+| tools.py | tools/base.py | `ToolTable.get` | 方法 |
+| tools.py | tools/base.py | `ToolTable.items` | 方法 |
+| tools.py | tools/base.py | `set_at` | 函数 |
+| tools.py | tools/base.py | `_plain` | 函数 |
+| tools.py | tools/base.py | `_pack` | 函数 |
+| tools.py | tools/base.py | `_call_record` | 函数 |
+| tools.py | tools/base.py | `ToolSpec` | 类 |
+| tools.py | tools/base.py | `prompt_pack_of` | 函数 |
+| tools.py | tools/base.py | `tool_catalog` | 函数 |
+| tools.py | tools/base.py | `system_prompt_for` | 函数 |
+| tools.py | tools/base.py | `pattern_tool_names` | 函数 |
+| tools.py | tools/base.py | `build_table` | 函数 |
+| tools.py | tools/dialogue.py | `ask` | 函数 |
+| tools.py | tools/dialogue.py | `_value_at` | 函数 |
+| tools.py | tools/dialogue.py | `_last_same_question` | 函数 |
+| tools.py | tools/dialogue.py | `_same_as_last_question` | 函数 |
+| tools.py | tools/dialogue.py | `_reask_line` | 函数 |
+| tools.py | tools/dialogue.py | `notify` | 函数 |
+| tools.py | tools/dialogue.py | `exception_utterance` | 函数 |
+| tools.py | tools/dialogue.py | `_loop_clause` | 函数 |
+| tools.py | tools/dialogue.py | `report_exception` | 函数 |
+| tools.py | tools/dialogue.py | `_ask_precondition` | 函数 |
+| tools.py | tools/glossary.py | `_draft_count` | 函数 |
+| tools.py | tools/glossary.py | `draft_definition` | 函数 |
+| tools.py | tools/glossary.py | `_draft_definition_precondition` | 函数 |
+| tools.py | tools/intake.py | `list_dir` | 函数 |
+| tools.py | tools/intake.py | `register_file` | 函数 |
+| tools.py | tools/intake.py | `generate_manifest` | 函数 |
+| tools.py | tools/intake.py | `_list_dir_precondition` | 函数 |
+| tools.py | tools/intake.py | `_register_file_precondition` | 函数 |
+| tools.py | tools/intake.py | `_generate_manifest_precondition` | 函数 |
+| tools.py | tools/patterns.py | `mark_deferred` | 函数 |
+| tools.py | tools/patterns.py | `explain` | 函数 |
+| tools.py | tools/understanding.py | `_path_text` | 函数 |
+| tools.py | tools/understanding.py | `understand_schema` | 函数 |
+| tools.py | tools/understanding.py | `_is_number` | 函数 |
+| tools.py | tools/understanding.py | `_content_shape` | 函数 |
+| tools.py | tools/understanding.py | `parse_acts` | 函数 |
+| tools.py | tools/understanding.py | `fallback_acts` | 函数 |
+| tools.py | tools/understanding.py | `_original_of` | 函数 |
+| tools.py | tools/understanding.py | `value_fits` | 函数 |
+| tools.py | tools/understanding.py | `_type_fits` | 函数 |
+| tools.py | tools/understanding.py | `normalize_acts` | 函数 |
+| tools.py | tools/understanding.py | `_landing_key` | 函数 |
+| tools.py | tools/understanding.py | `_Landing` | 类 |
+| tools.py | tools/understanding.py | `_Landing.__init__` | 方法 |
+| tools.py | tools/understanding.py | `_Landing.get` | 方法 |
+| tools.py | tools/understanding.py | `_Landing.write` | 方法 |
+| tools.py | tools/understanding.py | `_Landing.changes` | 方法 |
+| tools.py | tools/understanding.py | `_get_at` | 函数 |
+| tools.py | tools/understanding.py | `_land_affirm_as` | 函数 |
+| tools.py | tools/understanding.py | `defer_target` | 函数 |
+| tools.py | tools/understanding.py | `land_acts` | 函数 |
+| tools.py | tools/understanding.py | `understand` | 函数 |
+| tools.py | tools/understanding.py | `route_modes_of` | 函数 |
+| tools.py | tools/understanding.py | `_understand_precondition` | 函数 |
+| taskdef.py | taskdef.py | `LoadError` | 类 |
+| taskdef.py | taskdef.py | `LoadError.__init__` | 方法 |
+| taskdef.py | taskdef.py | `Step` | 类 |
+| taskdef.py | taskdef.py | `Group` | 类 |
+| taskdef.py | taskdef.py | `Stage` | 类 |
+| taskdef.py | taskdef.py | `Stage.start_step` | 方法 |
+| taskdef.py | taskdef.py | `TaskDefinition` | 类 |
+| taskdef.py | taskdef.py | `TaskDefinition.__init__` | 方法 |
+| taskdef.py | taskdef.py | `TaskDefinition.is_done` | 方法 |
+| taskdef.py | taskdef.py | `TaskDefinition.stage_goal_holds` | 方法 |
+| taskdef.py | taskdef.py | `_is_reference` | 函数 |
+| taskdef.py | taskdef.py | `_first_null_index` | 函数 |
+| taskdef.py | taskdef.py | `_valid_limit` | 函数 |
+| taskdef.py | taskdef.py | `_evaluate` | 函数 |
+| taskdef.py | taskdef.py | `_evaluate_params` | 函数 |
+| taskdef.py | taskdef.py | `_evaluate_tree` | 函数 |
+| taskdef.py | taskdef.py | `_holds` | 函数 |
+| taskdef.py | taskdef.py | `_holds_all` | 函数 |
+| taskdef.py | taskdef.py | `_null_item_indexes` | 函数 |
+| taskdef.py | taskdef.py | `_current_value` | 函数 |
+| taskdef.py | taskdef.py | `_show` | 函数 |
+| taskdef.py | taskdef.py | `_operand_text` | 函数 |
+| taskdef.py | taskdef.py | `_goal_text` | 函数 |
+| taskdef.py | taskdef.py | `_Checker` | 类 |
+| taskdef.py | taskdef.py | `_Checker.__init__` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.fail` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.dict_with` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.slot` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.field_name` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.reference` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.value_tree` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.predicates` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.tool_name` | 方法 |
+| taskdef.py | taskdef.py | `_Checker.step` | 方法 |
+| taskdef.py | taskdef.py | `_read_json` | 函数 |
+| taskdef.py | taskdef.py | `_limit` | 函数 |
+| taskdef.py | taskdef.py | `load` | 函数 |
+| taskdef.py | taskdef.py | `Mode` | 类 |
+| taskdef.py | taskdef.py | `load_patterns` | 函数 |
+| taskdef.py | taskdef.py | `_check_pattern_refs` | 函数 |
+| taskdef.py | taskdef.py | `operand_text` | 函数 |
+| taskdef.py | taskdef.py | `predicate_text` | 函数 |
+| taskdef.py | taskdef.py | `_group_rounds_text` | 函数 |
+| taskdef.py | taskdef.py | `summary_text` | 函数 |
+| taskdef.py | taskdef.py | `domain_rules_of` | 函数 |
+| taskdef.py | taskdef.py | `_check_top` | 函数 |
+| taskdef.py | taskdef.py | `_check_deliverables` | 函数 |
+| taskdef.py | taskdef.py | `_check_required_slots` | 函数 |
+| taskdef.py | taskdef.py | `_check_initial` | 函数 |
+| taskdef.py | taskdef.py | `_parse_stages` | 函数 |
+| taskdef.py | taskdef.py | `_parse_stage` | 函数 |
+| taskdef.py | taskdef.py | `_check_stage_head` | 函数 |
+| taskdef.py | taskdef.py | `_parse_steps` | 函数 |
+| taskdef.py | taskdef.py | `_repeat_pair` | 函数 |
+| taskdef.py | taskdef.py | `_parse_step` | 函数 |
+| taskdef.py | taskdef.py | `_parse_group` | 函数 |
+| taskdef.py | taskdef.py | `_parse_slots` | 函数 |
+| taskdef.py | taskdef.py | `_check_slot_meta` | 函数 |
+| taskdef.py | taskdef.py | `_build_definition` | 函数 |
+| taskdef.py | taskdef.py | `_stage_definition` | 函数 |
+| taskdef.py | taskdef.py | `_step_definition` | 函数 |
+| taskdef.py | taskdef_step.py | `TaskDefinition.select_call`（改为混入类 `StepMixin.select_call`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition.record_step`（改为混入类 `StepMixin.record_step`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._record_main`（改为混入类 `StepMixin._record_main`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition.step_text`（改为混入类 `StepMixin.step_text`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._main_text`（改为混入类 `StepMixin._main_text`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition.step_view`（改为混入类 `StepMixin.step_view`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._main_view`（改为混入类 `StepMixin._main_view`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._split`（改为混入类 `StepMixin._split`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._frame_candidate`（改为混入类 `StepMixin._frame_candidate`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._record_frame_step`（改为混入类 `StepMixin._record_frame_step`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._push_routes`（改为混入类 `StepMixin._push_routes`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._new_frame`（改为混入类 `StepMixin._new_frame`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._locate`（改为混入类 `StepMixin._locate`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._walk`（改为混入类 `StepMixin._walk`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._enter`（改为混入类 `StepMixin._enter`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._in_group`（改为混入类 `StepMixin._in_group`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._round_end`（改为混入类 `StepMixin._round_end`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._try_step`（改为混入类 `StepMixin._try_step`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._exception`（改为混入类 `StepMixin._exception`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `TaskDefinition._position`（改为混入类 `StepMixin._position`，由 TaskDefinition 继承） | 方法 |
+| taskdef.py | taskdef_step.py | `_PassRecord` | 类 |
+| taskdef.py | taskdef_step.py | `_PassRecord.__init__` | 方法 |
+| taskdef.py | taskdef_step.py | `_Outcome` | 类 |
+| taskdef.py | taskdef_step.py | `_Outcome.__init__` | 方法 |
+| taskdef.py | taskdef_step.py | `_position_of` | 函数 |
+| taskdef.py | taskdef_step.py | `_nth_time` | 函数 |
+| taskdef.py | taskdef_step.py | `_evaluate_pattern_tree` | 函数 |
+| taskdef.py | taskdef_step.py | `_precondition` | 函数 |
+| verify.py | verify/__init__.py | `main` | 函数 |
+| verify.py | verify/base.py | `intake_def` | 函数 |
+| verify.py | verify/base.py | `Checker` | 类 |
+| verify.py | verify/base.py | `Checker.__init__` | 方法 |
+| verify.py | verify/base.py | `Checker.check` | 方法 |
+| verify.py | verify/base.py | `Checker.passed` | 方法 |
+| verify.py | verify/base.py | `Run` | 类 |
+| verify.py | verify/base.py | `get_at` | 函数 |
+| verify.py | verify/base.py | `step_at` | 函数 |
+| verify.py | verify/base.py | `stack` | 函数 |
+| verify.py | verify/base.py | `frame` | 函数 |
+| verify.py | verify/base.py | `stacked` | 函数 |
+| verify.py | verify/base.py | `step_sequence` | 函数 |
+| verify.py | verify/base.py | `check_step_final` | 函数 |
+| verify.py | verify/base.py | `run_scenario` | 函数 |
+| verify.py | verify/base.py | `named` | 函数 |
+| verify.py | verify/base.py | `of_call` | 函数 |
+| verify.py | verify/base.py | `status_values` | 函数 |
+| verify.py | verify/base.py | `check_integrity` | 函数 |
+| verify.py | verify/base.py | `check_run_file` | 函数 |
+| verify.py | verify/base.py | `check_selection_trail` | 函数 |
+| verify.py | verify/base.py | `check_trace_shape` | 函数 |
+| verify.py | verify/base.py | `expected_source` | 函数 |
+| verify.py | verify/base.py | `check_sources_and_senders` | 函数 |
+| verify.py | verify/base.py | `check_waiting_then_success` | 函数 |
+| verify.py | verify/base.py | `check_explainable` | 函数 |
+| verify.py | verify/base.py | `check_kernel_is_task_agnostic` | 函数 |
+| verify.py | verify/base.py | `call_sequence` | 函数 |
+| verify.py | verify/base.py | `check_matches_step_two` | 函数 |
+| verify.py | verify/base.py | `banner` | 函数 |
+| verify.py | verify/base.py | `fake_event` | 函数 |
+| verify.py | verify/base.py | `ask_events` | 函数 |
+| verify.py | verify/eval.py | `load_eval_cases` | 函数 |
+| verify.py | verify/eval.py | `understand_case` | 函数 |
+| verify.py | verify/eval.py | `_value_matches` | 函数 |
+| verify.py | verify/eval.py | `_content_matches` | 函数 |
+| verify.py | verify/eval.py | `score_case` | 函数 |
+| verify.py | verify/eval.py | `understand_eval_checks` | 函数 |
+| verify.py | verify/glossary.py | `glossary_def` | 函数 |
+| verify.py | verify/glossary.py | `glossary_call` | 函数 |
+| verify.py | verify/glossary.py | `confirm_utterance` | 函数 |
+| verify.py | verify/glossary.py | `model_record` | 函数 |
+| verify.py | verify/glossary.py | `check_model_record` | 函数 |
+| verify.py | verify/glossary.py | `segment_text` | 函数 |
+| verify.py | verify/glossary.py | `segment_source` | 函数 |
+| verify.py | verify/glossary.py | `acts_of` | 函数 |
+| verify.py | verify/glossary.py | `functions_of` | 函数 |
+| verify.py | verify/glossary.py | `written` | 函数 |
+| verify.py | verify/glossary.py | `run_glossary` | 函数 |
+| verify.py | verify/glossary.py | `check_tool_sequence` | 函数 |
+| verify.py | verify/glossary.py | `check_understanding` | 函数 |
+| verify.py | verify/glossary.py | `registered_questions` | 函数 |
+| verify.py | verify/glossary.py | `utterance_of` | 函数 |
+| verify.py | verify/glossary.py | `check_question_registered` | 函数 |
+| verify.py | verify/glossary.py | `glossary_tail` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_confirm` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_revise` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_rewrite` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_alts` | 函数 |
+| verify.py | verify/glossary.py | `pattern_number` | 函数 |
+| verify.py | verify/glossary.py | `notices_of` | 函数 |
+| verify.py | verify/glossary.py | `check_notice` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_defer` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_ask` | 函数 |
+| verify.py | verify/glossary.py | `glossary_scenario_vague` | 函数 |
+| verify.py | verify/intake.py | `check_other_tool_calls` | 函数 |
+| verify.py | verify/intake.py | `common_checks` | 函数 |
+| verify.py | verify/intake.py | `rule_numbers` | 函数 |
+| verify.py | verify/intake.py | `intake_scenario_one` | 函数 |
+| verify.py | verify/intake.py | `_drop_top_key` | 函数 |
+| verify.py | verify/intake.py | `_unknown_slot` | 函数 |
+| verify.py | verify/intake.py | `_repeat_without_max` | 函数 |
+| verify.py | verify/intake.py | `load_error_checks` | 函数 |
+| verify.py | verify/intake.py | `check_one_bad_definition` | 函数 |
+| verify.py | verify/intake.py | `position` | 函数 |
+| verify.py | verify/intake.py | `bad_goal_params` | 函数 |
+| verify.py | verify/intake.py | `check_exception_call` | 函数 |
+| verify.py | verify/intake.py | `exception_common` | 函数 |
+| verify.py | verify/intake.py | `check_registered_three` | 函数 |
+| verify.py | verify/intake.py | `check_terminated` | 函数 |
+| verify.py | verify/intake.py | `intake_exception_scenario` | 函数 |
+| verify.py | verify/machine/observatory.py | `all_scenarios` | 函数 |
+| verify.py | verify/machine/observatory.py | `expected_summaries` | 函数 |
+| verify.py | verify/machine/observatory.py | `http_get` | 函数 |
+| verify.py | verify/machine/observatory.py | `observatory_checks` | 函数 |
+| verify.py | verify/machine/schema.py | `schema_checks` | 函数 |
+| verify.py | verify/machine/round_clause.py | `utterance_round_clause_checks` | 函数 |
+| verify.py | verify/machine/update_group.py | `update_group_checks` | 函数 |
+| verify.py | verify/machine/current_step.py | `current_step_checks` | 函数 |
+| verify.py | verify/machine/understanding.py | `_raises_definition_error` | 函数 |
+| verify.py | verify/machine/understanding.py | `_stub_caller` | 函数 |
+| verify.py | verify/machine/understanding.py | `_understand_once` | 函数 |
+| verify.py | verify/machine/understanding.py | `_ask_once` | 函数 |
+| verify.py | verify/machine/understanding.py | `understand_machine_checks` | 函数 |
+| verify.py | verify/machine/context_pack.py | `context_pack_checks` | 函数 |
+| verify.py | verify/machine/llm_modes.py | `fake_service` | 函数 |
+| verify.py | verify/machine/llm_modes.py | `closed_port` | 函数 |
+| verify.py | verify/machine/llm_modes.py | `llm_mode_checks` | 函数 |
+| verify.py | verify/machine/console_transcript.py | `console_transcript_checks` | 函数 |
+
+常量的去向：
+
+- tools.py → tools/base.py：`CATEGORIES`、`STATIC_TOOLS`、`_IMPLS`、`CATALOG_HEAD`
+- tools.py → tools/dialogue.py：`REASK_TEMPLATE_KEY`、`REASK_LINE`、`NOTIFY_TOOL`、`NOTICE_KIND`、`EXCEPTION_TOOL`、`EXCEPTION_PARAM_NAMES`、`REDO`、`REDO_RESULT`、`ABORT_BY_USER`、`ABORT_UNABLE`、`EXCEPTION_OPTIONS`、`EXCEPTION_OUTCOMES`、`ASK_NOTE`
+- tools.py → tools/glossary.py：`DRAFT_TOOL`、`TERM_SLOT`、`SOURCE_SLOT`、`DRAFT_SLOT`、`CONFIRMED_SLOT`、`DRAFT_PROVIDES`、`DRAFT_DEFINITION_NOTE`、`MODEL_TOOLS`
+- tools.py → tools/intake.py：`SAMPLE_DIRS`、`MANIFEST_PATH`、`INCLUDED`、`LIST_DIR_NOTE`、`REGISTER_FILE_NOTE`、`GENERATE_MANIFEST_NOTE`
+- tools.py → tools/patterns.py：`MARK_DEFERRED_TOOL`、`EXPLAIN_TOOL`、`EXPLAIN_PROVIDES`
+- tools.py → tools/understanding.py：`READ_VALUE`、`FEEDBACK_SLOT`、`UNDERSTAND_TOOL`、`REPLY_SLOT`、`LAST_QUESTION_SLOT`、`UNDERSTAND_REQUIRED_SLOTS`、`AFFIRM`、`DENY`、`REQALTS`、`INFORM`、`REQUEST`、`DEFER`、`OTHER`、`CLARIFY`、`RESPONSE_FUNCTIONS`、`ACTIVE_FUNCTIONS`、`QUESTION_SUGGEST`、`QUESTION_CHECK`、`QUESTION_CHOICE`、`QUESTION_REQUEST`、`PAIRING`、`ORIGINAL_QUESTION`、`KEY_SLOT`、`KEY_PATH`、`KEY_VALUE`、`KEY_ASK`、`KEY_CHOICE`、`KEY_CLARIFY_TEXT`、`KEY_OPTIONS`、`ACT_KEYS`、`APPEND`、`ROUTES_KEY`、`REASK_KEY`、`REASK_ORIGINAL_KEY`、`REPLACE_KEY`、`STEP_INSERTS`、`CONFIDENCE_FLOOR`、`DEFERRED_MARK`、`ALTS_FEEDBACK`、`FALLBACK_CHOICE_ADOPT`、`FALLBACK_CHOICE_REVISE`、`FALLBACK_CHOICE_DEFER`、`FALLBACK_TEXT`、`MISMATCH_TEXT`、`MISMATCH_OPTIONS`、`UNDERSTAND_REPLY_LABEL`、`UNDERSTAND_VALUES`、`NO_QUESTION`、`UNDERSTAND_PROVIDES`、`UNDERSTAND_NOTE`
+- taskdef.py → taskdef.py：`KEY_NAME`、`KEY_SLOTS`、`KEY_STAGES`、`KEY_DELIVERABLES`、`KEY_DOMAIN_RULES`、`TOP_KEYS`、`TOP_OPTIONAL_KEYS`、`DELIV_NAME`、`DELIV_NOTE`、`DELIV_SOURCE`、`DELIV_FORM`、`FORM_FORM`、`FORM_TABLE`、`FORM_TEXT`、`FORM_FILE`、`DELIV_FORMS`、`SCALAR_TYPES`、`SLOT_NOTE`、`SLOT_TYPE`、`SLOT_DEFAULT`、`SLOT_VALUES`、`SLOT_ITEM`、`SLOT_QUESTION`、`SLOT_REASK`、`SLOT_USER_WRITABLE`、`SLOT_TYPES`、`TYPE_ENUM`、`STAGE_NAME`、`STAGE_TYPE`、`STAGE_GOAL`、`STAGE_STEPS`、`STAGE_TOOLSET`、`STAGE_MAX`、`STAGE_NAME_SEPARATOR`、`TYPE_FIXED`、`TYPE_PLANNED`、`STEP_NOTE`、`STEP_TOOL`、`STEP_PARAMS`、`GROUP_STEPS`、`GROUP_UNTIL`、`GROUP_MAX`、`PREDICATE`、`PRED_NOT_NULL`、`PRED_EQUAL`、`PRED_NO_NULL_ITEM`、`PRED_KEYS`、`REF_SLOT`、`REF_LENGTH`、`REF_FIRST_NULL`、`REF_FIRST_NULL_FIELD`、`REF_KEYS`、`INSERT_KEY`、`PATTERNS_FILE`、`KEY_PATTERNS`、`PAT_ROUTES`、`PAT_MODES`、`PAT_NAME`、`PAT_INPUTS`、`PAT_STEPS`、`PREF_INPUT`、`PREF_LAST`、`PREF_SENTENCE`、`PREF_KEYS`、`INITIAL_INPUT`、`_NULL`、`PATTERN_FUNCTIONS`、`DEF_STAGES`、`DEF_NUMBER`、`DEF_EXCEPTION_NUMBERS`、`DEF_TOOL_NUMBERS`
+- taskdef.py → taskdef_step.py：`STACK_MAIN`、`STACK_INSERTS`、`FRAME_PATTERN`、`FRAME_STEP`、`FRAME_INPUT`、`FRAME_RESULT`、`FRAME_REASKED`、`FRAME_REASK_LIMIT`、`STEP_STAGE`、`STEP_LOOP`、`STEP_INDEX`、`LOOP_FROM`、`LOOP_TO`、`LOOP_NTH`、`AT_STAGE`、`AT_INDEX`、`AT_NOTE`、`AT_LOOP`、`AT_LOOP_LAST`、`NO_PRECONDITION`、`REF_NULL_NOTE`、`TRAIL_KEY`、`TRAIL_FORWARD`、`TRAIL_SKIPPED_STAGES`、`TRAIL_SKIPPED_STEPS`、`REASON_GOAL_HOLDS`、`REASON_UNTIL_HOLDS`、`REASON_LIMIT_NULL`、`EXCEPTION_KIND_KEY`、`KIND_PASS_DONE`、`KIND_GROUP_LIMIT`、`KIND_BROKEN`、`CLARIFY_FUNCTION`
+- verify.py → tools/understanding.py：`FALLBACK_OPTIONS`
+- verify.py → verify/__init__.py：`SCENARIOS`、`CHECK_GROUPS`
+- verify.py → verify/base.py：`KERNEL_THREAD_PREFIX`、`TASK_DEFS_DIR`、`SAMPLE_DIR_INPUT`、`RUNS_DIR`、`HOST_JOIN_SECONDS`、`SHOW_EXCHANGES`、`PRINT_EVENTS`、`PRINT_CHECKS`、`EXTRA_SUBSCRIBERS`、`LAST_RUN`、`EXPECTED_UTTERANCES`、`STEP_TWO_RUN_FILES`
+- verify.py → verify/eval.py：`EVAL_FILE`、`EVAL_RECORDING`、`EVAL_FLOOR`、`EVAL_STEP`
+- verify.py → verify/glossary.py：`GLOSSARY_TOOLS`、`GLOSSARY_FILE`、`GLOSSARY_RECORDING`、`GLOSSARY_TERM_ONE`、`GLOSSARY_SOURCE`、`GLOSSARY_TERM_TWO`、`GLOSSARY_INPUT_ONE`、`GLOSSARY_INPUT_TWO`、`REPLY_CONFIRM`、`REPLY_REVISE`、`REPLY_REWRITE`、`REPLY_ALTS`、`REPLY_DEFER`、`REPLY_DEFER_TERM`、`REPLY_ASK`、`REPLY_KEY`、`SUGGEST_QUESTION`、`GLOSSARY_PLACES`、`STEP_TEXT_SUGGEST`、`STEP_TEXT_CHECK`、`STEP_TEXT_CHOICE`、`STEP_TEXT_REQUEST`、`STEP_TEXT_NONE`、`REPLY_VAGUE`、`REPLY_CHOOSE_ONE`、`CLARIFY_TEXT`
+- verify.py → verify/intake.py：`INTAKE_TOOLS`、`INTAKE_ANSWERS`、`INTAKE_FINAL_DATA`、`BAD_DEFINITIONS`、`EXCEPTION_TOOLS`、`BAD_GOAL_NAME`、`OPTIONS_TEXT`、`BAD_GOAL_PREDICATE`、`BAD_GOAL_EXCEPTION_NUMBER`、`REGISTER_NOTE`、`BAD_GOAL_AT_END`、`BAD_GOAL_UTTERANCE_END`
+- verify.py → verify/machine/schema.py：`SCHEMA_STRUCTURAL`、`SCHEMA_FILE`
+- verify.py → verify/machine/understanding.py：`FAKE_SLOTS`、`FAKE_DATA`
+- verify.py → verify/machine/context_pack.py：`CTX_TERM`、`CTX_DRAFT_ONE`、`CTX_DRAFT_TWO`、`CTX_FEEDBACK`、`CTX_REPLY`、`CTX_REPLY_TWO`
+- verify.py → verify/machine/llm_modes.py：`FAKE_SERVICE_TEXT`

@@ -2,9 +2,12 @@
 
 模块：
 - kernel.py：任务循环、事件流、收发件箱与消息；不导入其他模块。
-- tools.py：静态工具表与按任务建的运行工具表，询问工具与按路径写值，材料接入登记用的三个领域工具，以及对所有任务登记的「告知异常」工具。
+- tools/：工具包。base（工具、运行工具表、工具规格、共用助手，末尾汇总各模块登记的工具并按任务建运行工具表）、
+  dialogue（询问、告知、告知异常）、understanding（对话理解）、patterns（答疑、标记推迟）、
+  intake（材料接入登记的三个领域工具）、glossary（生成术语释义）；外部照旧 from tod_kernel.tools import …。
 - dialogue.py：话语生成与回答理解，供询问工具调用。
-- taskdef.py：任务定义加载器，把 task_defs/ 下的 JSON 任务定义文件读成内核能跑的对象（阶段、步骤、当前步与异常的执行语义都在这里）。
+- taskdef.py：任务定义加载器与谓词求值，把 task_defs/ 下的 JSON 任务定义文件读成内核能跑的对象；
+  taskdef_step.py：当前步与对话模式（调用选择、记录本步、地址栈、路由、压帧弹帧、帧替换），由 taskdef.py 的任务定义对象继承。
 - task_defs/：任务定义数据文件（出差申请单、材料接入登记及其变体与异常样例），文件里只用工具名引用工具。
 - observe.py：订阅者（内存收集器、控制台打印、文件订阅者）、重放、运行索引与观测台服务。
 - observatory.html：观测台页面（运行索引、运行详情、对比），由 observe.py 的服务提供。
@@ -15,7 +18,7 @@
 - config.example.json：入库的示例配置（模式「回放」）。真实配置 config.json 不入版本库。
 - task_defs/recordings/：录制文件，模式「回放」时模型的回答从这里按请求哈希查。
 
-验证脚本：在仓根下运行 `python -m tod_kernel.verify`。
+验证脚本：在仓根下运行 `python -m tod_kernel.verify`（包 verify/：base 共用部分，intake、glossary、eval 三组，机器检查子包 machine/ 一组检查一个文件）。
 控制台：在仓根下运行 `python -m tod_kernel.console [--config 路径] [--show-calls]`。
 观测台：在仓根下运行 `python -m tod_kernel.observe serve [--dir runs] [--port 8765]`，按打印的地址用浏览器打开。
 """

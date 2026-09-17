@@ -5,7 +5,7 @@
 差别只在「回答从哪来」。预设场景的回答来自答案表，自由输入的回答来自键盘，其余全部共用，
 两种方式打印得一模一样：一行「系统：……」，一行「使用者：……」，预设的那行前面标「（预设）」。
 
-本模块是宿主一侧的东西，验证脚本（verify.py）导入它的宿主循环与预设应答者；反过来，本模块只在跑场景时
+本模块是宿主一侧的东西，验证脚本（verify 包）导入它的宿主循环与预设应答者；反过来，本模块只在跑场景时
 才在函数内部导入验证脚本，避免两个模块在加载时互相等待。
 
 用法：`python3 -m tod_kernel.console [--config 配置文件] [--show-calls]`
@@ -151,25 +151,25 @@ def run_preset(index: int, show_calls: bool = False):
     from tod_kernel import verify
 
     title, scenario = verify.SCENARIOS[index - 1]
-    verify.SHOW_EXCHANGES = True
-    verify.PRINT_EVENTS = False  # 控制台上要看的是问答，不是事件流水
-    verify.PRINT_CHECKS = False
-    verify.EXTRA_SUBSCRIBERS = (CallPrinter(),) if show_calls else ()
+    verify.base.SHOW_EXCHANGES = True
+    verify.base.PRINT_EVENTS = False  # 控制台上要看的是问答，不是事件流水
+    verify.base.PRINT_CHECKS = False
+    verify.base.EXTRA_SUBSCRIBERS = (CallPrinter(),) if show_calls else ()
     print(f"── 跑「{title}」 ──")
     try:
         checker = scenario()
     finally:
-        verify.SHOW_EXCHANGES = False
-        verify.PRINT_EVENTS = True
-        verify.PRINT_CHECKS = True
-        verify.EXTRA_SUBSCRIBERS = ()
+        verify.base.SHOW_EXCHANGES = False
+        verify.base.PRINT_EVENTS = True
+        verify.base.PRINT_CHECKS = True
+        verify.base.EXTRA_SUBSCRIBERS = ()
     total = len(checker.results)
     failed = [description for description, ok in checker.results if not ok]
     if failed:
         print(f"断言：共 {total} 条，通过 {checker.passed} 条；第一条失败是「{failed[0]}」")
     else:
         print(f"断言：通过 {total} 条")
-    run = verify.LAST_RUN
+    run = verify.base.LAST_RUN
     if run is not None:
         print(f"这次运行的任务标识是 {run.task_id}，运行文件 {run.run_file}；"
               f"用观测台打开：python3 -m tod_kernel.observe serve")
@@ -282,13 +282,13 @@ def run_free_input(config: dict, show_calls: bool = False) -> int:
             for slot in slots:
                 print(f"  {slot} = {run.task.data.get(slot)!r}")
     c = verify.Checker("自由输入的通用检查")
-    verify.PRINT_CHECKS = False
+    verify.base.PRINT_CHECKS = False
     try:
         verify.check_integrity(c, run)
         verify.check_run_file(c, run)
         verify.check_sources_and_senders(c, run, closed_before_failure_of=closed_before_failure(run))
     finally:
-        verify.PRINT_CHECKS = True
+        verify.base.PRINT_CHECKS = True
     failed = [description for description, ok in c.results if not ok]
     if failed:
         print(f"通用检查：共 {len(c.results)} 条，通过 {c.passed} 条；失败的有：")
