@@ -32,7 +32,8 @@ import dataclasses
 from tod_kernel import kernel, llm, taskdef
 # 控制台是宿主一侧的东西：宿主循环、两个应答者与答案表的键都在那里，验证脚本与它共用同一套。
 from tod_kernel.console import PRESET_ANSWER_PREFIX, QUESTION_PREFIX, PresetAnswerer, host_loop, target_key
-from tod_kernel.tools import DRAFT_TOOL, EXCEPTION_OPTIONS, EXCEPTION_TOOL, JUDGE_TOOL, build_table
+from tod_kernel.tools import DRAFT_TOOL, EXCEPTION_OPTIONS, EXCEPTION_TOOL, UNDERSTAND_TOOL, build_table
+from tod_kernel.tools import REASK_LINE, prompt_pack_of
 from tod_kernel.tools import set_at as tools_set_at
 from tod_kernel.kernel import (
     CALL_PROPOSED,
@@ -178,6 +179,21 @@ def step_at(stage, index=None, loop=None) -> dict:
     return value
 
 
+def stack(main, inserts=None) -> dict:
+    """当前步的地址栈（第五步 4.12 节）：主线地址加插入段列表（栈底在前）。"""
+    return {"主线": main, "插入": list(inserts or [])}
+
+
+def frame(mode, done, inputs, **extra) -> dict:
+    """插入段的一帧：模式名、做完的步数、触发时带的输入；结果、再问次数这类键按需给。"""
+    return {"模式": mode, "步骤": done, "输入": inputs, **extra}
+
+
+def stacked(sequence) -> list:
+    """把只写主线地址的当前步序列包成地址栈（插入为空），给不涉及插入段的场景比对用。"""
+    return [(source, stack(main)) for source, main in sequence]
+
+
 def step_sequence(run) -> list:
     """这次运行里当前步的变化序列：[(来源, 新值), …]，按事件序号。来源是「初始化」或工具调用编号。"""
     return [(e.payload["source"], e.payload["new"]) for e in named(run.events, STEP_CHANGED)]
@@ -186,6 +202,8 @@ def step_sequence(run) -> list:
 def check_step_final(c, run, expected: dict) -> None:
     """当前步的终态值（任务对象上的字段，不在任务数据里）。"""
     actual = run.task.step if run.task is not None else None
+    if not (isinstance(expected, dict) and "主线" in expected):
+        expected = stack(expected)
     c.check(f"第四步：当前步的终态值是 {expected}", actual == expected, actual)
 
 
@@ -200,7 +218,8 @@ EXPECTED_UTTERANCES = {
 
 
 def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), runs_dir=None, console=True,
-                 exception_answers=None, call_model=None, answerer=None, show=None, subscribers=None) -> Run:
+                 exception_answers=None, call_model=None, answerer=None, show=None, subscribers=None,
+                 confidence_floor=None) -> Run:
     """跑一个场景。
 
     exception_answers：第三步新增，使用者对「告知异常」依次给的回答；用完后再来告知异常就关闭收件箱。
@@ -208,6 +227,7 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
     answerer：应答者，默认按答案表答；控制台的自由输入方式换成从键盘取回答的那个。
     show：是否打印一问一答，默认随模块开关 SHOW_EXCHANGES。
     subscribers：另外挂的事件订阅者，默认随模块开关 EXTRA_SUBSCRIBERS。
+    confidence_floor：第五步新增，对话理解的把握阈值；不给就用工具一侧的默认值 0.6。
     """
     global LAST_RUN
     run = Run(task_id=task_id, task_def=task_def, host_thread=threading.get_ident())
@@ -273,7 +293,8 @@ def run_scenario(task_id: str, task_def, answers: dict, tool_names=("ask",), run
     kernel.update_state, kernel.execute, kernel.select_call = update_probe, execute_probe, select_probe
     kernel.register_call = register_probe
     # 上下文包要读至今的事件（对话历史、修订记录）：宿主本来就持有内存收集器，把读它的函数交给工具表，内核不动。
-    table = build_table(task_def, tool_names, call_model=call_model, read_events=lambda: list(collector.events))
+    floor = {} if confidence_floor is None else {"confidence_floor": confidence_floor}
+    table = build_table(task_def, tool_names, call_model=call_model, read_events=lambda: list(collector.events), **floor)
     run.tools_spec = {name: {"param_names": list(tool.param_names), "category": tool.category, "summary": tool.summary,
                              **({"writer_roles": dict(tool.writer_roles)} if tool.writer_roles else {})}
                       for name, tool in table.items()}
@@ -465,6 +486,11 @@ def check_trace_shape(c: Checker, run: Run, loops: int, mailbox_tools=("ask",)) 
         c.check(f"追踪：工具调用 {aid} 的「调用执行调用」依次是 enter、return，线程是内核线程",
                 [e.payload["phase"] for e in calls] == ["enter", "return"]
                 and all(e.payload["thread"] == KERNEL_THREAD_PREFIX + run.task_id for e in calls))
+        if proposed.payload["tool"] == "告知":  # 第五步增补：告知只往发件箱放一条，不等回答
+            c.check(f"追踪：工具调用 {aid}（工具 告知）只往发件箱放一条告知，不在收件箱上等待",
+                    not waits and [(e.name, e.payload["box"]) for e in mine if e.name in (MESSAGE_PUT, MESSAGE_TAKEN)]
+                    in ([(MESSAGE_PUT, OUTBOX)], [(MESSAGE_PUT, OUTBOX), (MESSAGE_TAKEN, OUTBOX)]))
+            continue
         if proposed.payload["tool"] not in mailbox_tools:  # 第三步起告知异常也走邮箱，由新场景传入
             c.check(f"追踪：工具调用 {aid}（工具 {proposed.payload['tool']}）不碰邮箱，没有邮箱等待",
                     not waits and not [e for e in mine if e.name in (MESSAGE_PUT, MESSAGE_TAKEN)])
@@ -516,8 +542,10 @@ def check_sources_and_senders(c: Checker, run: Run, closed_before_failure_of: in
             all(e.payload["sender"] in EXTERNAL_SENDERS and run.thread_of_seq[e.seq] != run.kernel_thread for e in inbox_acts),
             [(e.seq, e.name, e.payload["sender"]) for e in inbox_acts])
     questions = on(OUTBOX, MESSAGE_PUT)
-    c.check("发起方：发件箱里的问题，发起方是 tool.<工具名>，类型是 question，收件人是 user，出自内核线程",
-            all(e.payload["sender"] == TOOL_SOURCE_PREFIX + tool_of[e.call_id] and e.payload["kind"] == "question"
+    # 第五步增补起发件箱里还有告知（种类 notice，出自工具「告知」，不等回答）
+    c.check("发起方：发件箱里的问题与告知，发起方是 tool.<工具名>，类型是 question（告知工具放的是 notice），收件人是 user，出自内核线程",
+            all(e.payload["sender"] == TOOL_SOURCE_PREFIX + tool_of[e.call_id]
+                and e.payload["kind"] == ("notice" if tool_of[e.call_id] == "告知" else "question")
                 and e.payload["recipient"] == "user" and run.thread_of_seq[e.seq] == run.kernel_thread for e in questions),
             [(e.seq, e.payload) for e in questions])
     for box, expected_sender in ((INBOX, "user"), (OUTBOX, None)):
@@ -603,7 +631,8 @@ def check_waiting_then_success(c: Checker, run: Run, call_id: int, expected_utte
             puts[0].payload["in_reply_to"] == takes[0].payload["in_reply_to"] == questions[0].payload["seq"])
     c.check(f"目标二：工具调用 {call_id} 的问题与回答，内容里的所属工具调用都是 {call_id}",
             questions[0].payload["call_id"] == puts[0].payload["call_id"] == takes[0].payload["call_id"] == call_id)
-    changes = of_call(events, DATA_CHANGED, call_id)
+    # 第五步起询问还可能登记上一问、清空待处理，这里只看写入目标那一条，另外两条由场景自己核对。
+    changes = [e for e in of_call(events, DATA_CHANGED, call_id) if e.payload["slot"] == target["slot"]]
     path = target["path"]
     c.check(f"目标二：工具调用 {call_id} 的数据变更新值按写入目标路径 {path} 取出的值 = 取出的回答 = 「已成功」事件的返回值；"
             "槽位是写入目标的槽位，除该路径外新旧值相同",
@@ -638,7 +667,9 @@ def check_kernel_is_task_agnostic(c: Checker) -> None:
     source = source_path.read_text(encoding="utf-8")
     words = ("目的地", "日期", "事由",  # 出差申请单（该任务的场景已退役，词表留着看住内核）
              "目录", "文件总表", "材料清单", "登记进度", "清单文件路径", "list_dir", "register_file", "generate_manifest",
-             "术语", "原文片段", "释义草稿", "确认释义", "生成术语释义")  # 术语澄清
+             "术语", "原文片段", "释义草稿", "确认释义", "生成术语释义",  # 术语澄清
+             "对话理解", "上一问", "修改意见",  # 第五步：对话理解与它的必备槽位
+             "答疑", "标记推迟", "主线", "插入")  # 第五步增补：对话模式层只有任务定义加载器认识
     hits = {word: source.count(word) for word in words if source.count(word)}
     c.check("内核文件里不出现三个任务的槽位名与工具名", not hits, hits)
     c.check("内核文件里不出现工具名（字符串 \"ask\" 与「询问」）",
@@ -739,10 +770,23 @@ def check_other_tool_calls(c: Checker, run: Run) -> None:
             continue
         history = status_values(call_history(events, call.call_id))
         slots = {e.payload["slot"] for e in of_call(events, DATA_CHANGED, call.call_id)}
-        c.check(f"工具调用 {call.call_id}（{call.tool}）的状态经过是 已提出、已获准、已成功，"
-                f"变更只写可写槽位 {sorted(run.writable.get(call.tool) or [])}",
+        allowed = run.writable.get(call.tool)
+        if allowed is not None and not allowed:
+            # 不写槽位的工具（告知、答疑）：一条变更都不该有
+            c.check(f"工具调用 {call.call_id}（{call.tool}）的状态经过是 已提出、已获准、已成功，不写任何槽位",
+                    history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.SUCCEEDED] and not slots,
+                    (history, slots))
+            continue
+        if allowed is None:
+            # 可写槽位由数据决定的工具（对话理解）：只能写使用者可写的槽位，外加它自己读后清空、登记的必备槽位
+            metas = run.task_def.DEFINITION.get("槽位", {})
+            allowed = {name for name, meta in metas.items() if meta.get("使用者可写", True) is not False}
+            label = "使用者可写的槽位与必备槽位"
+        else:
+            label = f"可写槽位 {sorted(allowed)}"
+        c.check(f"工具调用 {call.call_id}（{call.tool}）的状态经过是 已提出、已获准、已成功，变更只写{label}",
                 history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.SUCCEEDED]
-                and slots and slots <= set(run.writable.get(call.tool) or ()),
+                and slots and slots <= set(allowed),
                 (history, slots))
 
 
@@ -812,10 +856,10 @@ def all_scenarios():
         dict(task_id="T-intake-1", task_def=intake_def(), answers=INTAKE_ANSWERS, tool_names=INTAKE_TOOLS),
         dict(task_id="T-exception-3", task_def=intake_def("intake_bad_goal.json"), answers=INTAKE_ANSWERS,
              tool_names=EXCEPTION_TOOLS, exception_answers=["被动终止"]),
-        dict(task_id="T-glossary-1", task_def=glossary_def(dict(GLOSSARY_INPUT_ONE)), answers=GLOSSARY_ANSWERS_ONE,
+        dict(task_id="T-glossary-1", task_def=glossary_def(dict(GLOSSARY_INPUT_ONE)), answers={REPLY_KEY: [REPLY_CONFIRM]},
              tool_names=GLOSSARY_TOOLS, call_model=glossary_call()[0]),
-        dict(task_id="T-glossary-2", task_def=glossary_def(dict(GLOSSARY_INPUT_TWO)), answers=GLOSSARY_ANSWERS_TWO,
-             tool_names=GLOSSARY_TOOLS, call_model=glossary_call()[0]),
+        dict(task_id="T-glossary-2", task_def=glossary_def(dict(GLOSSARY_INPUT_TWO)),
+             answers={REPLY_KEY: [REPLY_REVISE, REPLY_CONFIRM]}, tool_names=GLOSSARY_TOOLS, call_model=glossary_call()[0]),
     ]
 
 
@@ -1068,7 +1112,8 @@ def schema_checks() -> Checker:
     if schema_error is not None:
         return c
     validator = jsonschema.Draft202012Validator(schema)
-    good = sorted(path for path in TASK_DEFS_DIR.glob("*.json") if path.name != SCHEMA_FILE)
+    # 对话模式文件 patterns.json 不是任务定义，格式由加载器的 load_patterns 校验
+    good = sorted(path for path in TASK_DEFS_DIR.glob("*.json") if path.name not in (SCHEMA_FILE, "patterns.json"))
     for path in good:
         errors = [e.message for e in validator.iter_errors(json_module.loads(path.read_text(encoding="utf-8")))]
         c.check(f"好文件 {path.name} 通过 schema", not errors, errors)
@@ -1186,7 +1231,7 @@ def check_exception_call(c: Checker, run: Run, call_id: int, number: int, stage:
     c.check(f"工具调用 {call_id} 没有数据变更：告知异常工具不写任何槽位", not changes, [e.payload for e in changes])
     if answer == "重做本阶段":
         c.check(f"工具调用 {call_id} 选重做：发一条当前步变化，新值是「{stage}」阶段起点，来源是这个工具调用",
-                len(steps) == 1 and steps[0].payload["new"] == step_at(stage) and steps[0].payload["source"] == call_id,
+                len(steps) == 1 and steps[0].payload["new"] == stack(step_at(stage)) and steps[0].payload["source"] == call_id,
                 [e.payload for e in steps])
     else:
         c.check(f"工具调用 {call_id} 选终止：当前步不动，没有当前步变化事件", not steps, [e.payload for e in steps])
@@ -1243,12 +1288,12 @@ def intake_exception_scenario() -> Checker:
     check_step_final(c, run, step_at("登记", 1, loop=(1, 1, 3)))
     # 第 5 次迭代是告知异常，使用者选终止：工具调用记已失败，当前步不动，所以只有五条当前步变化。
     c.check("当前步逐次记下走到哪：初始化、列目录一步、登记那一步循环三次；告知异常那次不写当前步",
-            step_sequence(run) == [
+            step_sequence(run) == stacked([
                 ("初始化", step_at("列目录")),
                 (1, step_at("列目录", 1)),
                 (2, step_at("登记", 1, loop=(1, 1, 1))),
                 (3, step_at("登记", 1, loop=(1, 1, 2))),
-                (4, step_at("登记", 1, loop=(1, 1, 3)))], step_sequence(run))
+                (4, step_at("登记", 1, loop=(1, 1, 3)))]), step_sequence(run))
     exception_common(c, run, loops=5)
     return c
 
@@ -1328,7 +1373,7 @@ def current_step_checks() -> Checker:
     intake = intake_def("intake.json")
 
     c.check("初始当前步是第一个阶段的起点，只有「阶段」这一层",
-            glossary.INITIAL_STEP == step_at("写释义草稿") and intake.INITIAL_STEP == step_at("列目录"),
+            glossary.INITIAL_STEP == stack(step_at("写释义草稿")) and intake.INITIAL_STEP == stack(step_at("列目录")),
             (glossary.INITIAL_STEP, intake.INITIAL_STEP))
 
     def a_call(number, status=CallStatus.SUCCEEDED, result=None):
@@ -1339,24 +1384,28 @@ def current_step_checks() -> Checker:
 
     # 规则一：工具调用没成功，当前步不动。
     before = step_at("确认", 2, loop=(1, 3, 2))
+    def main_of(value):
+        """第五步起记录本步返回地址栈；这组检查只看主线那一层，插入段另有检查。"""
+        return value.get("主线") if isinstance(value, dict) and "主线" in value else value
+
     c.check("记录本步规则一：工具调用已失败时当前步原样不动",
             glossary.record_step(before, a_call(3, CallStatus.FAILED)) == before,
             glossary.record_step(before, a_call(3, CallStatus.FAILED)))
     # 规则二：告知异常且返回值「重做」回到该阶段起点；终止不动。
-    redo = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="重做"))
-    stop = intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="被动终止"))
+    redo = main_of(intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="重做")))
+    stop = main_of(intake.record_step(step_at("登记", 1, loop=(1, 1, 3)), a_call(6, result="被动终止")))
     c.check("记录本步规则二：告知异常选重做，当前步回到该阶段起点『登记』；选终止时不动",
             redo == step_at("登记") and stop == step_at("登记", 1, loop=(1, 1, 3)), (redo, stop))
     # 规则三：其余写该步的阶段与阶段内序号，落在循环段里时带起止与第几次。
     c.check("记录本步规则三：不在循环段里的一步只写阶段与阶段内序号",
-            glossary.record_step(step_at("写释义草稿"), a_call(2)) == step_at("写释义草稿", 2),
+            main_of(glossary.record_step(step_at("写释义草稿"), a_call(2))) == step_at("写释义草稿", 2),
             glossary.record_step(step_at("写释义草稿"), a_call(2)))
 
     # 「第几次」：进这段循环记 1；同一次里沿用；回到段首加 1；段尾被跳过、停在段中时回段首也加 1。
-    first = glossary.record_step(step_at("写释义草稿", 2), a_call(3))
-    same = glossary.record_step(first, a_call(4))
-    again = glossary.record_step(step_at("确认", 3, loop=(1, 3, 1)), a_call(3))
-    skipped = glossary.record_step(step_at("确认", 2, loop=(1, 3, 1)), a_call(3))
+    first = main_of(glossary.record_step(step_at("写释义草稿", 2), a_call(3)))
+    same = main_of(glossary.record_step(first, a_call(4)))
+    again = main_of(glossary.record_step(step_at("确认", 3, loop=(1, 3, 1)), a_call(3)))
+    skipped = main_of(glossary.record_step(step_at("确认", 2, loop=(1, 3, 1)), a_call(3)))
     c.check("「第几次」：从循环段外进来记第 1 次",
             first == step_at("确认", 1, loop=(1, 3, 1)), first)
     c.check("「第几次」：同一次里往后走，第几次沿用",
@@ -1396,12 +1445,12 @@ def current_step_checks() -> Checker:
     c.check("step_text 三种形状：阶段起点、不在循环段里、在循环段里（写明起止、第几次与上限）",
             texts == ["当前步：『写释义草稿』阶段，还没有做完任何一步",
                       "当前步：『写释义草稿』阶段，做完了第 2 步『根据术语（与原文片段，若有）生成释义草稿』",
-                      "当前步：『确认』阶段，第 1 到第 3 步循环的第 2 次（最多 5 次），做完了第 2 步『判读回复：确认还是修改』"],
+                      "当前步：『确认』阶段，第 1 到第 3 步循环的第 2 次（最多 5 次），做完了第 2 步『理解使用者的回复』"],
             texts)
     view = glossary.step_view(step_at("确认", 2, loop=(1, 3, 2)))
     c.check("step_view 给出阶段名、阶段内序号、这一步的说明、循环起止与第几次与上限、是不是段尾，页面不用自己算",
-            view == {"阶段": "确认", "步骤": 2, "说明": "判读回复：确认还是修改",
-                     "循环": {"起": 1, "止": 3, "第几次": 2, "最多": 5}, "是段尾": False}, view)
+            view == {"阶段": "确认", "步骤": 2, "说明": "理解使用者的回复",
+                     "循环": {"起": 1, "止": 3, "第几次": 2, "最多": 5}, "是段尾": False, "插入": []}, view)
     c.check("step_text 读不懂时照实说，不抛错（旧运行文件或宿主给了别的东西）",
             glossary.step_text({"阶段": "没有这个阶段"}).startswith("当前步：读不出来")
             and glossary.step_view("不是字典") is None, glossary.step_text({"阶段": "没有这个阶段"}))
@@ -1411,25 +1460,43 @@ def current_step_checks() -> Checker:
 
 # ───────────────────────── 场景：术语澄清 ─────────────────────────
 
-GLOSSARY_TOOLS = ("ask", DRAFT_TOOL, JUDGE_TOOL)
+GLOSSARY_TOOLS = ("ask", DRAFT_TOOL, UNDERSTAND_TOOL)
 GLOSSARY_FILE = "glossary.json"
 # 录制文件：模式「回放」时模型的回答从这里来。路径以 tod_kernel 包目录为基准。
 GLOSSARY_RECORDING = "task_defs/recordings/glossary.json"
 
-# 两个场景的定稿文本（2026-09-16）。它们与提示词一起决定请求哈希：改一个字，录制文件就全部失效要重录。
+# 场景的定稿文本（第四步 2026-09-16 定下两段输入，第五步 2026-09-17 定下六句回答，回答取第五步 4.9 节的原句）。
+# 它们与提示词一起决定请求哈希：改一个字，录制文件就全部失效要重录。
 GLOSSARY_TERM_ONE = "基线"
 GLOSSARY_SOURCE = ("每一轮评审通过后，把当时的全部条目连同它们的版本号一并冻结下来，"
                    "形成一份此后只能经变更流程修改的参照物；后续的改动都以它为对照。")
 GLOSSARY_TERM_TWO = "需求确认"
-# 使用者看过草稿后的两种回答：一句提修改意见，一句确认。它们是回答，不进请求，但会经对话历史进下一次调用。
-GLOSSARY_REVISE_REPLY = "太长了，压成两句，并且要说明它的产出是一份签字确认的需求清单。"
-GLOSSARY_CONFIRM_REPLY = "可以，就这样。"
-
-# 答案表的值是一串时按次序一轮一句：场景二第 1 轮提意见、第 2 轮确认。
-GLOSSARY_ANSWERS_ONE = {("回复", ()): [GLOSSARY_CONFIRM_REPLY]}
-GLOSSARY_ANSWERS_TWO = {("回复", ()): [GLOSSARY_REVISE_REPLY, GLOSSARY_CONFIRM_REPLY]}
 GLOSSARY_INPUT_ONE = {"术语": GLOSSARY_TERM_ONE, "原文片段": GLOSSARY_SOURCE}
 GLOSSARY_INPUT_TWO = {"术语": GLOSSARY_TERM_TWO}
+REPLY_CONFIRM = "可以，就这样。"
+REPLY_REVISE = "太长了，压成两句，并且要说明产出是签字确认的需求清单。"
+REPLY_REWRITE = "需求确认是相关方逐条审阅需求并签字认可的活动，产出是一份双方签字的需求清单。"
+REPLY_ALTS = "换个说法吧。"
+REPLY_DEFER = "先放着，术语我想改成「需求评审」。"
+REPLY_DEFER_TERM = "需求评审"
+REPLY_ASK = "「产出」是什么意思？"
+REPLY_KEY = ("回复", ())
+SUGGEST_QUESTION = {"类型": "建议", "槽位": "释义草稿", "路径": [], "选项": None, "采纳到": "确认释义"}
+# 对话理解本步段的五种白话写法（第五步 4.4A 节），以术语澄清的槽位表为例；逐字核对，改提示词包要同步改这里。
+GLOSSARY_PLACES = "术语、原文片段、修改意见、确认释义"
+STEP_TEXT_SUGGEST = ("本步执行工具「对话理解」：系统刚才念了一份「释义草稿」，请使用者确认或提修改意见；"
+                     "使用者同意时，这份草稿会写进「确认释义」。现在请判断使用者的回答：可以是同意、否定、要换一份；"
+                     f"也可以顺带给出内容（可写的位置：{GLOSSARY_PLACES}）、提问、推迟、无关的话；只有语气词或分不清意思时要澄清，不要当成同意。")
+STEP_TEXT_CHECK = ("本步执行工具「对话理解」：系统刚才向使用者核对，使用者说的「需求评审」是不是应该记成「术语」。"
+                   "现在请判断使用者的回答：可以是同意（记得对）、否定（记得不对）；"
+                   f"也可以顺带给出内容（可写的位置：{GLOSSARY_PLACES}）、提问、推迟、无关的话；只有语气词或分不清意思时要澄清，不要当成同意。")
+STEP_TEXT_CHOICE = ("本步执行工具「对话理解」：系统刚才请使用者从这几项里选一项：1 确认这一稿、2 修改这一稿、3 先放一放。"
+                    "现在请判断使用者的回答：可以是同意（选了其中一项，给出那一项的序号）、否定（哪一项都不要）；"
+                    f"也可以顺带给出内容（可写的位置：{GLOSSARY_PLACES}）、提问、推迟、无关的话；只有语气词或分不清意思时要澄清，不要当成同意。")
+STEP_TEXT_REQUEST = ("本步执行工具「对话理解」：系统刚才请使用者提供「术语」。现在请判断使用者的回答："
+                     f"可以是给出内容（可写的位置：{GLOSSARY_PLACES}）、否定（不提供）；也可以是提问、推迟、无关的话；只有语气词或分不清意思时要澄清，不要当成同意。")
+STEP_TEXT_NONE = ("本步执行工具「对话理解」：系统这次没有向使用者提问，是使用者主动说了一句话。现在请判断这句话："
+                  f"可以是给出内容（可写的位置：{GLOSSARY_PLACES}）、提问、推迟、无关的话；只有语气词或分不清意思时要澄清。")
 
 
 def glossary_def(initial=None):
@@ -1446,18 +1513,8 @@ def glossary_call(recording=GLOSSARY_RECORDING, mode=llm.MODE_REPLAY):
     return llm.make_caller(config, recording_path=recording), config
 
 
-def recorded_answers(recording=GLOSSARY_RECORDING) -> list:
-    """录制文件里的回答原文，按录的顺序。断言拿它与槽位值比，不把模型写的话抄进脚本。"""
-    path = llm.recording_path_of({"recording_path": recording})
-    return [entry.get("response") for entry in llm.read_recording(path)]
-
-
-def glossary_common(c: Checker, run: Run, loops: int, closed_before_failure_of=None) -> None:
-    common_checks(c, run, loops=loops, closed_before_failure_of=closed_before_failure_of)
-
-
 def confirm_utterance(term: str, draft: str) -> str:
-    """念草稿那一问的预期句：模板在定义文件里，草稿是模型现写的，所以由场景现拼，不进常量表。"""
+    """念草稿那一问的预期句：模板在定义文件里，草稿是模型现写的，所以由场景现拼。"""
     return f"对术语「{term}」的释义草稿是：{draft} 请确认，或提出修改意见。"
 
 
@@ -1480,14 +1537,13 @@ def check_model_record(c: Checker, run: Run, call_id: int, config: dict, shape: 
             {key: record.get(key) for key in ("mode", "model", "shape", "elapsed_ms")})
     actual = [segment["type"] for segment in record.get("segments") or []]
     c.check(f"工具调用 {call_id} 的段列表按固定顺序装了：{'、'.join(segments)}", actual == segments, actual)
-    body = {segment["type"]: segment for segment in record.get("segments") or []}
     c.check(f"工具调用 {call_id} 的每段都带类型、来源与正文，正文是逐字原文（不截断）",
             all(segment.get("source") and isinstance(segment.get("text"), str)
-                for segment in record.get("segments") or []), body.keys())
+                for segment in record.get("segments") or []), actual)
 
 
 def segment_text(run: Run, call_id: int, seg_type: str, source_part: str = "") -> str:
-    """取某条调用记录里某一段的正文；source_part 用来在同类型多段里挑（例如当前数据段有好几段）。"""
+    """取某条调用记录里某一段的正文；source_part 用来在同类型多段里挑。"""
     for segment in model_record(run, call_id).get("segments") or []:
         if segment["type"] == seg_type and source_part in segment["source"]:
             return segment["text"]
@@ -1501,189 +1557,1020 @@ def segment_source(run: Run, call_id: int, seg_type: str, source_part: str = "")
     return ""
 
 
-def glossary_scenario_one() -> Checker:
-    """场景：术语澄清，给全初始输入，一次确认。证明模型在工具里被调用、JSON 判读、问术语那步被前置条件跳过。"""
-    title = "术语澄清：给全初始输入，一次确认"
-    banner(title)
+def acts_of(run: Run, call_id: int) -> list:
+    """某条对话理解工具调用规范化后的行为列表。"""
+    return model_record(run, call_id).get("acts") or []
+
+
+def functions_of(run: Run, call_id: int) -> list:
+    return [act.get("功能") for act in acts_of(run, call_id)]
+
+
+def written(run: Run, slot: str) -> list:
+    """工具调用写进某个槽位的值，按事件顺序；初始化那条（来源「初始化」、不挂工具调用编号）不算。"""
+    return [e.payload["new"] for e in named(run.events, DATA_CHANGED) if e.payload["slot"] == slot and e.call_id is not None]
+
+
+def run_glossary(task_id: str, initial: dict, replies: list):
     call_model, config = glossary_call()
-    run = run_scenario("T-glossary-1", glossary_def(dict(GLOSSARY_INPUT_ONE)), GLOSSARY_ANSWERS_ONE,
-                       GLOSSARY_TOOLS, call_model=call_model)
+    run = run_scenario(task_id, glossary_def(dict(initial)), {REPLY_KEY: list(replies)}, GLOSSARY_TOOLS,
+                       call_model=call_model)
+    return run, config
+
+
+def check_tool_sequence(c: Checker, run: Run, expected: list, description: str) -> bool:
+    actual = [(e.payload["tool"], e.payload["basis"][0]) for e in named(run.events, CALL_PROPOSED)]
+    c.check(description, actual == expected, actual)
+    return len(actual) >= len(expected)
+
+
+def check_understanding(c: Checker, run: Run, call_id: int, config: dict, reply: str, functions: list) -> None:
+    """一条对话理解工具调用：调用记录的形状、这句原话、规范化后的功能列表、「回复」与「上一问」读后清空。"""
+    check_model_record(c, run, call_id, config, "JSON", ["任务进度", "对话历史", "当前数据", "本步", "输出形状"])
+    record = model_record(run, call_id)
+    c.check(f"工具调用 {call_id}（对话理解）的记录带着原话「{reply}」、模型输出能按 Schema 解析（没有走没听懂的兜底）",
+            record.get("reply") == reply and record.get("problem") is None, (record.get("reply"), record.get("problem")))
+    c.check(f"工具调用 {call_id}（对话理解）规范化后的行为列表的功能依次是 {'、'.join(functions)}，每项都记了落成了什么",
+            functions_of(run, call_id) == functions and all(act.get("落成") for act in acts_of(run, call_id)),
+            [(act.get("功能"), act.get("内容"), act.get("落成")) for act in acts_of(run, call_id)])
+    cleared = {e.payload["slot"]: e.payload["new"] for e in of_call(run.events, DATA_CHANGED, call_id)}
+    c.check(f"工具调用 {call_id}（对话理解）读过后把「回复」与「上一问」清空",
+            "回复" in cleared and cleared["回复"] is None and "上一问" in cleared and cleared["上一问"] is None, cleared)
+    step = segment_text(run, call_id, "本步")
+    c.check(f"工具调用 {call_id}（对话理解）的本步段逐字是建议类那一种白话写法；输出形状段说明这份结构也作为接口参数",
+            step == STEP_TEXT_SUGGEST and "接口参数" in segment_source(run, call_id, "输出形状"), step)
+
+
+def registered_questions(run: Run, call_id: int) -> list:
+    """某条询问调用登记的上一问（数据变更里「上一问」的新值）。"""
+    return [e.payload["new"] for e in of_call(run.events, DATA_CHANGED, call_id) if e.payload["slot"] == "上一问"]
+
+
+def utterance_of(run: Run, call_id: int):
+    """某条询问调用放进发件箱的那句话；没有就是 None。"""
+    for event in of_call(run.events, MESSAGE_PUT, call_id):
+        if event.payload["box"] == OUTBOX and isinstance(event.payload.get("content"), dict):
+            return event.payload["content"].get("utterance")
+    return None
+
+
+def check_question_registered(c: Checker, run: Run, call_id: int, expected: dict) -> None:
+    registered = registered_questions(run, call_id)
+    c.check(f"工具调用 {call_id}（念草稿）登记了上一问 {expected}", registered == [expected], registered)
+
+
+def glossary_tail(c: Checker, run: Run, loops: int) -> None:
+    check_other_tool_calls(c, run)
+    check_explainable(c, run)
+    common_checks(c, run, loops=loops)
+
+
+def glossary_scenario_confirm() -> Checker:
+    """场景：术语澄清，确认。给全初始输入，念草稿后使用者一句「可以，就这样。」，对话理解出一项 AFFIRM，草稿抄进确认释义。"""
+    title = "术语澄清：确认"
+    banner(title)
+    run, config = run_glossary("T-glossary-1", GLOSSARY_INPUT_ONE, [REPLY_CONFIRM])
     c = Checker(title)
     print("── 断言 ──")
     check_kernel_is_task_agnostic(c)
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
-    if run.task is None:
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4)],
+            "三个工具调用：生成术语释义（第 2 步）、念草稿（第 3 步）、对话理解（第 4 步）；问术语那一步因写入目标已有值被跳过"):
         return c
     task = run.task
-    proposed = named(run.events, CALL_PROPOSED)
-    actual = [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
-    c.check("三个工具调用：生成术语释义（第 2 步）、念草稿问回复（第 3 步）、判读回复（第 4 步）；"
-            "问术语那一步因写入目标已有值被跳过",
-            actual == [(DRAFT_TOOL, 2), ("ask", 3), (JUDGE_TOOL, 4)], actual)
-    if len(proposed) < 3:  # 工具调用没跑齐（例如录制缺失），后面的断言无从谈起
-        return c
     skip_reason = "前置条件不成立：写入目标指向的位置为 None"
     check_selection_trail(c, run, {1: {"前进": [], "跳过阶段": [], "跳过步骤": [[1, skip_reason]]}})
-
     check_model_record(c, run, 1, config, "文本", ["任务进度", "对话历史", "当前数据", "参考材料", "本步", "输出形状"])
-    c.check("写首稿时参考材料段装的是初始输入给的原文片段，不是「（未提供）」",
-            segment_text(run, 1, "参考材料") == GLOSSARY_SOURCE, segment_text(run, 1, "参考材料"))
-    c.check("写首稿时对话历史是空的（这个阶段还没问过话）", segment_text(run, 1, "对话历史") == "（无）",
-            segment_text(run, 1, "对话历史"))
+    c.check("写首稿时参考材料段装的是初始输入给的原文片段", segment_text(run, 1, "参考材料") == GLOSSARY_SOURCE,
+            segment_text(run, 1, "参考材料"))
     draft = model_record(run, 1).get("response", "").strip()
     c.check("释义草稿等于模型返回原文去掉首尾空白", task.data.get("释义草稿") == draft, task.data.get("释义草稿"))
     check_waiting_then_success(c, run, 2, expected_utterance=confirm_utterance(GLOSSARY_TERM_ONE, draft))
-
-    check_model_record(c, run, 3, config, "JSON", ["任务进度", "对话历史", "当前数据", "本步", "输出形状"])
-    parsed = model_record(run, 3).get("parsed") or {}
-    c.check("判读那条的解析结果是 {\"决定\": \"确认\", …}，确认文本非空",
-            parsed.get("决定") == "确认" and isinstance(parsed.get("确认文本"), str) and parsed["确认文本"].strip(), parsed)
-    c.check("确认释义等于解析出的确认文本，「回复」判读后被清空",
-            task.data.get("确认释义") == (parsed.get("确认文本") or "").strip() and task.data.get("回复") is None,
-            (task.data.get("确认释义"), task.data.get("回复")))
-    c.check("判读那条的记录写明每个键写到了哪个槽位：确认文本 → 确认释义",
-            model_record(run, 3).get("writes") == {"确认文本": "确认释义"}, model_record(run, 3).get("writes"))
+    check_question_registered(c, run, 2, {**SUGGEST_QUESTION, "念的值": draft})
+    check_understanding(c, run, 3, config, REPLY_CONFIRM, ["AFFIRM"])
+    c.check("AFFIRM 按建议类上一问落：释义草稿的当前值写进确认释义，没有待路由的行为（不压插入段）",
+            task.data.get("确认释义") == draft and model_record(run, 3).get("routes") == [], task.data.get("确认释义"))
     c.check("交付物只有一项，名字「术语释义」，来源「确认释义」，形态文本",
             [(d["名字"], d["来源"], d["形态"]) for d in run.task_def.DEFINITION.get("交付物", [])]
             == [("术语释义", "确认释义", "文本")], run.task_def.DEFINITION.get("交付物"))
     c.check("任务状态是已完成，术语与原文片段仍是初始输入给的那两段",
             task.status == TaskStatus.DONE and task.data.get("术语") == GLOSSARY_TERM_ONE
             and task.data.get("原文片段") == GLOSSARY_SOURCE, task.status)
-    check_other_tool_calls(c, run)
-    check_explainable(c, run)
-    check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 1)))  # 第 1 次循环里判读即确认，这一次没走到第 3 步
-    glossary_common(c, run, loops=3)
+    check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 1)))
+    glossary_tail(c, run, loops=3)
     return c
 
 
-def glossary_scenario_two() -> Checker:
-    """场景：术语澄清，只给术语，使用者先提一次修改意见再确认。修改循环、上下文包三件事都在这个场景里。"""
-    title = "术语澄清：只给术语，一次修改后确认"
+def glossary_scenario_revise() -> Checker:
+    """场景：术语澄清，提修改意见。只给术语；第 1 次念草稿后使用者提意见（DENY 加 INFORM 修改意见），改稿，第 2 次确认。"""
+    title = "术语澄清：提修改意见"
     banner(title)
-    call_model, config = glossary_call()
-    run = run_scenario("T-glossary-2", glossary_def(dict(GLOSSARY_INPUT_TWO)), GLOSSARY_ANSWERS_TWO,
-                       GLOSSARY_TOOLS, call_model=call_model)
+    run, config = run_glossary("T-glossary-2", GLOSSARY_INPUT_TWO, [REPLY_REVISE, REPLY_CONFIRM])
     c = Checker(title)
     print("── 断言 ──")
     c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
-    if run.task is None:
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4), (DRAFT_TOOL, 5), ("ask", 3), (UNDERSTAND_TOOL, 4)],
+            "六个工具调用：写首稿、念草稿、对话理解、按意见改稿、再念草稿、对话理解；依据序号 2、3、4、5、3、4"):
         return c
     task = run.task
-    proposed = named(run.events, CALL_PROPOSED)
-    actual = [(e.payload["tool"], e.payload["basis"][0]) for e in proposed]
-    c.check("六个工具调用：写首稿、念草稿、判为修改、按意见改稿、再念草稿、判为确认；"
-            "依据序号依次是 2、3、4、5、3、4（第二轮回到组首的第 3 步）",
-            actual == [(DRAFT_TOOL, 2), ("ask", 3), (JUDGE_TOOL, 4), (DRAFT_TOOL, 5), ("ask", 3), (JUDGE_TOOL, 4)], actual)
-    if len(proposed) < 6:
-        return c
-    c.check("系统自始至终没有问过原文片段：三次提问分别是问回复两次（念草稿），没有问原文片段那一句",
-            all("原文片段" not in e.payload["content"]["utterance"]
-                for e in run.events if e.name == MESSAGE_PUT and e.payload["box"] == OUTBOX), None)
-
-    first_draft = model_record(run, 1).get("response", "").strip()
     c.check("写首稿时没有原文片段，参考材料段写「（未提供，按通用含义解释）」",
             segment_text(run, 1, "参考材料") == "（未提供，按通用含义解释）", segment_text(run, 1, "参考材料"))
-    parsed_revise = model_record(run, 3).get("parsed") or {}
-    c.check("第 3 次迭代判为修改：解析结果的决定是「修改」、修改意见非空，确认文本是 null",
-            parsed_revise.get("决定") == "修改" and parsed_revise.get("确认文本") is None
-            and isinstance(parsed_revise.get("修改意见"), str) and parsed_revise["修改意见"].strip(), parsed_revise)
-    def written(slot):  # 只看工具调用写的，初始化那条（来源「初始化」、不挂工具调用编号）不算
-        return [e.payload["new"] for e in named(run.events, DATA_CHANGED)
-                if e.payload["slot"] == slot and e.call_id is not None]
-
-    feedback_written, reply_written = written("修改意见"), written("回复")
-    c.check("修改意见写了一次又被清空；回复写了两次、每次判读后都清空",
-            feedback_written == [parsed_revise.get("修改意见", "").strip(), None]
-            and reply_written == [GLOSSARY_REVISE_REPLY, None, GLOSSARY_CONFIRM_REPLY, None],
-            (feedback_written, reply_written))
-
-    check_model_record(c, run, 4, config, "文本",
-                       ["任务进度", "对话历史", "当前数据", "参考材料", "本步", "输出形状"])
+    check_understanding(c, run, 3, config, REPLY_REVISE, ["DENY", "INFORM"])
+    feedback = next((act["内容"]["值"] for act in acts_of(run, 3) if act.get("功能") == "INFORM"), None)
+    c.check("INFORM 写的是修改意见（槽位「修改意见」、路径空），值是非空文字；DENY 不写",
+            any(act.get("功能") == "INFORM" and act["内容"]["槽位"] == "修改意见" and act["内容"]["路径"] == []
+                for act in acts_of(run, 3)) and isinstance(feedback, str) and feedback.strip(),
+            acts_of(run, 3))
+    c.check("修改意见写了一次又被改稿清空；回复写了两次、每次对话理解读后都清空",
+            written(run, "修改意见") == [feedback, None]
+            and written(run, "回复") == [REPLY_REVISE, None, REPLY_CONFIRM, None],
+            (written(run, "修改意见"), written(run, "回复")))
+    first_draft = model_record(run, 1).get("response", "").strip()
+    check_model_record(c, run, 4, config, "文本", ["任务进度", "对话历史", "当前数据", "参考材料", "本步", "输出形状"])
     c.check("改稿那次的任务进度段写明这段循环的第 1 次与上限 5、做完的是哪一步，并说明这次写第 2 稿",
             segment_text(run, 4, "任务进度").startswith(
-                "当前步：『确认』阶段，第 1 到第 3 步循环的第 1 次（最多 5 次），做完了第 2 步『判读回复：确认还是修改』")
-            and "第 1 稿被要求修改，本次写第 2 稿" in segment_text(run, 4, "任务进度"),
-            segment_text(run, 4, "任务进度"))
-    c.check("改稿那次的对话历史只装 1 轮，装的正是那一轮回答已被判读清空的问答",
-            "1 轮装入（回答已被清空的 1 轮）" in segment_source(run, 4, "对话历史")
-            and segment_text(run, 4, "对话历史").count("系统：") == 1
-            and GLOSSARY_REVISE_REPLY in segment_text(run, 4, "对话历史"),
-            segment_source(run, 4, "对话历史"))
-    data_lines = segment_text(run, 4, "当前数据").splitlines()
-    c.check("改稿那次的当前数据是一段：术语、上一稿、修改意见各一行，修订记录是段内最后一项（第 1 稿一行、使用者意见一行，续行缩进两格）",
-            data_lines == [f"术语：{GLOSSARY_TERM_TWO}",
-                           f"释义草稿（上一稿）：{first_draft}",
-                           f"修改意见：{parsed_revise.get('修改意见', '').strip()}",
-                           f"修订记录（系统从变更事件推出）：第 1 稿：{first_draft}",
-                           f"  使用者意见：{parsed_revise.get('修改意见', '').strip()}"],
-            data_lines)
+                "当前步：『确认』阶段，第 1 到第 3 步循环的第 1 次（最多 5 次），做完了第 2 步『理解使用者的回复』")
+            and "第 1 稿被要求修改，本次写第 2 稿" in segment_text(run, 4, "任务进度"), segment_text(run, 4, "任务进度"))
+    c.check("改稿那次的当前数据：术语、上一稿、修改意见各一行，修订记录是段内最后一项",
+            segment_text(run, 4, "当前数据").splitlines() == [
+                f"术语：{GLOSSARY_TERM_TWO}", f"释义草稿（上一稿）：{first_draft}", f"修改意见：{feedback}",
+                f"修订记录（系统从变更事件推出）：第 1 稿：{first_draft}", f"  使用者意见：{feedback}"],
+            segment_text(run, 4, "当前数据").splitlines())
     second_draft = model_record(run, 4).get("response", "").strip()
-    c.check("改稿写出第 2 稿，与第 1 稿不同，写完把修改意见清空",
-            task.data.get("释义草稿") == second_draft and second_draft != first_draft
-            and task.data.get("修改意见") is None, (second_draft[:40], task.data.get("修改意见")))
+    c.check("改稿写出第 2 稿，与第 1 稿不同", second_draft and second_draft != first_draft, second_draft[:40])
     check_waiting_then_success(c, run, 2, expected_utterance=confirm_utterance(GLOSSARY_TERM_TWO, first_draft))
     check_waiting_then_success(c, run, 5, expected_utterance=confirm_utterance(GLOSSARY_TERM_TWO, second_draft))
-
-    parsed_confirm = model_record(run, 6).get("parsed") or {}
-    c.check("第 6 次迭代判为确认，确认释义写入，组结束，任务完成",
-            parsed_confirm.get("决定") == "确认"
-            and task.data.get("确认释义") == (parsed_confirm.get("确认文本") or "").strip()
-            and task.status == TaskStatus.DONE, (parsed_confirm.get("决定"), task.status))
-    check_other_tool_calls(c, run)
-    check_explainable(c, run)
-    check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 2)))
-    # 当前步逐次核对（第四步第 5 节第十项的验收点）：术语由初始输入给全，所以第 1 步的 ask 被跳过，
-    # 第 1 次迭代做的是「写释义草稿」阶段第 2 步；随后三次迭代是「确认」阶段这段循环的第 1 次的三步；
-    # 第 5 次迭代回到段首，第几次加一；第 6 次迭代判为确认，任务完成。
-    c.check("当前步逐次记下走到哪：初始化一条，六次迭代各一条，第 4 次之后是这段循环第 1 次的第 3 步，第 6 次之后是第 2 次的第 2 步",
-            step_sequence(run) == [
-                ("初始化", step_at("写释义草稿")),
-                (1, step_at("写释义草稿", 2)),
-                (2, step_at("确认", 1, loop=(1, 3, 1))),
-                (3, step_at("确认", 2, loop=(1, 3, 1))),
-                (4, step_at("确认", 3, loop=(1, 3, 1))),
-                (5, step_at("确认", 1, loop=(1, 3, 2))),
-                (6, step_at("确认", 2, loop=(1, 3, 2)))], step_sequence(run))
-    glossary_common(c, run, loops=6)
+    c.check("改稿之后再念草稿：念的值变了，照常全文念第 2 稿，不说再问短句",
+            utterance_of(run, 5) == confirm_utterance(GLOSSARY_TERM_TWO, second_draft) and utterance_of(run, 5) != REASK_LINE
+            and registered_questions(run, 5) == [{**SUGGEST_QUESTION, "念的值": second_draft}],
+            (utterance_of(run, 5), registered_questions(run, 5)))
+    check_understanding(c, run, 6, config, REPLY_CONFIRM, ["AFFIRM"])
+    c.check("第 6 次迭代 AFFIRM：第 2 稿写进确认释义，循环段结束，任务完成",
+            task.data.get("确认释义") == second_draft and task.status == TaskStatus.DONE, task.data.get("确认释义"))
+    c.check("当前步逐次记下走到哪：六次迭代各一条，第 5 次回到段首时第几次加一",
+            step_sequence(run) == stacked([
+                ("初始化", step_at("写释义草稿")), (1, step_at("写释义草稿", 2)),
+                (2, step_at("确认", 1, loop=(1, 3, 1))), (3, step_at("确认", 2, loop=(1, 3, 1))),
+                (4, step_at("确认", 3, loop=(1, 3, 1))), (5, step_at("确认", 1, loop=(1, 3, 2))),
+                (6, step_at("确认", 2, loop=(1, 3, 2)))]), step_sequence(run))
+    glossary_tail(c, run, loops=6)
     return c
 
 
-def glossary_scenario_three() -> Checker:
-    """场景：术语澄清，模型不可达。回放模式对着一份空录制，第一个工具调用就失败，任务以内核错误结束。"""
+def glossary_scenario_rewrite() -> Checker:
+    """场景：术语澄清，给整段改写。使用者直接给出一段完整的释义：AFFIRM 加 INFORM 写确认释义，按写值落，不再抄草稿。"""
+    title = "术语澄清：给整段改写"
+    banner(title)
+    run, config = run_glossary("T-glossary-3", GLOSSARY_INPUT_TWO, [REPLY_REWRITE])
+    c = Checker(title)
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4)], "三个工具调用：写首稿、念草稿、对话理解"):
+        return c
+    task = run.task
+    check_understanding(c, run, 3, config, REPLY_REWRITE, ["AFFIRM", "INFORM"])
+    value = next((act["内容"]["值"] for act in acts_of(run, 3)
+                  if act.get("功能") == "INFORM" and act["内容"]["槽位"] == "确认释义"), None)
+    c.check("INFORM 写确认释义，值含使用者那段话的关键内容；AFFIRM 记「按写值落，不再抄草稿」",
+            isinstance(value, str) and "逐条审阅需求并签字认可" in value
+            and any(act.get("功能") == "AFFIRM" and "不再抄草稿" in act.get("落成", "") for act in acts_of(run, 3)),
+            acts_of(run, 3))
+    c.check("确认释义等于这项写值，不是草稿；确认释义只被写了一次", task.data.get("确认释义") == value
+            and task.data.get("确认释义") != task.data.get("释义草稿") and written(run, "确认释义") == [value],
+            written(run, "确认释义"))
+    c.check("交付物术语释义取自确认释义，任务完成", task.status == TaskStatus.DONE, task.status)
+    glossary_tail(c, run, loops=3)
+    return c
+
+
+def glossary_scenario_alts() -> Checker:
+    """场景：术语澄清，要换一份。「换个说法吧。」是 REQALTS，修改意见写「换一份」，改稿后再念、确认。"""
+    title = "术语澄清：要换一份"
+    banner(title)
+    run, config = run_glossary("T-glossary-4", GLOSSARY_INPUT_TWO, [REPLY_ALTS, REPLY_CONFIRM])
+    c = Checker(title)
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4), (DRAFT_TOOL, 5), ("ask", 3), (UNDERSTAND_TOOL, 4)],
+            "六个工具调用：写首稿、念草稿、对话理解（要换一份）、改稿、再念草稿、对话理解（确认）"):
+        return c
+    task = run.task
+    check_understanding(c, run, 3, config, REPLY_ALTS, ["REQALTS"])
+    c.check("REQALTS 把修改意见写成「换一份」，改稿后清空", written(run, "修改意见") == ["换一份", None],
+            written(run, "修改意见"))
+    c.check("改稿那次当前数据里的修改意见就是「换一份」", "修改意见：换一份" in segment_text(run, 4, "当前数据"),
+            segment_text(run, 4, "当前数据"))
+    second_draft = model_record(run, 4).get("response", "").strip()
+    check_understanding(c, run, 6, config, REPLY_CONFIRM, ["AFFIRM"])
+    c.check("换出来的第 2 稿写进确认释义，循环第 2 次结束，任务完成",
+            task.data.get("确认释义") == second_draft and task.status == TaskStatus.DONE, task.data.get("确认释义"))
+    check_step_final(c, run, step_at("确认", 2, loop=(1, 3, 2)))
+    glossary_tail(c, run, loops=6)
+    return c
+
+
+REPLY_VAGUE = "嗯。"
+REPLY_CHOOSE_ONE = "1"
+CLARIFY_TEXT = "你是想：1 确认这一稿 2 修改这一稿 3 先放一放？"
+FALLBACK_OPTIONS = ["确认这一稿", "修改这一稿", "先放一放"]
+
+
+def pattern_number(task_def, mode: str, nth: int) -> int:
+    """对话模式里某一步的依据序号：模式并进任务定义后，编号接在任务定义全部编号之后，这里从定义里查，不写死。"""
+    for pattern in task_def.DEFINITION["对话模式"]["模式"]:
+        if pattern["名字"] == mode:
+            return pattern["步骤"][nth - 1]["编号"]
+    raise KeyError(mode)
+
+
+def notices_of(run: Run, call_id: int) -> list:
+    """某个工具调用往发件箱放的告知消息的话。"""
+    return [e.payload["content"]["utterance"] for e in of_call(run.events, MESSAGE_PUT, call_id)
+            if e.payload["box"] == OUTBOX and e.payload["kind"] == "notice"]
+
+
+def check_notice(c: Checker, run: Run, call_id: int, text: str) -> None:
+    """告知：发件箱恰有一条种类为告知的消息、话逐字等于预期；不等回答（没有等待中，收件箱没有回复它的消息）。"""
+    history = status_values(call_history(run.events, call_id))
+    answers = [e for e in run.events if e.name == MESSAGE_PUT and e.payload["box"] == INBOX
+               and e.payload["call_id"] == call_id]
+    c.check(f"工具调用 {call_id}（告知）往发件箱放了一条告知，话逐字是「{text}」；状态经过 已提出、已获准、已成功，没有等回答",
+            notices_of(run, call_id) == [text] and not answers
+            and history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.SUCCEEDED],
+            (notices_of(run, call_id), [h.value for h in history]))
+
+
+def glossary_scenario_defer() -> Checker:
+    """场景：术语澄清，推迟并顺手改术语。一句话两项：INFORM 术语＝需求评审直接写；DEFER 确认释义路由到模式「推迟」。
+
+    推迟模式先告知「『确认释义』先放着，回头再问。」，再标记推迟（2026-09-18 裁定问题一）；标记后停止条件成立，任务以完成收尾，
+    交付物是推迟标记（2026-09-18 裁定问题六）。插入段刚做完第 2 步就结束了任务，所以当前步终态里插入段已弹出。
+    """
+    title = "术语澄清：推迟并顺手改术语"
+    banner(title)
+    run, config = run_glossary("T-glossary-5", GLOSSARY_INPUT_TWO, [REPLY_DEFER])
+    c = Checker(title)
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    task_def = run.task_def
+    tell, mark = pattern_number(task_def, "推迟", 1), pattern_number(task_def, "推迟", 2)
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4), ("告知", tell), ("标记推迟", mark)],
+            f"五个工具调用：写首稿、念草稿、对话理解，然后插入段「推迟」的告知（依据序号 {tell}）与标记推迟（{mark}）"):
+        return c
+    task = run.task
+    record = model_record(run, 3)
+    c.check("对话理解出两项：DEFER 与 INFORM（顺序不限），模型输出按 Schema 解析",
+            sorted(functions_of(run, 3)) == ["DEFER", "INFORM"] and record.get("problem") is None,
+            [(act.get("功能"), act.get("内容")) for act in acts_of(run, 3)])
+    c.check("INFORM 写术语，值是「需求评审」，直接落；DEFER 的落成写明路由到模式『推迟』",
+            any(act.get("功能") == "INFORM" and act["内容"] == {"槽位": "术语", "路径": [], "值": REPLY_DEFER_TERM}
+                for act in acts_of(run, 3))
+            and any(act.get("功能") == "DEFER" and act.get("落成") == "DEFER → 路由到模式『推迟』" for act in acts_of(run, 3)),
+            acts_of(run, 3))
+    c.check("对话理解的待路由的行为只有一项：DEFER，输入是目标槽位确认释义；它自己只写术语，并清空回复与上一问",
+            record.get("routes") == [{"功能": "DEFER", "输入": {"槽位": "确认释义"}}]
+            and {e.payload["slot"] for e in of_call(run.events, DATA_CHANGED, 3)} == {"术语", "回复", "上一问"},
+            (record.get("routes"), sorted({e.payload["slot"] for e in of_call(run.events, DATA_CHANGED, 3)})))
+    check_notice(c, run, 4, "『确认释义』先放着，回头再问。")
+    c.check("工具调用 5（标记推迟）把确认释义写成推迟标记，任务完成，交付物术语释义取到的是推迟标记",
+            [e.payload["new"] for e in of_call(run.events, DATA_CHANGED, 5)] == [{"已推迟": True}]
+            and task.data.get("术语") == REPLY_DEFER_TERM and task.status == TaskStatus.DONE
+            and task.data.get(run.task_def.DELIVERABLES[0]["来源"]) == {"已推迟": True},
+            (task.data.get("确认释义"), task.status))
+    in_loop = step_at("确认", 2, loop=(1, 3, 1))
+    deferred = frame("推迟", 0, {"槽位": "确认释义"})
+    c.check("当前步序列：对话理解之后压一帧「推迟」；告知做完第 1 步、结果记下那句话；标记推迟做完第 2 步，弹帧回到主线原地址",
+            step_sequence(run) == stacked([("初始化", step_at("写释义草稿")), (1, step_at("写释义草稿", 2)),
+                                           (2, step_at("确认", 1, loop=(1, 3, 1)))])
+            + [(3, stack(in_loop, [deferred])),
+               (4, stack(in_loop, [frame("推迟", 1, {"槽位": "确认释义"}, 结果="『确认释义』先放着，回头再问。")])),
+               (5, stack(in_loop))], step_sequence(run))
+    c.check("当前步的显示：插入段里时 step_text 在主线那句后面接插入段做到哪，step_view 带插入段列表",
+            run.task_def.step_text(stack(in_loop, [deferred])).endswith("；插入段『推迟』还没有做完任何一步")
+            and run.task_def.step_view(stack(in_loop, [deferred]))["插入"]
+            == [{"模式": "推迟", "步骤": 0, "共": 2, "说明": None, "输入": {"槽位": "确认释义"}}],
+            run.task_def.step_text(stack(in_loop, [deferred])))
+    glossary_tail(c, run, loops=5)
+    return c
+
+
+def glossary_scenario_ask() -> Checker:
+    """场景：术语澄清，提问后再确认。「「产出」是什么意思？」是 REQUEST，路由到模式「答疑」：
+    答疑用一两句白话解释，告知说出来，弹帧；主线原地续接，改稿被跳过，下一次循环再念同一份草稿；使用者确认。"""
+    title = "术语澄清：提问后再确认"
+    banner(title)
+    run, config = run_glossary("T-glossary-6", GLOSSARY_INPUT_TWO, [REPLY_ASK, REPLY_CONFIRM])
+    c = Checker(title)
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    task_def = run.task_def
+    answer_no, tell_no = pattern_number(task_def, "答疑", 1), pattern_number(task_def, "答疑", 2)
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4), ("答疑", answer_no), ("告知", tell_no),
+                     ("ask", 3), (UNDERSTAND_TOOL, 4)],
+            "七个工具调用：写首稿、念草稿、对话理解（提问），插入段「答疑」的答疑与告知，再念草稿、对话理解（确认）；改稿被跳过"):
+        return c
+    task = run.task
+    check_understanding(c, run, 3, config, REPLY_ASK, ["REQUEST"])
+    asked = (acts_of(run, 3)[0].get("内容") or {}).get("问") if acts_of(run, 3) else None
+    c.check("REQUEST 问的是「产出」，不写值；待路由的行为是一项 REQUEST，输入是问的内容",
+            isinstance(asked, str) and "产出" in asked
+            and model_record(run, 3).get("routes") == [{"功能": "REQUEST", "输入": {"问": asked}}]
+            and {e.payload["slot"] for e in of_call(run.events, DATA_CHANGED, 3)} == {"回复", "上一问"},
+            model_record(run, 3).get("routes"))
+    check_model_record(c, run, 4, config, "文本", ["任务进度", "对话历史", "当前数据", "本步", "输出形状"])
+    explanation = model_record(run, 4).get("输出")
+    c.check("答疑那次的本步段写明使用者问了什么，当前数据段装任务的全部槽位，模型回答去掉首尾空白放在返回值的「输出」",
+            segment_text(run, 4, "本步") == f"本步执行工具「答疑」：解释使用者问的这句话——{asked}"
+            and segment_text(run, 4, "当前数据").startswith("术语：需求确认")
+            and isinstance(explanation, str) and explanation
+            and explanation == model_record(run, 4).get("response", "").strip(),
+            (segment_text(run, 4, "本步"), explanation))
+    check_notice(c, run, 5, explanation)
+    draft = task.data.get("释义草稿")
+    check_waiting_then_success(c, run, 2, expected_utterance=confirm_utterance(GLOSSARY_TERM_TWO, draft))
+    check_waiting_then_success(c, run, 6, expected_utterance=REASK_LINE)
+    c.check("答疑返回后再念草稿：草稿没变，只说再问短句「回到刚才那一稿：请确认，或提出修改意见。」，不复述草稿；"
+            "两次登记的上一问相同，都带着念的值",
+            utterance_of(run, 6) == REASK_LINE and draft not in utterance_of(run, 6)
+            and registered_questions(run, 2) == registered_questions(run, 6) == [{**SUGGEST_QUESTION, "念的值": draft}],
+            (utterance_of(run, 6), registered_questions(run, 6)))
+    c.check("第二次对话理解的对话历史里有那句告知（系统一行，没有使用者那一行），接着是再问短句",
+            f"系统：{explanation}\n系统：{REASK_LINE}" in segment_text(run, 7, "对话历史"), segment_text(run, 7, "对话历史"))
+    check_understanding(c, run, 7, config, REPLY_CONFIRM, ["AFFIRM"])
+    c.check("释义草稿只写过一稿（提问不改稿）；确认后草稿写进确认释义，任务完成",
+            written(run, "释义草稿") == [draft] and task.data.get("确认释义") == draft and task.status == TaskStatus.DONE,
+            written(run, "释义草稿"))
+    in_loop = step_at("确认", 2, loop=(1, 3, 1))
+    c.check("当前步序列：对话理解之后压一帧「答疑」，答疑做完第 1 步记下解释，告知做完第 2 步弹帧；主线从原地址续接，"
+            "第 6 次迭代回到段首第几次加一",
+            step_sequence(run)[3:] == [
+                (3, stack(in_loop, [frame("答疑", 0, {"问": asked})])),
+                (4, stack(in_loop, [frame("答疑", 1, {"问": asked}, 结果=explanation)])),
+                (5, stack(in_loop)),
+                (6, stack(step_at("确认", 1, loop=(1, 3, 2)))),
+                (7, stack(step_at("确认", 2, loop=(1, 3, 2))))], step_sequence(run)[3:])
+    glossary_tail(c, run, loops=7)
+    return c
+
+
+def glossary_scenario_vague() -> Checker:
+    """场景：术语澄清，含糊后选择（第五步增补）。「嗯。」是 CLARIFY，路由到模式「澄清」：以选择类固定三项再问，
+    使用者答「1」，对话理解按原问（建议类）落，把草稿采纳进确认释义，弹帧，任务完成。"""
+    title = "术语澄清：含糊后选择"
+    banner(title)
+    run, config = run_glossary("T-glossary-7", GLOSSARY_INPUT_TWO, [REPLY_VAGUE, REPLY_CHOOSE_ONE])
+    c = Checker(title)
+    print("── 断言 ──")
+    c.check("内核线程正常返回、没有抛异常", run.error is None, repr(run.error))
+    task_def = run.task_def
+    ask_no, understand_no = pattern_number(task_def, "澄清", 1), pattern_number(task_def, "澄清", 2)
+    if run.task is None or not check_tool_sequence(
+            c, run, [(DRAFT_TOOL, 2), ("ask", 3), (UNDERSTAND_TOOL, 4), ("ask", ask_no), (UNDERSTAND_TOOL, understand_no)],
+            "五个工具调用：写首稿、念草稿、对话理解（含糊），插入段「澄清」的再问与对话理解"):
+        return c
+    task = run.task
+    draft = task.data.get("释义草稿")
+    check_understanding(c, run, 3, config, REPLY_VAGUE, ["CLARIFY"])
+    c.check("CLARIFY 的待路由的行为是一项，输入是原问（念草稿那一问）；这次对话理解什么槽位都不写，只清空回复与上一问",
+            model_record(run, 3).get("routes") == [{"功能": "CLARIFY", "输入": {"原问": SUGGEST_QUESTION}}]
+            and {e.payload["slot"] for e in of_call(run.events, DATA_CHANGED, 3)} == {"回复", "上一问"},
+            model_record(run, 3).get("routes"))
+    check_waiting_then_success(c, run, 4, expected_utterance=CLARIFY_TEXT)
+    check_question_registered(c, run, 4, {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": FALLBACK_OPTIONS,
+                                          "采纳到": "确认释义", "原问": SUGGEST_QUESTION, "念的值": draft})
+    record = model_record(run, 5)
+    step = segment_text(run, 5, "本步")
+    c.check("插入段里的对话理解：本步段逐字是选择类那一种白话写法，列出三个选项；使用者答「1」理解成 AFFIRM 选项序号 1",
+            step == STEP_TEXT_CHOICE
+            and [(act.get("功能"), act.get("内容")) for act in acts_of(run, 5)] == [("AFFIRM", {"选项序号": 1})]
+            and record.get("problem") is None, [(act.get("功能"), act.get("内容")) for act in acts_of(run, 5)])
+    c.check("选 1 按原问落：草稿采纳进确认释义；没有待路由的行为，也不在本帧再问；任务完成",
+            task.data.get("确认释义") == draft and record.get("routes") == [] and not record.get("reask_in_frame")
+            and task.status == TaskStatus.DONE, (task.data.get("确认释义"), record.get("routes")))
+    in_loop = step_at("确认", 2, loop=(1, 3, 1))
+    clarify = {"原问": SUGGEST_QUESTION}
+    c.check("当前步序列：压一帧「澄清」，再问做完第 1 步，对话理解做完第 2 步弹帧，主线原地址不动",
+            step_sequence(run)[3:] == [
+                (3, stack(in_loop, [frame("澄清", 0, clarify)])),
+                (4, stack(in_loop, [frame("澄清", 1, clarify, 结果=REPLY_CHOOSE_ONE)])),
+                (5, stack(in_loop))], step_sequence(run)[3:])
+    glossary_tail(c, run, loops=5)
+    return c
+
+
+# ───────────────────────── 检查组：对话理解标注集 ─────────────────────────
+# 第五步第 6 节第一层：工具级评测。逐条调对话理解（回放），比对功能与内容，算逐句全对率与逐项功能准确率。
+
+EVAL_FILE = TASK_DEFS_DIR / "eval" / "对话理解标注集.json"
+EVAL_RECORDING = "task_defs/recordings/对话理解标注集.json"
+EVAL_FLOOR = 0.8  # 准确率下限（2026-09-17 用户确认）
+EVAL_STEP = {"阶段": "确认", "循环": {"起": 1, "止": 3, "第几次": 1}, "步骤": 1}
+
+
+def load_eval_cases() -> list:
+    import json as json_module
+
+    return json_module.loads(EVAL_FILE.read_text(encoding="utf-8"))["条目"]
+
+
+def understand_case(case: dict, call_model):
+    """跑一条标注：按条目拼好任务数据与一问一答的事件，直接调对话理解工具（不启动任务）。
+
+    返回（工具调用对象, 状态记录）：工具调用的返回值是调用记录，变更组是它要写的东西；状态记录是 [(状态, 说明), …]。
+    """
+    import functools as functools_module
+    import types as types_module
+
+    from tod_kernel.tools import system_prompt_for, understand
+
+    task_def = glossary_def()
+    data = {**task_def.SLOTS, **case["数据"], "回复": case["原话"], "上一问": case["上一问"]}
+    events = ask_events(1, 1, "确认", "回复", case["系统问话"], case["原话"])
+    made = ToolCall(tool=UNDERSTAND_TOOL, params={}, proposer="selector", basis=(4, "确认 › 第 4 步 理解使用者的回复", {}),
+                    call_id=2, status=CallStatus.APPROVED)
+    statuses = []
+
+    def set_status(status, note):
+        made.status = status
+        statuses.append((status, note))
+
+    ctx = kernel.ExecContext(call=made, data_view=types_module.MappingProxyType(data), step=dict(EVAL_STEP),
+                             inbox=None, outbox=None, set_status=set_status)
+    prompt = system_prompt_for(task_def, list(GLOSSARY_TOOLS) + [EXCEPTION_TOOL])
+    understand(ctx, call_model, task_def=task_def, read_events=lambda: list(events), system_prompt=prompt)
+    return made, statuses
+
+
+def _value_matches(expected, actual) -> bool:
+    if expected == "*":
+        return actual not in (None, "", [], {})
+    if isinstance(expected, dict) and set(expected) == {"含"}:
+        return isinstance(actual, str) and all(word in actual for word in expected["含"])
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        return set(expected) == set(actual) and all(_value_matches(expected[k], actual[k]) for k in expected)
+    return expected == actual
+
+
+def _content_matches(expected_act, actual_act, question) -> bool:
+    from tod_kernel.tools import defer_target
+
+    if expected_act["功能"] == "DEFER":
+        target = defer_target(question, actual_act.get("内容"))
+        return target == (expected_act.get("内容") or {}).get("槽位")
+    expected, actual = expected_act.get("内容"), actual_act.get("内容")
+    if expected == "*":
+        return actual is not None
+    if isinstance(actual, dict):
+        actual = {key: value for key, value in actual.items() if key != "原问"}
+    return _value_matches(expected, actual)
+
+
+def score_case(case: dict, acts: list) -> tuple:
+    """一条的比对：返回（逐句全对, 功能对上的项数, 分母, 不一致说明）。
+
+    按期望逐项在实际里找一个没用过的同功能项；功能对上算一项功能正确，内容也对上才算这一项全对。
+    分母取期望项数与实际项数的较大者，实际多出来的项因此也算错。
+    """
+    used, function_hits, full_hits, problems = set(), 0, 0, []
+    for expected in case["期望"]:
+        index = next((i for i, act in enumerate(acts) if i not in used and act.get("功能") == expected["功能"]), None)
+        if index is None:
+            problems.append(f"少了 {expected['功能']}")
+            continue
+        used.add(index)
+        function_hits += 1
+        if _content_matches(expected, acts[index], case["上一问"]):
+            full_hits += 1
+        else:
+            problems.append(f"{expected['功能']} 的内容不对")
+    extra = [act.get("功能") for i, act in enumerate(acts) if i not in used]
+    if extra:
+        problems.append(f"多了 {'、'.join(extra)}")
+    denominator = max(len(case["期望"]), len(acts))
+    whole = full_hits == len(case["期望"]) == len(acts)
+    return whole, function_hits, denominator, problems
+
+
+def understand_eval_checks() -> Checker:
+    title = "第五步：对话理解标注集评测"
+    banner(title)
+    c = Checker(title)
+    print("── 断言 ──")
+    cases = load_eval_cases()
+    kinds = {}
+    for case in cases:
+        kinds[case["上一问"]["类型"]] = kinds.get(case["上一问"]["类型"], 0) + 1
+    situations = {}
+    for case in cases:
+        situations[case["情形"]] = situations.get(case["情形"], 0) + 1
+    seven = ("确认", "提修改意见", "给整段改写", "要换一份", "推迟并顺手改另一属性", "提问", "含糊")
+    c.check(f"标注集三十到四十条，4.9 节七种情形各至少三句，四种上一问类型各至少五句，另有无关句（共 {len(cases)} 条）",
+            30 <= len(cases) <= 40 and all(situations.get(name, 0) >= 3 for name in seven)
+            and all(kinds.get(kind, 0) >= 5 for kind in ("建议", "求证", "选择", "请求")) and situations.get("无关", 0) >= 1,
+            (kinds, situations))
+    call_model, _ = glossary_call(recording=EVAL_RECORDING)
+    rows, structure_bad = [], []
+    for case in cases:
+        made, statuses = understand_case(case, call_model)
+        record = made.result if isinstance(made.result, dict) else {}
+        acts = record.get("acts") or []
+        if made.status != CallStatus.SUCCEEDED or record.get("problem") is not None:
+            structure_bad.append((case["编号"], statuses[-1][1] if statuses else None, record.get("problem")))
+        rows.append((case, acts, score_case(case, acts)))
+    c.check("硬断言：每条都调通（回放命中录制）、模型输出都合 Schema（功能与槽位路径不越出候选、没有走没听懂的兜底）",
+            not structure_bad, structure_bad)
+    whole = sum(1 for _, _, score in rows if score[0])
+    hits = sum(score[1] for _, _, score in rows)
+    denominator = sum(score[2] for _, _, score in rows)
+    sentence_rate = whole / len(rows) if rows else 0.0
+    function_rate = hits / denominator if denominator else 0.0
+    print(f"逐句全对率：{whole}/{len(rows)} = {sentence_rate:.3f}")
+    print(f"逐项功能准确率：{hits}/{denominator} = {function_rate:.3f}（下限 {EVAL_FLOOR}）")
+    mismatched = [(case, acts, score) for case, acts, score in rows if not score[0]]
+    if mismatched:
+        print("不一致清单：")
+        for case, acts, score in mismatched:
+            expected = "；".join(f"{e['功能']} {e.get('内容')}" for e in case["期望"])
+            actual = "；".join(f"{a.get('功能')} {a.get('内容')}" for a in acts)
+            print(f"  第 {case['编号']} 条（{case['上一问']['类型']}·{case['情形']}）原话「{case['原话']}」")
+            print(f"    期望：{expected}")
+            print(f"    实际：{actual}")
+            print(f"    差在：{'；'.join(score[3])}")
+    c.check(f"逐项功能准确率 {function_rate:.3f} 不低于下限 {EVAL_FLOOR}（逐句全对率 {sentence_rate:.3f} 只报告）",
+            function_rate >= EVAL_FLOOR, function_rate)
+    four_nine = {1: ["AFFIRM"], 4: ["DENY", "INFORM"], 7: ["AFFIRM", "INFORM"], 10: ["REQALTS"],
+                 13: ["DEFER", "INFORM"], 16: ["REQUEST"], 19: ["CLARIFY"]}
+    got = {number: sorted(a.get("功能") for a in acts) for case, acts, _ in rows
+           for number in [case["编号"]] if number in four_nine}
+    c.check("第五步 4.9 节七句（标注集第 1、4、7、10、13、16、19 条）回放得到表里的行为列表（按功能核对）",
+            all(got.get(number) == sorted(functions) for number, functions in four_nine.items()), got)
+    return c
+
+
+# ───────────────────────── 检查组：对话理解的机器检查 ─────────────────────────
+# 第五步第 6 节第三层：不调模型、不跑任务，手写输入把候选、清单、六条规范化与必备槽位逐条验出来。
+
+FAKE_SLOTS = {
+    "标题": {"说明": "用例标题", "类型": "文本"},
+    "优先级": {"说明": "高中低", "类型": "枚举", "取值": ["高", "中", "低"]},
+    "步骤": {"说明": "主流程步骤", "类型": "列表", "项": {"动作": {"说明": "谁做什么", "类型": "文本"},
+                                                  "序号": {"说明": "第几步", "类型": "数字"}}},
+    "标签": {"说明": "自由标签", "类型": "列表"},
+    "附加": {"说明": "其他属性", "类型": "对象"},
+    "备注": {"说明": "系统写的备注", "类型": "文本", "使用者可写": False},
+    "回复": {"说明": "原话", "类型": "文本"},
+    "上一问": {"说明": "上一问", "类型": "对象"},
+    "修改意见": {"说明": "改动要求", "类型": "文本", "使用者可写": False},
+}
+FAKE_DATA = {"步骤": [{"动作": "登录", "序号": 1}, {"动作": "下单", "序号": 2}], "标签": ["甲"], "附加": {"来源": "访谈"}}
+
+
+def _raises_definition_error(task_def, step) -> bool:
+    from tod_kernel.kernel import DefinitionError
+
+    try:
+        task_def.select_call(dict(task_def.SLOTS), step)
+    except DefinitionError:
+        return True
+    return False
+
+
+def _stub_caller(text: str):
+    """只回一段固定文字的模型调用件，机器检查组用它验对话理解的代码路径，不碰录制文件。"""
+    def call(request):
+        return llm.Reply(text=text, record={"mode": "桩", "model": "桩", "system_prompt_hash": "0" * 64,
+                                            "user_content": request.user, "shape": request.shape, "response": text,
+                                            "request_hash": "0" * 64, "elapsed_ms": 0})
+    return call
+
+
+def _understand_once(task_def, call_model, data, step):
+    """直接调一次对话理解（不启动任务），返回（工具调用, 状态记录）。"""
+    import types as types_module
+
+    from tod_kernel.tools import understand
+
+    made = ToolCall(tool=UNDERSTAND_TOOL, params={}, proposer="selector", basis=(0, "", {}), call_id=1,
+                    status=CallStatus.APPROVED)
+    statuses = []
+
+    def set_status(status, note):
+        made.status = status
+        statuses.append((status, note))
+
+    ctx = kernel.ExecContext(call=made, data_view=types_module.MappingProxyType(data), step=step,
+                             inbox=None, outbox=None, set_status=set_status)
+    understand(ctx, call_model, task_def=task_def, read_events=lambda: [], system_prompt="")
+    return made, statuses
+
+
+def _ask_once(task_def, data, *registrations):
+    """直接调一次念草稿那一问（不启动任务）：事件流里依次是给定的几条登记上一问的数据变更，回答恒为「好」。
+
+    返回（问题里的话, 这次登记的上一问）。
+    """
+    import types as types_module
+
+    from tod_kernel.tools import ask
+
+    params = {"target": {"slot": "回复", "path": []}, "hint": {"term": GLOSSARY_TERM_ONE, "draft": data.get("释义草稿")},
+              "type": "建议", "about": {"slot": "释义草稿", "path": []}, "adopt_to": "确认释义"}
+    made = ToolCall(tool="ask", params=params, proposer="selector", basis=(0, "", {}), call_id=2,
+                    status=CallStatus.APPROVED)
+    sent = []
+
+    class Outbox:
+        def put(self, message):
+            message = dataclasses.replace(message, seq=1)
+            sent.append(message)
+            return message
+
+    class Inbox:
+        def take(self, match, block, waiter=None):
+            return kernel.Message(kind="answer", sender="user", recipient=2, in_reply_to=1, content="好", seq=2)
+
+    def set_status(status, note):
+        made.status = status
+
+    registered = [kernel.Event(seq=seq, ts=0.0, task_id="T-reask", call_id=seq, kind="state", source="update",
+                               name=DATA_CHANGED, payload={"slot": "上一问", "old": None, "new": question, "source": seq})
+                  for seq, question in enumerate(registrations, start=1)]
+    view = {**task_def.SLOTS, **data}
+    ctx = kernel.ExecContext(call=made, data_view=types_module.MappingProxyType(view), step=None,
+                             inbox=Inbox(), outbox=Outbox(), set_status=set_status)
+    ask(ctx, task_def, read_events=lambda: list(registered))
+    question = next((change.new for change in made.changes or [] if change.slot == "上一问"), None)
+    return (sent[0].content["utterance"] if sent else None), question
+
+
+def understand_machine_checks() -> Checker:
     import json as json_module
     import shutil
     import tempfile
+    import types as types_module
 
-    title = "术语澄清：模型不可达（录制文件里没有这条请求）"
+    from tod_kernel import tools as tools_module
+    from tod_kernel.context import candidate_functions, writable_paths
+
+    title = "第五步：对话理解的机器检查"
     banner(title)
-    work = Path(tempfile.mkdtemp(prefix="tod-glossary-empty-"))
+    c = Checker(title)
+    print("── 断言 ──")
+    active = ["INFORM", "REQUEST", "DEFER", "OTHER", "CLARIFY"]
+    expected = {"建议": ["AFFIRM", "DENY", "REQALTS"], "求证": ["AFFIRM", "DENY"], "选择": ["AFFIRM", "DENY"], "请求": ["DENY"]}
+    for kind, response in expected.items():
+        got = candidate_functions({"类型": kind})
+        c.check(f"候选功能集：上一问是{kind}时是 {'、'.join(response + active)}（配对表的回应类加四个主动类加 CLARIFY）",
+                got == response + active and tools_module.PAIRING[kind] == response, got)
+    c.check("候选功能集：上一问为空时没有回应类，只有四个主动类与 CLARIFY", candidate_functions(None) == active,
+            candidate_functions(None))
+
+    rows = writable_paths(FAKE_SLOTS, None, FAKE_DATA)
+    want = [
+        {"槽位": "标题", "路径": []}, {"槽位": "优先级", "路径": []},
+        {"槽位": "步骤", "路径": ["+"]},
+        {"槽位": "步骤", "路径": [0]}, {"槽位": "步骤", "路径": [0, "动作"]}, {"槽位": "步骤", "路径": [0, "序号"]},
+        {"槽位": "步骤", "路径": [1]}, {"槽位": "步骤", "路径": [1, "动作"]}, {"槽位": "步骤", "路径": [1, "序号"]},
+        {"槽位": "步骤", "路径": ["+", "动作"]}, {"槽位": "步骤", "路径": ["+", "序号"]},
+        {"槽位": "标签", "路径": ["+"]}, {"槽位": "标签", "路径": [0]},
+        {"槽位": "附加", "路径": ["来源"]},
+    ]
+    c.check(f"可写路径清单：含列表与项字段的假槽位表算出 {len(want)} 行——标量各一行、列表不给整表替换行、"
+            "每个现有项与项字段各一行、末尾新增与它的字段各一行、对象按当前值的键各一行；三个必备槽位与使用者不可写的槽位不进",
+            rows == want, rows)
+    suggest_rows = writable_paths(FAKE_SLOTS, {"类型": "建议"}, FAKE_DATA)
+    c.check("可写路径清单：上一问是建议类时，使用者不可写的「修改意见」也开放（加在末尾），其余不变",
+            suggest_rows == want + [{"槽位": "修改意见", "路径": []}], suggest_rows[len(want):])
+    c.check("可写路径清单：对象槽位当前值为空时没有行，列表为空时只有末尾新增那几行",
+            writable_paths(FAKE_SLOTS, None, {}) == [
+                {"槽位": "标题", "路径": []}, {"槽位": "优先级", "路径": []}, {"槽位": "步骤", "路径": ["+"]},
+                {"槽位": "步骤", "路径": ["+", "动作"]}, {"槽位": "步骤", "路径": ["+", "序号"]},
+                {"槽位": "标签", "路径": ["+"]}], writable_paths(FAKE_SLOTS, None, {}))
+
+    question = {"类型": "建议", "槽位": "标题", "路径": [], "选项": None, "采纳到": None}
+    candidates = candidate_functions(question)
+    paths = writable_paths(FAKE_SLOTS, question, FAKE_DATA)
+    schema = tools_module.understand_schema(candidates, paths, question)
+    variants = schema["properties"]["行为"]["items"]["anyOf"]
+    enum = [name for variant in variants for name in variant["properties"]["功能"]["enum"]]
+    write_slots = [variant["properties"]["内容"] for variant in variants if "INFORM" in variant["properties"]["功能"]["enum"]]
+    c.check("输出 Schema 现算：功能枚举恰是候选功能集，每个功能一支；INFORM 那支按槽位配对路径枚举",
+            sorted(enum) == sorted(candidates) and write_slots
+            and [branch["properties"]["槽位"]["enum"] for branch in write_slots[0]["anyOf"]]
+            == [["标题"], ["优先级"], ["步骤"], ["标签"], ["附加"], ["修改意见"]], enum)
+
+    def described(node) -> bool:
+        if isinstance(node, dict):
+            return "description" in node or any(described(value) for value in node.values())
+        return isinstance(node, list) and any(described(value) for value in node)
+    choice_schema = tools_module.understand_schema(candidate_functions({"类型": "选择"}), paths, {"类型": "选择"})
+    c.check("输出 Schema 只留裸结构：建议类与选择类两份 Schema 里任何一层都没有说明文字（description）",
+            not described(schema) and not described(choice_schema), None)
+
+    from tod_kernel.context import understand_step_text, writable_places_text
+    from tod_kernel.prompt_pack import PROMPTS_DIR, PromptPackError
+    from tod_kernel.prompt_pack import load as load_prompt_pack
+
+    glossary = glossary_def()
+    glossary_meta = glossary.DEFINITION["槽位"]
+    prompt = prompt_pack_of(UNDERSTAND_TOOL)
+    cases = [("建议", SUGGEST_QUESTION, STEP_TEXT_SUGGEST),
+             ("求证", {"类型": "求证", "槽位": "术语", "路径": [], "选项": ["需求评审"], "采纳到": None}, STEP_TEXT_CHECK),
+             ("选择", {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": FALLBACK_OPTIONS, "采纳到": "确认释义",
+                     "原问": SUGGEST_QUESTION}, STEP_TEXT_CHOICE),
+             ("请求", {"类型": "请求", "槽位": "术语", "路径": [], "选项": None, "采纳到": None}, STEP_TEXT_REQUEST),
+             ("上一问为空", None, STEP_TEXT_NONE)]
+    for kind, asked_question, want in cases:
+        got = understand_step_text(prompt, asked_question, writable_paths(glossary_meta, asked_question, glossary.SLOTS),
+                                   glossary_meta, glossary.SLOTS)
+        c.check(f"对话理解的本步段（{kind}）逐字等于定稿写法，不出现功能标识与代码名",
+                got == want and not re.search(r"[A-Z]{4,}|候选功能集|可写路径清单|\[\]", got), got)
+    list_meta = {"材料清单": {"说明": "清单", "类型": "列表", "项": {"文件名": {"说明": "名", "类型": "文本"}}},
+                 "备注": {"说明": "备注", "类型": "文本"}}
+    places = [writable_places_text(prompt, writable_paths(list_meta, None, {"材料清单": items}), list_meta,
+                                   {"材料清单": items}) for items in ([], [{"文件名": "a"}], [{"文件名": "a"}, {"文件名": "b"}])]
+    c.check("可写位置只列槽位名，列表槽位说明可以新增一项、或改第几项（没有项、一项、多项三种写法）",
+            places == ["材料清单（可以新增一项）、备注", "材料清单（可以新增一项，或改第 1 项）、备注",
+                       "材料清单（可以新增一项，或改第 1 到第 2 项）、备注"], places)
+
+    import shutil as shutil_module
+    import tempfile as tempfile_module
+    folder = Path(tempfile_module.mkdtemp(prefix="tod-prompts-"))
     try:
+        raw_pack = json_module.loads((PROMPTS_DIR / "答疑.json").read_text(encoding="utf-8"))
+        raw_pack["本步"]["解释"] += "（上一稿：{上一稿}）"
+        (folder / "答疑.json").write_text(json_module.dumps(raw_pack, ensure_ascii=False), encoding="utf-8")
+        provides, has_shape = tools_module.MODEL_TOOLS["答疑"]
+        try:
+            load_prompt_pack("答疑", provides, has_shape, folder)
+            error = None
+        except PromptPackError as exc:
+            error = exc
+        c.check("提示词包的占位符核对：答疑的本步模板多用一个代码提供不了的 {上一稿}，加载就报错，位置写到「本步.解释」",
+                error is not None and error.where == "本步.解释" and "{上一稿}" in error.reason, repr(error))
+        del raw_pack["本步"]["解释"]
+        (folder / "答疑.json").write_text(json_module.dumps(raw_pack, ensure_ascii=False), encoding="utf-8")
+        try:
+            load_prompt_pack("答疑", provides, has_shape, folder)
+            error = None
+        except PromptPackError as exc:
+            error = exc
+        c.check("提示词包的占位符核对：答疑的包缺了代码要用的情形「解释」，加载就报错",
+                error is not None and error.where == "本步" and "解释" in error.reason, repr(error))
+    finally:
+        shutil_module.rmtree(folder, ignore_errors=True)
+    c.check("三个调模型的工具的提示词包都能加载，固定指令进系统提示的工具目录",
+            all(prompt_pack_of(name).instruction for name in tools_module.MODEL_TOOLS)
+            and all(prompt_pack_of(name).instruction in tools_module.tool_catalog([name]) for name in tools_module.MODEL_TOOLS),
+            None)
+    try:
+        import jsonschema
+    except ImportError:
+        jsonschema = None
+    if jsonschema is not None:
+        jsonschema.Draft202012Validator.check_schema(schema)
+        good = {"行为": [{"功能": "INFORM", "回应上一问": False, "内容": {"槽位": "步骤", "路径": [1, "动作"], "值": "付款"},
+                          "把握": 0.9, "规范化修订": None}]}
+        bad = {"行为": [{"功能": "INFORM", "回应上一问": False, "内容": {"槽位": "备注", "路径": [], "值": "x"},
+                         "把握": 0.9, "规范化修订": None}]}
+        validator = jsonschema.Draft202012Validator(schema)
+        c.check("输出 Schema 是合法的 JSON Schema，清单内的写值通过、写不可写的「备注」被拦下",
+                not list(validator.iter_errors(good)) and list(validator.iter_errors(bad)), None)
+
+    def act(function, content=None, confidence=0.9, responds=True):
+        return {"功能": function, "回应上一问": responds, "内容": content, "把握": confidence, "规范化修订": None}
+
+    # 第 1 条：解析失败、为空、越出清单，都按没听懂处理。
+    for text, reason in (("不是 JSON", "不是 JSON"), ('{"行为": []}', "为空"),
+                         (json_module.dumps({"行为": [act("INFORM", {"槽位": "备注", "路径": [], "值": "x"})]}, ensure_ascii=False),
+                          "写值越出可写路径清单")):
+        acts, problem = tools_module.parse_acts(text, candidates, paths, question)
+        c.check(f"规范化第 1 条（{reason}）：解析判不合格，兜底产出一条代码写的 CLARIFY，选项固定三项并带原问",
+                acts is None and problem and tools_module.fallback_acts(question)[0]["内容"]["选项"] == ["确认这一稿", "修改这一稿", "先放一放"]
+                and tools_module.fallback_acts(question)[0]["内容"]["原问"] == question, problem)
+    normalized, dropped = tools_module.normalize_acts(
+        [act("INFORM", {"槽位": "标题", "路径": [], "值": "甲"}), act("INFORM", {"槽位": "标题", "路径": [], "值": "乙"})],
+        question, FAKE_SLOTS)
+    c.check("规范化第 2 条：同一槽位同一路径两项写值，留后一项并记模型原值",
+            [a["内容"]["值"] for a in normalized] == ["乙"] and normalized[0]["模型原值"] == [{"槽位": "标题", "路径": [], "值": "甲"}]
+            and len(dropped) == 1, normalized)
+    normalized, _ = tools_module.normalize_acts([act("DENY", {"问": "x"})], question, FAKE_SLOTS)
+    c.check("规范化第 3 条：回应类项带了内容，内容置空并记原值",
+            normalized[0]["内容"] is None and normalized[0]["模型原值"] == [{"问": "x"}], normalized)
+    choice_question = {"类型": "选择", "槽位": "优先级", "路径": [], "选项": ["高", "低"], "采纳到": None}
+    normalized, _ = tools_module.normalize_acts([act("AFFIRM", {"选项序号": 2})], choice_question, FAKE_SLOTS)
+    c.check("规范化第 3 条的例外：上一问是选择类时 AFFIRM 带的选项序号保留", normalized[0]["内容"] == {"选项序号": 2}, normalized)
+    normalized, dropped = tools_module.normalize_acts(
+        [act("INFORM", {"槽位": "标题", "路径": [], "值": "甲"}), act("CLARIFY", {"问话": "哪个？", "选项": ["甲", "乙"]})],
+        question, FAKE_SLOTS)
+    c.check("规范化第 4 条：CLARIFY 与其他项同时出现，只留 CLARIFY",
+            [a["功能"] for a in normalized] == ["CLARIFY"] and len(dropped) == 1, normalized)
+    normalized, dropped = tools_module.normalize_acts([act("AFFIRM"), act("DENY"), act("OTHER")], question, FAKE_SLOTS)
+    c.check("规范化第 5 条：回应类至多一项，留第一项", [a["功能"] for a in normalized] == ["AFFIRM", "OTHER"], normalized)
+    normalized, _ = tools_module.normalize_acts(
+        [act("AFFIRM"), act("INFORM", {"槽位": "优先级", "路径": [], "值": "紧急"})], question, FAKE_SLOTS)
+    c.check("规范化第 6 条：枚举不在取值内的写值改为 CLARIFY「你说的『紧急』我记成『优先级』，对吗？」，"
+            "选项「对」「不对，我重新说」，同一句里的 AFFIRM 保留（不再触发第 4 条）",
+            [a["功能"] for a in normalized] == ["AFFIRM", "CLARIFY"]
+            and normalized[1]["内容"] == {"问话": "你说的『紧急』我记成『优先级』，对吗？", "选项": ["对", "不对，我重新说"]},
+            normalized)
+
+    fallback_choice_question = {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": ["确认这一稿", "修改这一稿", "先放一放"],
+                                "采纳到": "确认释义", "原问": SUGGEST_QUESTION}
+    normalized, dropped = tools_module.normalize_acts(
+        [act("AFFIRM", {"选项序号": 3}), act("DEFER", {"槽位": "确认释义"}, responds=False)],
+        fallback_choice_question, FAKE_SLOTS)
+    c.check("规范化第 7 条：选择类 AFFIRM 选了「先放一放」又另有一项 DEFER 同一槽位，两项落到同一目标同一动作，"
+            "留前一项并记重复项（2026-09-18 裁定问题三）",
+            [a["功能"] for a in normalized] == ["AFFIRM"] and len(normalized[0].get("重复项", [])) == 1
+            and [rule for _, rule in dropped] == ["第 7 条"], normalized)
+
+    # 落数据里两条不经场景的路径：求证类 AFFIRM 写选项里的待写值；代码澄清后的选择类按序号落。
+    task_def = glossary_def(dict(GLOSSARY_INPUT_TWO))
+    glossary_slots = task_def.DEFINITION["槽位"]
+    data = {**task_def.SLOTS, "释义草稿": "草稿", "回复": "对"}
+    check_question = {"类型": "求证", "槽位": "术语", "路径": [], "选项": ["需求评审"], "采纳到": None}
+    land = tools_module.land_acts([act("AFFIRM")], check_question, data,
+                                  writable_paths(glossary_slots, check_question, data), glossary_slots, 0.6)
+    c.check("落数据：上一问是求证时 AFFIRM 把选项里的待写值写进上一问的槽位（2026-09-18 裁定问题五）",
+            land.work.get("术语") == "需求评审", land.work)
+    fallback_choice = {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": list(tools_module.FALLBACK_OPTIONS),
+                       "采纳到": "确认释义", "原问": SUGGEST_QUESTION}
+    outcomes = {}
+    for number in (1, 2, 3):
+        land = tools_module.land_acts([act("AFFIRM", {"选项序号": number})], fallback_choice, data,
+                                      writable_paths(glossary_slots, fallback_choice, data), glossary_slots, 0.6)
+        outcomes[number] = (land.work.get("确认释义"), land.routes)
+    c.check("落数据：代码澄清的固定三项按序号落——1 把草稿采纳进确认释义，2 不写，3 按 DEFER 路由推迟确认释义"
+            "（在插入段里由对话理解换成帧替换，2026-09-18 裁定问题六）",
+            outcomes == {1: ("草稿", []), 2: (None, []),
+                         3: (None, [{"功能": "DEFER", "输入": {"槽位": "确认释义"}, "替换": True}])}, outcomes)
+    free_choice = {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": ["甲", "乙"], "采纳到": "确认释义"}
+    chosen = act("AFFIRM", {"选项序号": 1})
+    land = tools_module.land_acts([chosen], free_choice, data,
+                                  writable_paths(glossary_slots, free_choice, data), glossary_slots, 0.6)
+    c.check("落数据：自由文字选项的选择类上一问，所选位置不可写时不写并记「选择项不可写，未落」",
+            not land.work and chosen.get("落成") == "选择项不可写，未落", chosen.get("落成"))
+    modes = tools_module.route_modes_of(task_def)
+    c.check("路由表并进了任务定义：REQUEST→答疑、CLARIFY→澄清、DEFER→推迟、INFORM（把握低于阈值）→求证",
+            modes == {"REQUEST": "答疑", "CLARIFY": "澄清", "DEFER": "推迟", "INFORM": "求证"}, modes)
+    mixed = [act("AFFIRM"), act("REQUEST", {"问": "产出"}, responds=False),
+             act("CLARIFY", {"问话": "哪个？", "选项": ["甲", "乙"]}, responds=False),
+             act("DEFER", None), act("INFORM", {"槽位": "术语", "路径": [], "值": "需求评审"}, confidence=0.4),
+             act("INFORM", {"槽位": "原文片段", "路径": [], "值": "片段"}), act("OTHER", responds=False)]
+    land = tools_module.land_acts(mixed, SUGGEST_QUESTION, data, writable_paths(glossary_slots, SUGGEST_QUESTION, data),
+                                  glossary_slots, 0.6, modes)
+    c.check("路由：AFFIRM 与把握够的写值直接落，OTHER 不落；REQUEST、CLARIFY（模型的选项弃用，带原问）、DEFER（目标取采纳到）、"
+            "把握不够的写值按话里的顺序列进待路由的行为，落成写明去向",
+            land.work == {"确认释义": "草稿", "原文片段": "片段"}
+            and land.routes == [{"功能": "REQUEST", "输入": {"问": "产出"}},
+                                {"功能": "CLARIFY", "输入": {"原问": SUGGEST_QUESTION}},
+                                {"功能": "DEFER", "输入": {"槽位": "确认释义"}},
+                                {"功能": "INFORM", "输入": {"槽位": "术语", "路径": [], "值": "需求评审"}}]
+            and [a.get("落成") for a in mixed][1:4] == ["REQUEST → 路由到模式『答疑』", "CLARIFY → 路由到模式『澄清』",
+                                                       "DEFER → 路由到模式『推迟』"]
+            and mixed[4]["落成"].endswith("INFORM → 路由到模式『求证』") and mixed[6]["落成"] == "不落，记进调用记录",
+            (land.work, land.routes))
+
+    normalized, dropped = tools_module.normalize_acts([act("DEFER", {"槽位": "确认释义"}, responds=False)],
+                                                      fallback_choice, glossary_slots)
+    c.check("澄清再问里使用者说「先放一放」、模型给了 DEFER 原问的推迟目标：规范化成 AFFIRM 选项序号 3，并记模型原值"
+            "（2026-09-18 增补裁定第 9 条）",
+            [(a["功能"], a["内容"]) for a in normalized] == [("AFFIRM", {"选项序号": 3})]
+            and normalized[0]["模型原值"] == [{"功能": "DEFER", "内容": {"槽位": "确认释义"}}] and not dropped, normalized)
+    call_model_stub = _stub_caller('{"行为": [{"功能": "DEFER", "回应上一问": true, "内容": {"槽位": "确认释义"}, "把握": 0.9, "规范化修订": null}]}')
+    made, _ = _understand_once(task_def, call_model_stub, {**data, "回复": "先放一放。", "上一问": fallback_choice},
+                               stack(step_at("确认", 2, loop=(1, 3, 1)), [frame("澄清", 1, {"原问": SUGGEST_QUESTION})]))
+    c.check("插入段里同一句「先放一放。」：走帧替换（换成推迟帧），不是本帧再问",
+            made.result.get("replace_frame") == {"功能": "DEFER", "输入": {"槽位": "确认释义"}}
+            and not made.result.get("reask_in_frame"), (made.result.get("replace_frame"), made.result.get("reask_in_frame")))
+
+    # 地址栈：压帧、选帧里的步骤、弹帧，只由任务定义认识（第五步 4.12 节）。
+    def a_call(number, result=None, hit=None):
+        made = ToolCall(tool="无所谓", params={}, proposer="selector", basis=(number, "无所谓", hit or {}))
+        made.status, made.result = CallStatus.SUCCEEDED, result
+        return made
+
+    in_loop = step_at("确认", 2, loop=(1, 3, 1))
+    before = stack(step_at("确认", 1, loop=(1, 3, 1)))
+    two_routes = {"routes": [{"功能": "REQUEST", "输入": {"问": "产出"}}, {"功能": "DEFER", "输入": {"槽位": "确认释义"}}]}
+    pushed = task_def.record_step(before, a_call(4, two_routes))
+    c.check("压帧：一句话里两项要路由，按话里的顺序执行，所以倒着压——栈顶（列表末尾）是第一项「答疑」，下面排着「推迟」",
+            pushed == stack(in_loop, [frame("推迟", 0, {"槽位": "确认释义"}), frame("答疑", 0, {"问": "产出"})]), pushed)
+    chosen_call = task_def.select_call({**data, "回复": None}, pushed)
+    answer_no = pattern_number(task_def, "答疑", 1)
+    c.check("选帧：插入段不为空时从栈顶那一帧选，依据说明带主线阶段名与「插入段 · 模式 第 n 步」，命中值记下是哪一层",
+            chosen_call[0] == "答疑" and chosen_call[1] == {"question": "产出"} and chosen_call[2][0] == answer_no
+            and chosen_call[2][1] == "确认 › 插入段 · 答疑 第 1 步 用一两句白话解释使用者问的内容"
+            and chosen_call[2][2]["插入段"] == {"层": 1, "模式": "答疑", "步骤": 1, "共": 2}, chosen_call)
+    hit = {"插入段": {"层": 1}}
+    after_answer = task_def.record_step(pushed, a_call(answer_no, {"输出": "指这个活动交出的东西。"}, hit))
+    tell_call = task_def.select_call({**data, "回复": None}, after_answer)
+    after_tell = task_def.record_step(after_answer, a_call(pattern_number(task_def, "答疑", 2), "指这个活动交出的东西。", hit))
+    c.check("帧内往下走：答疑做完第 1 步，返回值里的「输出」记进帧的结果；告知的参数用「上一步结果」取到它；告知做完弹出栈顶，下面的「推迟」成了栈顶",
+            after_answer["插入"][-1] == frame("答疑", 1, {"问": "产出"}, 结果="指这个活动交出的东西。")
+            and tell_call[0] == "告知" and tell_call[1] == {"text": "指这个活动交出的东西。"}
+            and after_tell == stack(in_loop, [frame("推迟", 0, {"槽位": "确认释义"})]), (tell_call, after_tell))
+    defer_tell = task_def.select_call({**data, "回复": None}, after_tell)
+    c.check("推迟模式先告知再标记（2026-09-18 裁定问题一）：句式用输入填空",
+            defer_tell[0] == "告知" and defer_tell[1] == {"text": "『确认释义』先放着，回头再问。"}, defer_tell)
+
+    clarify_frame = stack(in_loop, [frame("澄清", 1, {"原问": SUGGEST_QUESTION})])
+    understand_no = pattern_number(task_def, "澄清", 2)
+    reasked = task_def.record_step(clarify_frame, a_call(understand_no, {"reask_in_frame": True,
+                                                                          "reask_original": SUGGEST_QUESTION},
+                                                         {"插入段": {"层": 0}}))
+    reasked_twice = task_def.record_step(stack(in_loop, [frame("澄清", 1, {"原问": SUGGEST_QUESTION}, 再问=1)]),
+                                         a_call(understand_no, {"reask_in_frame": True, "reask_original": SUGGEST_QUESTION},
+                                                {"插入段": {"层": 0}}))
+    given_up = task_def.record_step(stack(in_loop, [frame("澄清", 1, {"原问": SUGGEST_QUESTION}, 再问=2)]),
+                                    a_call(understand_no, {"reask_in_frame": True, "reask_original": SUGGEST_QUESTION},
+                                           {"插入段": {"层": 0}}))
+    c.check("本帧再问：插入段里的对话理解仍含糊，栈顶换成新的澄清帧（从第 1 步起）并记再问次数，不压新帧；"
+            "同一帧再问到 2 次后第 3 次仍含糊就弹帧、不落，主线原地续接（2026-09-18 裁定问题五）",
+            reasked == stack(in_loop, [frame("澄清", 0, {"原问": SUGGEST_QUESTION}, 再问=1)])
+            and reasked_twice == stack(in_loop, [frame("澄清", 0, {"原问": SUGGEST_QUESTION}, 再问=2)])
+            and given_up == stack(in_loop), (reasked, given_up))
+    replaced = task_def.record_step(clarify_frame, a_call(understand_no, {
+        "routes": [], "replace_frame": {"功能": "DEFER", "输入": {"槽位": "确认释义"}}}, {"插入段": {"层": 0}}))
+    c.check("帧替换：澄清帧里选了「先放一放」，栈顶换成推迟帧（输入是原问的目标槽位），不嵌套（2026-09-18 裁定问题六）",
+            replaced == stack(in_loop, [frame("推迟", 0, {"槽位": "确认释义"})]), replaced)
+    c.check("地址栈的插入段不合法（模式不存在、步数越界）抛任务定义错误",
+            all(_raises_definition_error(task_def, bad) for bad in (
+                stack(in_loop, [frame("没有这个模式", 0, {})]), stack(in_loop, [frame("答疑", 9, {})]))), None)
+
+    # 插入段里不嵌套路由：对话理解整句换成本帧再问；选了「先放一放」换成帧替换。
+    call_model_stub = _stub_caller('{"行为": [{"功能": "REQUEST", "回应上一问": false, "内容": {"问": "产出"}, "把握": 0.9, "规范化修订": null}]}')
+    made, _ = _understand_once(task_def, call_model_stub, {**data, "回复": "产出是什么", "上一问": fallback_choice},
+                               stack(in_loop, [frame("澄清", 1, {"原问": SUGGEST_QUESTION})]))
+    c.check("插入段里的对话理解产出 REQUEST 时不压帧：行为列表换成一条代码澄清，返回值标本帧再问并带原问，待路由的行为为空",
+            [a["功能"] for a in made.result["acts"]] == ["CLARIFY"] and made.result.get("reask_in_frame") is True
+            and made.result.get("reask_original") == SUGGEST_QUESTION and made.result.get("routes") == [], made.result.get("acts"))
+    call_model_stub = _stub_caller('{"行为": [{"功能": "AFFIRM", "回应上一问": true, "内容": {"选项序号": 3}, "把握": 0.9, "规范化修订": null}]}')
+    made, _ = _understand_once(task_def, call_model_stub, {**data, "回复": "3", "上一问": fallback_choice},
+                               stack(in_loop, [frame("澄清", 1, {"原问": SUGGEST_QUESTION})]))
+    c.check("插入段里选了「先放一放」：返回值给出帧替换（DEFER，推迟确认释义），不写任何槽位（只清空回复与上一问）",
+            made.result.get("replace_frame") == {"功能": "DEFER", "输入": {"槽位": "确认释义"}}
+            and {change.slot for change in made.changes} == {"回复", "上一问"}, made.result.get("replace_frame"))
+    glossary_text = (TASK_DEFS_DIR / GLOSSARY_FILE).read_text(encoding="utf-8")
+    c.check("退役：术语澄清定义里不再有「待处理」槽位与 {pending} 占位；工具模块里不再有待处理拼句",
+            "待处理" not in glossary_text and "{pending}" not in glossary_text
+            and not hasattr(tools_module, "pending_sentences") and not hasattr(tools_module, "PENDING_SLOT"), None)
+
+    work = Path(tempfile.mkdtemp(prefix="tod-understand-"))
+    try:
+        for missing in ("回复", "上一问"):
+            definition = json_module.loads((TASK_DEFS_DIR / GLOSSARY_FILE).read_text(encoding="utf-8"))
+            del definition["槽位"][missing]
+            broken = work / f"缺{missing}.json"
+            broken.write_text(json_module.dumps(definition, ensure_ascii=False), encoding="utf-8")
+            try:
+                taskdef.load(broken)
+                error = None
+            except taskdef.LoadError as exc:
+                error = exc
+            c.check(f"必备槽位：术语澄清缺「{missing}」时加载报错，位置「槽位」，原因写明对话理解要这个槽位",
+                    error is not None and error.where == "槽位" and f"「{missing}」" in error.reason and "对话理解" in error.reason,
+                    repr(error))
         empty = work / "empty.json"
-        empty.write_text(json_module.dumps([], ensure_ascii=False) + "\n", encoding="utf-8")
-        call_model, config = glossary_call(recording=str(empty))
-        run = run_scenario("T-glossary-3", glossary_def(dict(GLOSSARY_INPUT_ONE)), GLOSSARY_ANSWERS_ONE,
-                           GLOSSARY_TOOLS, call_model=call_model)
-        c = Checker(title)
-        print("── 断言 ──")
-        proposed = named(run.events, CALL_PROPOSED)
-        c.check("恰好一个工具调用，就是生成术语释义", [e.payload["tool"] for e in proposed] == [DRAFT_TOOL],
-                [e.payload["tool"] for e in proposed])
-        note = f"录制文件里没有这条请求：{empty}"
-        history = status_values(call_history(run.events, 1))
-        c.check("工具调用 1 的状态经过是 已提出、已获准、已失败（没有等待中：它不问使用者）",
-                history == [CallStatus.PROPOSED, CallStatus.APPROVED, CallStatus.FAILED],
-                [s.value for s in history])
-        failed = [e for e in call_history(run.events, 1) if e.payload["new_status"] == CallStatus.FAILED]
-        c.check(f"工具调用 1 已失败的说明是模型调用那一句错误：「{note}」",
-                failed and failed[0].payload["note"] == note, failed[0].payload["note"] if failed else None)
-        c.check("释义草稿仍然为空：模型没写出东西就不写槽位",
-                run.task is not None and run.task.data.get("释义草稿") is None,
-                run.task.data.get("释义草稿") if run.task else None)
-        check_terminated(c, run, 1, note)
-        glossary_common(c, run, loops=1)
-        return c
+        empty.write_text("[]\n", encoding="utf-8")
+        call_model, _ = glossary_call(recording=str(empty))
+        made, statuses = understand_case(load_eval_cases()[0], call_model)
+        c.check("模型不可达（回放时录制文件里没有这条请求）：对话理解记已失败，说明是模型调用那一句错误，不写任何东西",
+                made.status == CallStatus.FAILED and statuses and "录制文件里没有这条请求" in statuses[-1][1]
+                and not made.changes, statuses)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    glossary = glossary_def(dict(GLOSSARY_INPUT_ONE))
+    last = {**SUGGEST_QUESTION, "念的值": "第一稿"}
+    changed = _ask_once(glossary, {"释义草稿": "第二稿"}, last)
+    same = _ask_once(glossary, {"释义草稿": "第一稿"}, last)
+    c.check("询问再问同一个问题：念的值变了（改稿之后）照常全文念，登记的念的值是新值；值没变只说再问短句",
+            changed[0] == confirm_utterance(GLOSSARY_TERM_ONE, "第二稿") and changed[1].get("念的值") == "第二稿"
+            and same[0] == tools_module.REASK_LINE and same[1] == last, (changed, same))
+    between = {"类型": "选择", "槽位": "释义草稿", "路径": [], "选项": FALLBACK_OPTIONS, "采纳到": "确认释义",
+               "原问": SUGGEST_QUESTION, "念的值": "第一稿"}
+    after_choice = _ask_once(glossary, {"释义草稿": "第一稿"}, last, between)
+    c.check("询问再问同一个问题：中间隔着一次选择类登记（澄清段到上限回主线），比对的是最近一次同类型同槽位同路径的登记，草稿没变仍说短句",
+            after_choice[0] == tools_module.REASK_LINE, after_choice)
+    work = Path(tempfile.mkdtemp(prefix="tod-reask-"))
+    try:
+        raw = json_module.loads((TASK_DEFS_DIR / GLOSSARY_FILE).read_text(encoding="utf-8"))
+        raw["槽位"]["回复"]["再问短句"] = "还是刚才那一稿，确认吗？"
+        custom = work / "glossary_reask.json"
+        custom.write_text(json_module.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        reask = _ask_once(taskdef.load(custom, initial=dict(GLOSSARY_INPUT_ONE)), {"释义草稿": "第一稿"}, last)
+        c.check("任务定义在写入目标槽位上写了「再问短句」，再问时说的就是这句",
+                reask[0] == "还是刚才那一稿，确认吗？", reask)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return c
 
 
 # ───────────────────────── 检查组：上下文包 ─────────────────────────
@@ -1733,10 +2620,10 @@ def context_pack_checks() -> Checker:
     task_def = glossary_def(dict(GLOSSARY_INPUT_ONE))
     data = {**task_def.SLOTS, "术语": CTX_TERM, "原文片段": None, "释义草稿": CTX_DRAFT_TWO,
             "回复": None, "修改意见": CTX_FEEDBACK, "确认释义": None}
-    # 当前步不在任务数据里，单独给：『确认』阶段第 1 到第 3 步这段循环的第 2 次，做完了第 2 步「判读回复」。
+    # 当前步不在任务数据里，单独给：『确认』阶段第 1 到第 3 步这段循环的第 2 次，做完了第 2 步「理解使用者的回复」。
     ctx_step = step_at("确认", 2, loop=(1, 3, 2))
     # 三轮问答：第一轮在「写释义草稿」阶段问术语（回答至今原样留在槽位里），
-    # 后两轮在「确认」阶段问回复（回答都已被判读清空），这样三条规则各有例子可验。
+    # 后两轮在「确认」阶段问回复（回答都已被对话理解清空），这样三条规则各有例子可验。
     events = (ask_events(1, 1, "写释义草稿", "术语", "请给出要澄清的术语。", CTX_TERM)
               + [fake_event(4, DATA_CHANGED, {"slot": "释义草稿", "old": None, "new": CTX_DRAFT_ONE, "source": 2}, 2)]
               + ask_events(5, 3, "确认", "回复", f"草稿是：{CTX_DRAFT_ONE} 请确认", CTX_REPLY)
@@ -1748,7 +2635,7 @@ def context_pack_checks() -> Checker:
     pack = ContextPack.build(task_def, data, events, step=ctx_step)
 
     segments = [pack.progress("本次写第 3 稿。"), pack.dialogue(), pack.data_segment(["术语"]),
-                pack.material("原文片段"), ContextPack.step(DRAFT_TOOL, "改写。"),
+                pack.material("原文片段"), ContextPack.step("本步执行工具「生成术语释义」：改写。"),
                 ContextPack.shape("文本", "只输出释义正文。")]
     c.check("六种段按固定顺序：任务进度、对话历史、当前数据、参考材料、本步、输出形状",
             [segment.type for segment in segments] == list(SEG_ORDER), [segment.type for segment in segments])
@@ -1763,7 +2650,7 @@ def context_pack_checks() -> Checker:
     c.check("任务进度段用任务定义给的那句当前步，阶段、循环起止、第几次、上限、做完的是哪一步都在里面，来源是当前步",
             progress.type == SEG_PROGRESS and progress.source == "当前步"
             and progress.text.startswith("当前步：『确认』阶段，第 1 到第 3 步循环的第 2 次（最多 5 次），"
-                                         "做完了第 2 步『判读回复：确认还是修改』"), progress.text)
+                                         "做完了第 2 步『理解使用者的回复』"), progress.text)
 
     dialogue = pack.dialogue()
     c.check("对话历史第一条规则（按范围取）：默认只装当前阶段『确认』的两轮问答，"
@@ -1806,16 +2693,40 @@ def context_pack_checks() -> Checker:
             merged.text.splitlines())
     c.check("参考材料段的来源写明是哪个槽位；本步段指向工具，输出形状段写形状",
             pack.material("原文片段").type == SEG_MATERIAL
-            and ContextPack.step(JUDGE_TOOL).type == SEG_STEP
-            and ContextPack.shape("JSON", "{}", api_note=True).source.startswith("JSON（同时作为接口参数"),
+            and ContextPack.step("本步执行工具「对话理解」：…").type == SEG_STEP
+            and ContextPack.shape("JSON", "{}", api_note=True).source.startswith("JSON（同一份结构也作为接口参数"),
             ContextPack.shape("JSON", "{}", api_note=True).source)
+
+    from tod_kernel.context import exchanges_of, utterances_of
+
+    notice = fake_event(30, MESSAGE_PUT, {"box": OUTBOX, "kind": "notice", "sender": "tool.告知", "recipient": "user",
+                                          "call_id": 9, "in_reply_to": None, "content": {"utterance": "「产出」指签字的清单。",
+                                                                                         "params": {"text": "…"}},
+                                          "seq": 9}, 9)
+    pending = ask_events(31, 10, "确认", "回复", "还有要改的吗？", None)[:2]
+    talk = ask_events(1, 1, "确认", "术语", "请给出要澄清的术语。", CTX_TERM) + [notice] + pending
+    spoken = utterances_of(talk)
+    c.check("对话历史按话轮存：系统的提问、系统的告知、使用者的回答各一条，没有回答的提问也照记，按事件序号排",
+            [(u.speaker, u.kind, u.text, u.seq, u.stage, u.call_id) for u in spoken]
+            == [("系统", "提问", "请给出要澄清的术语。", 2, "确认", 1), ("使用者", "回答", CTX_TERM, 3, "确认", 1),
+                ("系统", "告知", "「产出」指签字的清单。", 30, "", 9), ("系统", "提问", "还有要改的吗？", 32, "确认", 10)],
+            [(u.speaker, u.kind, u.text, u.seq, u.stage, u.call_id) for u in spoken])
+    parts = exchanges_of(spoken)
+    lone = exchanges_of([spoken[2]] + spoken[:2])
+    c.check("交互轮次的划分：从一个提问到下一个提问之前为一段，中间的告知归前一段；第一个提问之前的告知自成一段；"
+            "渲染仍是逐行「系统：」「使用者：」原文",
+            [[u.kind for u in part.utterances] for part in parts] == [["提问", "回答", "告知"], ["提问"]]
+            and [[u.kind for u in part.utterances] for part in lone] == [["告知"], ["提问", "回答"]]
+            and parts[0].render() == f"系统：请给出要澄清的术语。\n使用者：{CTX_TERM}\n系统：「产出」指签字的清单。"
+            and parts[1].answer is None and parts[1].question.text == "还有要改的吗？",
+            [[u.kind for u in part.utterances] for part in parts])
 
     prompt = tools_system_prompt_for(task_def, list(GLOSSARY_TOOLS) + [EXCEPTION_TOOL])
     heads = re.findall(r"^【(.+?)】$", prompt, flags=re.MULTILINE)
     c.check("系统提示六段齐全，顺序是角色与任务、任务定义摘要、工具目录、上下文约定、领域规矩、通用输出规矩",
             heads == ["角色与任务", "任务定义摘要", "工具目录", "上下文约定", "领域规矩", "通用输出规矩"], heads)
-    c.check("系统提示里有两个模型工具的固定指令，也有任务定义的领域规矩",
-            "你是术语解释员" in prompt and "明确同意、或给出一段改写后的完整释义算确认" in prompt
+    c.check("系统提示里有两个模型工具的固定指令（生成术语释义、对话理解，逐字取自各自的提示词包），也有任务定义的领域规矩",
+            "你是术语解释员" in prompt and ("固定指令：" + prompt_pack_of(UNDERSTAND_TOOL).instruction) in prompt
             and "释义按需求工程语境写" in prompt, None)
 
     import shutil
@@ -2018,15 +2929,20 @@ def console_transcript_checks() -> Checker:
     return c
 
 
-# 六个场景：（标题, 跑它的函数）。控制台按这张表列菜单，编号 1 起，0 是全部。
-# 一种机制留一个场景（2026-09-16 用户裁定），顺序与第四步文档第 6 节的场景表相同。
+# 十个场景：（标题, 跑它的函数）。控制台按这张表列菜单，编号 1 起，0 是全部。
+# 一种机制留一个场景（2026-09-16 用户裁定）；第五步把术语澄清换成对话理解的六个场景，「模型不可达」场景退役，
+# 它验的事改由对话理解机器检查组里一条断言验（2026-09-18 裁定问题九）。
 SCENARIOS = [
     ("材料接入登记，正常（登记完再问）", intake_scenario_one),
     ("材料接入登记，目标写错报异常，使用者选被动终止", intake_exception_scenario),
     ("加载错误，三份坏文件", load_error_checks),
-    ("术语澄清，给全初始输入，一次确认", glossary_scenario_one),
-    ("术语澄清，只给术语，一次修改后确认", glossary_scenario_two),
-    ("术语澄清，模型不可达", glossary_scenario_three),
+    ("术语澄清，确认", glossary_scenario_confirm),
+    ("术语澄清，提修改意见", glossary_scenario_revise),
+    ("术语澄清，给整段改写", glossary_scenario_rewrite),
+    ("术语澄清，要换一份", glossary_scenario_alts),
+    ("术语澄清，推迟并顺手改术语", glossary_scenario_defer),
+    ("术语澄清，提问后再确认", glossary_scenario_ask),
+    ("术语澄清，含糊后选择", glossary_scenario_vague),
 ]
 
 # 不算场景的检查组：（标题, 跑它的函数）。控制台选 0 时与场景一起跑，范围与直接跑验证脚本相同。
@@ -2039,6 +2955,8 @@ CHECK_GROUPS = [
     ("模型调用件的三种模式", llm_mode_checks),
     ("上下文包与对话历史的三条规则", context_pack_checks),
     ("控制台的问答打印", console_transcript_checks),
+    ("对话理解标注集评测", understand_eval_checks),
+    ("对话理解的机器检查", understand_machine_checks),
 ]
 
 

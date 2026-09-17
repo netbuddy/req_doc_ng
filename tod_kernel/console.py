@@ -25,8 +25,10 @@ from tod_kernel.kernel import (
     LOOP_STARTED,
     MAILBOX_CLOSED,
     TERMINAL_CALL_STATUSES,
+    CallStatus,
     Message,
 )
+from tod_kernel.tools import CONFIDENCE_FLOOR, NOTICE_KIND
 
 QUESTION_PREFIX = "系统："
 ANSWER_PREFIX = "使用者："
@@ -95,11 +97,13 @@ def host_loop(inbox, outbox, answerer, show: bool = False) -> None:
     show 为真时把问答打印出来。键盘应答者自带提示符，所以只有预设应答者的回答由这里打印。
     """
     while True:
-        question = outbox.take(match=lambda m: m.kind == "question", block=True)
+        question = outbox.take(match=lambda m: m.kind in ("question", NOTICE_KIND), block=True)
         if question is None:  # 发件箱已关闭：不会再有问题
             break
         if show:
             print(f"{QUESTION_PREFIX}{question.content['utterance']}", flush=True)
+        if question.kind == NOTICE_KIND:  # 告知：系统说了一句，不等回答
+            continue
         answer = answerer.answer(question)
         if answer is None:
             if show and answerer.preset:
@@ -203,7 +207,9 @@ def tool_names_of(task_def) -> tuple:
 def definition_files() -> list[Path]:
     from tod_kernel import verify
 
-    return sorted(path for path in verify.TASK_DEFS_DIR.glob("*.json") if not path.name.endswith(".schema.json"))
+    # 对话模式文件 patterns.json 不是任务定义，不列
+    return sorted(path for path in verify.TASK_DEFS_DIR.glob("*.json")
+                  if not path.name.endswith(".schema.json") and path.name != "patterns.json")
 
 
 def ask_initial_input(task_def) -> dict:
@@ -262,8 +268,9 @@ def run_free_input(config: dict, show_calls: bool = False) -> int:
     call = llm.make_caller(config)
     print(f"── 开始跑「{task_def.NAME}」，任务标识 {task_id}。回答不下去时按 Ctrl-D 结束 ──")
     run = verify.run_scenario(task_id, task_def, answers={}, tool_names=tool_names_of(task_def),
-                              console=False, call_model=call_model, answerer=KeyboardAnswerer(), show=True,
-                              subscribers=(CallPrinter(),) if show_calls else ())
+                              console=False, call_model=call, answerer=KeyboardAnswerer(), show=True,
+                              subscribers=(CallPrinter(),) if show_calls else (),
+                              confidence_floor=config.get("confidence_floor", CONFIDENCE_FLOOR))
     print("── 跑完了 ──")
     if run.error is not None:
         print(f"任务没有跑到完成：{run.error}")
@@ -293,20 +300,54 @@ def run_free_input(config: dict, show_calls: bool = False) -> int:
     return 0 if not failed else 1
 
 
+# ───────────────────────── 对话理解标注集 ─────────────────────────
+
+
+def run_eval_listing() -> int:
+    """逐条打印对话理解标注集：上一问、系统那一问、使用者原话、期望与实际的行为列表、每项落成了什么。回放模式，不调模型服务。"""
+    from tod_kernel import verify
+
+    call_model, _ = verify.glossary_call(recording=verify.EVAL_RECORDING)
+    cases = verify.load_eval_cases()
+    whole = 0
+    for case in cases:
+        made, statuses = verify.understand_case(case, call_model)
+        record = made.result if isinstance(made.result, dict) else {}
+        acts = record.get("acts") or []
+        ok, _, _, problems = verify.score_case(case, acts)
+        whole += ok
+        question = case["上一问"]
+        print(f"── 第 {case['编号']} 条 · 上一问{question['类型']} · {case['情形']} · {'全对' if ok else '不一致'} ──")
+        print(f"{QUESTION_PREFIX}{case['系统问话']}")
+        print(f"{ANSWER_PREFIX}{case['原话']}")
+        if made.status != CallStatus.SUCCEEDED:
+            print(f"  对话理解没有做成：{statuses[-1][1] if statuses else ''}")
+            continue
+        print("  期望：" + "；".join(f"{e['功能']} {e.get('内容')}" for e in case["期望"]))
+        for number, act in enumerate(acts, start=1):
+            print(f"  实际 {number}：{act.get('功能')} {act.get('内容')}，把握 {act.get('把握')}，落成：{act.get('落成')}")
+        if problems:
+            print(f"  差在：{'；'.join(problems)}")
+    print(f"逐句全对：{whole}/{len(cases)}")
+    return 0
+
+
 # ───────────────────────── 菜单 ─────────────────────────
 
 
-def print_menu() -> int:
-    """打印菜单，返回自由输入那一项的编号。"""
+def print_menu() -> tuple:
+    """打印菜单，返回（标注集那一项的编号, 自由输入那一项的编号）。"""
     from tod_kernel import verify
 
     print("可以跑的：")
-    print("  0  全部：六个场景与不算场景的几组检查（与 python3 -m tod_kernel.verify 相同）")
+    print(f"  0  全部：{len(verify.SCENARIOS)} 个场景与不算场景的几组检查（与 python3 -m tod_kernel.verify 相同）")
     for number, (title, _) in enumerate(verify.SCENARIOS, start=1):
         print(f"  {number}  {title}")
-    free = len(verify.SCENARIOS) + 1
+    listing = len(verify.SCENARIOS) + 1
+    free = listing + 1
+    print(f"  {listing}  对话理解标注集：逐条打印原话与行为列表（回放）")
     print(f"  {free}  自由输入：自己选任务定义文件，自己敲回答")
-    return free
+    return listing, free
 
 
 def main(argv=None) -> int:
@@ -317,7 +358,7 @@ def main(argv=None) -> int:
 
     config = llm.load_config(args.config)
     print(llm.describe_config(config, args.config))
-    free = print_menu()
+    listing, free = print_menu()
     raw = input("输入编号：").strip()
     if not raw.isdigit():
         print("请输入一个编号。")
@@ -325,6 +366,8 @@ def main(argv=None) -> int:
     number = int(raw)
     if number == 0:
         return run_everything()
+    if number == listing:
+        return run_eval_listing()
     if number == free:
         return run_free_input(config, show_calls=args.show_calls)
     from tod_kernel import verify

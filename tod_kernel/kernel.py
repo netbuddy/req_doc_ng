@@ -510,7 +510,9 @@ def select_call(task: Task) -> ToolCall:
     tool = task.tools.get(tool_name)
     if tool is None:
         _definition_error(task, f"工具未登记：{tool_name!r}", raw)
-    if not isinstance(params, dict) or set(params) != set(tool.param_names):
+    # 可选参数可以不写（第五步起工具声明分必填与可选参数）；必填的都要在，清单外的一个都不许有。
+    names, optional = set(tool.param_names), set(getattr(tool, "optional_params", ()) or ())
+    if not isinstance(params, dict) or not (names - optional <= set(params) <= names):
         _definition_error(task, f"参数名与工具的参数名清单不符：{tool_name!r}", raw)
     return ToolCall(tool=tool_name, params=dict(params), basis=basis, proposer="selector",
                   status=CallStatus.CANDIDATE)

@@ -37,7 +37,8 @@ from pathlib import Path
 from typing import Any
 
 from tod_kernel.kernel import CallStatus, DefinitionError
-from tod_kernel.tools import EXCEPTION_OPTIONS, EXCEPTION_TOOL, REDO_RESULT, STATIC_TOOLS
+from tod_kernel.tools import (EXCEPTION_OPTIONS, EXCEPTION_TOOL, REASK_KEY, REASK_ORIGINAL_KEY, REDO_RESULT, REPLACE_KEY,
+                              ROUTES_KEY, STATIC_TOOLS)
 
 # 文件里的键。
 KEY_NAME = "名字"
@@ -64,6 +65,8 @@ SLOT_DEFAULT = "默认值"
 SLOT_VALUES = "取值"
 SLOT_ITEM = "项"
 SLOT_QUESTION = "提问"
+SLOT_REASK = "再问短句"  # 可选：询问再问同一个问题且念的值没变时说的短句（第五步 4.12 节实施裁定第 11 条）
+SLOT_USER_WRITABLE = "使用者可写"  # 可选布尔，默认 true；系统写的槽位（例如释义草稿）标 false，不进对话理解的可写路径清单
 SLOT_TYPES = ("文本", "数字", "布尔", "列表", "对象", "枚举")
 TYPE_ENUM = "枚举"
 
@@ -100,7 +103,30 @@ REF_FIRST_NULL = "首个为空项"
 REF_FIRST_NULL_FIELD = "首个为空项字段"
 REF_KEYS = (REF_SLOT, REF_LENGTH, REF_FIRST_NULL, REF_FIRST_NULL_FIELD)
 
-# 当前步的三层。
+# 当前步是地址栈（第五步 4.12 节）：主线是原来的三层地址，插入是插入段的列表（列表末尾是栈顶）。
+STACK_MAIN = "主线"
+STACK_INSERTS = "插入"
+# 插入段的一帧：模式名、做完的步数（0 是一步都没做）、触发时带的输入、上一步的结果、在本帧内再问过几次。
+FRAME_PATTERN = "模式"
+FRAME_STEP = "步骤"
+FRAME_INPUT = "输入"
+FRAME_RESULT = "结果"
+FRAME_REASKED = "再问"
+FRAME_REASK_LIMIT = 2  # 同一帧最多再问 2 次，第 3 次仍含糊就弹帧、不落，主线原地续接（2026-09-18 裁定问题五）
+INSERT_KEY = "插入段"  # 依据命中值里的键：这一步属于哪一层插入段
+PATTERNS_FILE = Path(__file__).resolve().parent / "task_defs" / "patterns.json"
+KEY_PATTERNS = "对话模式"  # DEFINITION 里并进来的对话模式定义
+PAT_ROUTES = "路由表"
+PAT_MODES = "模式"
+PAT_NAME = "名字"
+PAT_INPUTS = "输入"
+PAT_STEPS = "步骤"
+PREF_INPUT = "输入"  # 模式步骤参数里的三种引用
+PREF_LAST = "上一步结果"
+PREF_SENTENCE = "句式"
+PREF_KEYS = (PREF_INPUT, PREF_LAST, PREF_SENTENCE)
+
+# 当前步主线地址的三层。
 STEP_STAGE = "阶段"
 STEP_LOOP = "循环"
 STEP_INDEX = "步骤"
@@ -189,7 +215,7 @@ class TaskDefinition:
     依据说明（序号 → 「阶段名 › 第 n 步 步骤说明」等）由加载器从结构生成，存在 _notes 里，不作为属性对外。
     """
 
-    def __init__(self, name, slots, definition, notes, templates, stages, deliverables=()):
+    def __init__(self, name, slots, definition, notes, templates, stages, deliverables=(), patterns=None):
         self.NAME = name
         self.SLOTS = slots
         self.DEFINITION = definition
@@ -201,7 +227,12 @@ class TaskDefinition:
         # 依据序号 → 这一步属于哪个阶段、是哪一步；告知异常的依据序号 → 报异常的那个阶段。record_step 靠这两张表认路。
         self._step_of_number = {step.number: (stage, step) for stage in stages for step in stage.steps}
         self._exception_stage = {stage.exception_number: stage for stage in stages}
-        self.INITIAL_STEP = stages[0].start_step() if stages else {}
+        # 对话模式：模式名 → 模式；依据序号 → （模式, 模式内序号从 0 起）；功能 → 模式名。没用对话理解的任务三张表都空。
+        patterns = patterns or {"modes": {}, "numbers": {}, "routes": {}}
+        self._modes = patterns["modes"]
+        self._mode_step_of_number = patterns["numbers"]
+        self._route_of = patterns["routes"]
+        self.INITIAL_STEP = {STACK_MAIN: stages[0].start_step() if stages else {}, STACK_INSERTS: []}
 
     # ── 内核调用的两个函数 ──
 
@@ -217,8 +248,14 @@ class TaskDefinition:
     def select_call(self, data, step):
         """调用选择：返回（工具名, 参数, 依据）——普通一步或告知异常；全部阶段目标都已成立时返回 None。
 
-        只读，不写任何东西。step 是当前步；它不合法时抛 DefinitionError，由内核报任务定义错误。
+        只读，不写任何东西。step 是当前步（地址栈）；它不合法时抛 DefinitionError，由内核报任务定义错误。
+        插入段不为空时先从栈顶那一帧往下找能做的步骤；各帧都做完了，才回到主线原地址往下走（第五步 4.12 节）。
         """
+        step, frames = self._split(step)
+        for layer in range(len(frames) - 1, -1, -1):
+            candidate = self._frame_candidate(frames[layer], layer, data, step)
+            if candidate is not None:
+                return candidate
         stage, position = self._locate(step)
         here = step
         index = self._stage_index[stage.name]
@@ -249,10 +286,20 @@ class TaskDefinition:
         """
         if getattr(call, "status", None) is not CallStatus.SUCCEEDED:
             return step
+        main, frames = self._split(step)
         number = call.basis[0] if isinstance(call.basis, tuple) and call.basis else None
         reported = self._exception_stage.get(number)
         if reported is not None:
-            return reported.start_step() if call.result == REDO_RESULT else step
+            if call.result == REDO_RESULT:
+                return {STACK_MAIN: reported.start_step(), STACK_INSERTS: []}
+            return {STACK_MAIN: main, STACK_INSERTS: frames}
+        if number in self._mode_step_of_number:
+            return {STACK_MAIN: main, STACK_INSERTS: self._record_frame_step(frames, call, number)}
+        new_main = self._record_main(main, call, number)
+        return {STACK_MAIN: new_main, STACK_INSERTS: self._push_routes(call)}
+
+    def _record_main(self, step, call, number):
+        """主线一步做完：写该步的阶段与阶段内序号，落在循环段里时带上这段循环的起止与第几次。"""
         located = self._step_of_number.get(number)
         if located is None:
             raise DefinitionError(f"工具调用的依据序号不是任何一步，记不了当前步：{number!r}")
@@ -265,8 +312,28 @@ class TaskDefinition:
         return new
 
     def step_text(self, step) -> str:
-        """一句人话，给界面与提示词。读不懂的当前步照实说，不抛错——它只负责显示。"""
-        view = self.step_view(step)
+        """一句人话，给界面与提示词。读不懂的当前步照实说，不抛错——它只负责显示。
+
+        不在插入段里时与原来的写法逐字相同；在插入段里时后面接一句插入段做到哪。
+        """
+        text = self._main_text(step.get(STACK_MAIN) if isinstance(step, dict) and STACK_MAIN in step else step)
+        frames = step.get(STACK_INSERTS) if isinstance(step, dict) and STACK_MAIN in step else None
+        if isinstance(frames, list) and frames:
+            top = frames[-1]
+            mode = self._modes.get(top.get(FRAME_PATTERN)) if isinstance(top, dict) else None
+            done = top.get(FRAME_STEP) if isinstance(top, dict) else None
+            if mode is None or not isinstance(done, int):
+                text += f"；插入段读不出来（{top!r}）"
+            elif done == 0:
+                text += f"；插入段『{mode.name}』还没有做完任何一步"
+            else:
+                text += f"；插入段『{mode.name}』做完了第 {done} 步『{mode.steps[done - 1].note}』"
+            if len(frames) > 1:
+                text += f"，后面还排着 {len(frames) - 1} 段"
+        return text
+
+    def _main_text(self, step) -> str:
+        view = self._main_view(step)
         if view is None:
             return f"当前步：读不出来（{step!r}）"
         parts = [f"当前步：『{view[AT_STAGE]}』阶段"]
@@ -287,8 +354,26 @@ class TaskDefinition:
     def step_view(self, step) -> dict | None:
         """结构化投影（阶段名、阶段内序号、步骤说明、循环起止与第几次与上限、是不是段尾），给观测台画图，页面不自己算。
 
+        主线那几项照旧放在顶层；另加「插入」：插入段列表（栈底在前），每项是模式名、做完的步数、共几步、做完那一步的说明、输入。
         读不出来时返回 None（旧运行文件或宿主给了别的东西时，显示那一侧自己兜底）。
         """
+        main = step.get(STACK_MAIN) if isinstance(step, dict) and STACK_MAIN in step else step
+        view = self._main_view(main)
+        if view is None:
+            return None
+        frames = step.get(STACK_INSERTS) if isinstance(step, dict) and STACK_MAIN in step else []
+        inserts = []
+        for frame in frames if isinstance(frames, list) else []:
+            mode = self._modes.get(frame.get(FRAME_PATTERN)) if isinstance(frame, dict) else None
+            done = frame.get(FRAME_STEP) if isinstance(frame, dict) else None
+            if mode is None or not isinstance(done, int):
+                continue
+            inserts.append({FRAME_PATTERN: mode.name, FRAME_STEP: done, "共": len(mode.steps),
+                            AT_NOTE: mode.steps[done - 1].note if done else None,
+                            FRAME_INPUT: copy.deepcopy(frame.get(FRAME_INPUT))})
+        return {**view, STACK_INSERTS: inserts}
+
+    def _main_view(self, step) -> dict | None:
         if not isinstance(step, dict):
             return None
         index = self._stage_index.get(step.get(STEP_STAGE))
@@ -306,6 +391,89 @@ class TaskDefinition:
                     LOOP_NTH: raw.get(LOOP_NTH), "最多": done.group.max}
         return {AT_STAGE: stage.name, AT_INDEX: number, AT_NOTE: done.note, AT_LOOP: loop,
                 AT_LOOP_LAST: None if done.group is None else done.group.last == done.pos}
+
+    # ── 插入段（第五步 4.12 节）──
+
+    def _split(self, step):
+        """把当前步拆成（主线地址, 插入段列表的副本）。原来的单个地址也认，按插入为空处理；插入段不合法抛 DefinitionError。"""
+        if not (isinstance(step, dict) and STACK_MAIN in step):
+            return step, []
+        frames = step.get(STACK_INSERTS, [])
+        if not isinstance(frames, list):
+            raise DefinitionError(f"当前步的「{STACK_INSERTS}」不是列表：{frames!r}")
+        for frame in frames:
+            mode = self._modes.get(frame.get(FRAME_PATTERN)) if isinstance(frame, dict) else None
+            if mode is None:
+                raise DefinitionError(f"插入段的模式不存在：{frame!r}")
+            done = frame.get(FRAME_STEP)
+            if not (isinstance(done, int) and not isinstance(done, bool) and 0 <= done <= len(mode.steps)):
+                raise DefinitionError(f"插入段『{mode.name}』做完的步数 {done!r} 不在 0 到 {len(mode.steps)} 之内")
+        return step[STACK_MAIN], copy.deepcopy(frames)
+
+    def _frame_candidate(self, frame, layer, data, main):
+        """从一帧做完的那一步往后找第一个前置条件成立的步骤，找到返回（工具名, 参数, 依据），这一帧做完了返回 None。
+
+        依据说明带主线所在的阶段名，对话历史按阶段取问答时插入段里的问答仍算在这个阶段里。
+        """
+        mode = self._modes[frame[FRAME_PATTERN]]
+        stage = main.get(STEP_STAGE, "") if isinstance(main, dict) else ""
+        for pos in range(frame[FRAME_STEP], len(mode.steps)):
+            step = mode.steps[pos]
+            params = _evaluate_pattern_tree(step.params, frame)
+            ok, note, hit = _precondition(step.tool, data, params)
+            if not ok:
+                continue
+            hit = {**(hit if isinstance(hit, dict) else {} if hit is None else {"命中值": hit}),
+                   INSERT_KEY: {"层": layer, FRAME_PATTERN: mode.name, FRAME_STEP: pos + 1, "共": len(mode.steps)}}
+            text = f"{stage}{STAGE_NAME_SEPARATOR}插入段 · {mode.name} 第 {pos + 1} 步 {step.note}"
+            return (step.tool, params, (step.number, text, hit))
+        return None
+
+    def _record_frame_step(self, frames, call, number):
+        """插入段里一步做完：更新那一帧做完的步数与结果；本帧再问换成澄清帧（到上限就弹帧），帧替换换成新模式，做完弹帧。"""
+        mode, pos = self._mode_step_of_number[number]
+        hit = call.basis[2] if len(call.basis) > 2 and isinstance(call.basis[2], dict) else {}
+        layer = (hit.get(INSERT_KEY) or {}).get("层", len(frames) - 1)
+        if not (isinstance(layer, int) and 0 <= layer < len(frames)):
+            raise DefinitionError(f"插入段里的工具调用找不到它所在的那一帧：层 {layer!r}")
+        frames = frames[:layer + 1]  # 上面几帧在选中这一步时已经做完了
+        frame = frames[layer]
+        frame[FRAME_STEP] = pos + 1
+        result = call.result
+        if isinstance(result, dict) and result.get(REASK_KEY):
+            reasked = frame.get(FRAME_REASKED, 0)
+            if reasked >= FRAME_REASK_LIMIT:
+                return frames[:layer]  # 再问到上限仍含糊：弹帧、不落，主线原地续接
+            frames[layer] = {**self._new_frame(CLARIFY_FUNCTION, {"原问": result.get(REASK_ORIGINAL_KEY)}),
+                             FRAME_REASKED: reasked + 1}
+            return frames
+        if isinstance(result, dict) and isinstance(result.get(REPLACE_KEY), dict):
+            replace = result[REPLACE_KEY]
+            frames[layer] = self._new_frame(replace.get("功能"), replace.get("输入"))
+            if frame.get(FRAME_REASKED):
+                frames[layer][FRAME_REASKED] = frame[FRAME_REASKED]
+            return frames
+        if isinstance(result, dict) and "输出" in result:
+            frame[FRAME_RESULT] = copy.deepcopy(result["输出"])
+        elif result is not None and not isinstance(result, dict):
+            frame[FRAME_RESULT] = copy.deepcopy(result)
+        if frame[FRAME_STEP] >= len(mode.steps):
+            return frames[:layer]
+        return frames
+
+    def _push_routes(self, call):
+        """主线一步做完后，按它返回值里待路由的行为压插入段：话里第一项最先做，所以倒着压，第一项在栈顶。"""
+        result = call.result
+        routes = result.get(ROUTES_KEY) if isinstance(result, dict) else None
+        if not routes:
+            return []
+        return [self._new_frame(route.get("功能"), route.get("输入")) for route in reversed(routes)]
+
+    def _new_frame(self, function, inputs):
+        name = self._route_of.get(function)
+        if name is None:
+            raise DefinitionError(f"路由表里没有功能「{function}」的去向")
+        return {FRAME_PATTERN: name, FRAME_STEP: 0, FRAME_INPUT: copy.deepcopy(inputs)}
 
     def _locate(self, step):
         """当前步 → （阶段, 一趟的起点状态）。不合法就抛 DefinitionError。"""
@@ -438,7 +606,7 @@ class TaskDefinition:
 
         阶段起点时序号与说明都是 null；「是段尾」在这一步不在循环段里或还没做完任何一步时是 null。
         """
-        view = self.step_view(here)
+        view = self._main_view(here)
         if view is None:
             return {AT_STAGE: here.get(STEP_STAGE) if isinstance(here, dict) else None,
                     AT_INDEX: None, AT_NOTE: None, AT_LOOP: None, AT_LOOP_LAST: None}
@@ -524,6 +692,31 @@ def _nth_time(step, stage, done):
     if not (isinstance(before, int) and not isinstance(before, bool)):
         return 1
     return nth + 1 if done.pos + 1 <= before else nth
+
+
+CLARIFY_FUNCTION = "CLARIFY"
+
+
+def _evaluate_pattern_tree(value, frame):
+    """模式步骤的参数逐层求值：三种引用取插入段那一帧的东西，其余原样深拷贝。引用求出 null 不跳过步骤，值就是 null。"""
+    if isinstance(value, dict) and len(value) == 1 and next(iter(value)) in PREF_KEYS:
+        (key, arg), = value.items()
+        inputs = frame.get(FRAME_INPUT) if isinstance(frame.get(FRAME_INPUT), dict) else {}
+        if key == PREF_INPUT:
+            node = inputs
+            for part in str(arg).split("."):
+                node = node.get(part) if isinstance(node, dict) else None
+            return copy.deepcopy(node)
+        if key == PREF_LAST:
+            return copy.deepcopy(frame.get(FRAME_RESULT))
+        shown = {name: (item if isinstance(item, str) else json.dumps(item, ensure_ascii=False))
+                 for name, item in inputs.items()}
+        return str(arg).format(**shown)
+    if isinstance(value, dict):
+        return {key: _evaluate_pattern_tree(child, frame) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_evaluate_pattern_tree(child, frame) for child in value]
+    return copy.deepcopy(value)
 
 
 def _precondition(tool_name, data, params):
@@ -783,7 +976,8 @@ class _Checker:
         unknown = [key for key in params if key not in expected]
         if unknown:
             self.fail(here, f"工具 {value[STEP_TOOL]} 没有参数：{'、'.join(unknown)}")
-        missing = [key for key in expected if key not in params]
+        optional = STATIC_TOOLS[value[STEP_TOOL]].optional_params
+        missing = [key for key in expected if key not in params and key not in optional]
         if missing:
             self.fail(here, f"工具 {value[STEP_TOOL]} 缺少参数：{'、'.join(missing)}")
         for key, child in params.items():
@@ -829,15 +1023,116 @@ def load(path, name=None, initial=None) -> TaskDefinition:
     _check_deliverables(check, raw[KEY_DELIVERABLES], raw[KEY_SLOTS])
     _check_initial(check, initial, slots)
     parsed, number = _parse_stages(check, raw[KEY_STAGES])
+    _check_required_slots(check, parsed, raw[KEY_SLOTS])
     definition, notes, stages = _build_definition(parsed, number)
     definition[KEY_SLOTS] = copy.deepcopy(raw[KEY_SLOTS])
     definition[KEY_DELIVERABLES] = copy.deepcopy(raw[KEY_DELIVERABLES])
     if KEY_DOMAIN_RULES in raw:
         definition[KEY_DOMAIN_RULES] = raw[KEY_DOMAIN_RULES]
+    patterns = None
+    if any(STATIC_TOOLS[step.tool].uses_patterns for entry in parsed for step in entry[3]):
+        patterns = load_patterns(max(notes) if notes else 0)
+        definition[KEY_PATTERNS] = patterns["definition"]
+        notes.update(patterns["notes"])
     if initial is not None:
         slots.update(copy.deepcopy(initial))
     name_out = raw[KEY_NAME] if name is None else name
-    return TaskDefinition(name_out, slots, definition, notes, templates, tuple(stages), copy.deepcopy(raw[KEY_DELIVERABLES]))
+    return TaskDefinition(name_out, slots, definition, notes, templates, tuple(stages), copy.deepcopy(raw[KEY_DELIVERABLES]),
+                          patterns)
+
+
+@dataclass(frozen=True)
+class Mode:
+    """一个对话模式：名字、触发时带的输入键、步骤（Step 元组，编号接在任务定义的全部编号之后）。"""
+
+    name: str
+    inputs: tuple
+    steps: tuple
+
+
+PATTERN_FUNCTIONS = ("REQUEST", "CLARIFY", "DEFER", "INFORM")  # 路由表里可以有去向的功能（第五步 4.12 节）
+
+
+def load_patterns(last_number: int, path=None) -> dict:
+    """读对话模式文件，用与任务定义同一套校验查步骤（工具名、参数名、说明），另查三种模式引用与路由表。
+
+    返回 {definition, notes, modes, numbers, routes}：definition 并进任务定义的 DEFINITION，步骤带编号；
+    notes 是依据说明；modes 是模式名到 Mode；numbers 是编号到（Mode, 模式内序号）；routes 是功能到模式名。
+    """
+    path = str(PATTERNS_FILE if path is None else path)
+    raw = _read_json(path)
+    check = _Checker(path)
+    check.dict_with(raw, "顶层", (PAT_ROUTES, PAT_MODES), ("说明",))
+    if not isinstance(raw[PAT_MODES], list) or not raw[PAT_MODES]:
+        check.fail(PAT_MODES, "应当是非空数组")
+    modes, numbers, notes, entries, number = {}, {}, {}, [], last_number
+    for index, item in enumerate(raw[PAT_MODES]):
+        where = f"{PAT_MODES}[{index}]"
+        check.dict_with(item, where, (PAT_NAME, PAT_INPUTS, PAT_STEPS))
+        name = item[PAT_NAME]
+        if not isinstance(name, str) or not name or name in modes:
+            check.fail(f"{where}.{PAT_NAME}", f"应当是不重名的非空字符串，实际是 {name!r}")
+        where = f"{where}（{name}）"
+        inputs = item[PAT_INPUTS]
+        if not isinstance(inputs, list) or not all(isinstance(key, str) and key for key in inputs):
+            check.fail(f"{where}.{PAT_INPUTS}", "应当是非空字符串的数组")
+        if not isinstance(item[PAT_STEPS], list) or not item[PAT_STEPS]:
+            check.fail(f"{where}.{PAT_STEPS}", "应当是非空数组")
+        steps, rows = [], []
+        for pos, raw_step in enumerate(item[PAT_STEPS]):
+            here = f"{where}.{PAT_STEPS}[{pos}]"
+            check.step(raw_step, here)
+            if GROUP_UNTIL in raw_step or GROUP_MAX in raw_step:
+                check.fail(here, "模式的步骤不重复")
+            _check_pattern_refs(check, raw_step[STEP_PARAMS], f"{here}.{STEP_PARAMS}", inputs)
+            number += 1
+            step = Step(number, raw_step[STEP_NOTE], raw_step[STEP_TOOL], copy.deepcopy(raw_step[STEP_PARAMS]), pos, None)
+            steps.append(step)
+            notes[number] = f"插入段{STAGE_NAME_SEPARATOR}{name} 第 {pos + 1} 步 {step.note}"
+            rows.append(_step_definition(step))
+        mode = Mode(name, tuple(inputs), tuple(steps))
+        modes[name] = mode
+        numbers.update({step.number: (mode, step.pos) for step in steps})
+        entries.append({PAT_NAME: name, PAT_INPUTS: list(inputs), PAT_STEPS: rows})
+    routes = {}
+    if not isinstance(raw[PAT_ROUTES], list):
+        check.fail(PAT_ROUTES, "应当是数组")
+    for index, row in enumerate(raw[PAT_ROUTES]):
+        where = f"{PAT_ROUTES}[{index}]"
+        check.dict_with(row, where, ("功能", PAT_MODES), ("条件",))
+        if row["功能"] not in PATTERN_FUNCTIONS or row["功能"] in routes:
+            check.fail(f"{where}.功能", f"只能是{'、'.join(PATTERN_FUNCTIONS)}之一且不重复，实际是 {row['功能']!r}")
+        if row[PAT_MODES] not in modes:
+            check.fail(f"{where}.{PAT_MODES}", f"没有这个模式：{row[PAT_MODES]!r}")
+        routes[row["功能"]] = row[PAT_MODES]
+    definition = {PAT_ROUTES: copy.deepcopy(raw[PAT_ROUTES]), PAT_MODES: entries}
+    return {"definition": definition, "notes": notes, "modes": modes, "numbers": numbers, "routes": routes}
+
+
+def _check_pattern_refs(check, value, where, inputs) -> None:
+    """模式引用：{"输入": 键}（点号路径的第一段必须是模式的输入键）、{"上一步结果": true}、{"句式": 句子}（占位名必须是输入键）。"""
+    import string
+
+    if isinstance(value, dict) and len(value) == 1 and next(iter(value)) in PREF_KEYS:
+        (key, arg), = value.items()
+        if key == PREF_INPUT and not (isinstance(arg, str) and arg.split(".")[0] in inputs):
+            check.fail(f"{where}.{key}", f"输入引用 {arg!r} 不是模式的输入键（{'、'.join(inputs)}）")
+        if key == PREF_LAST and arg is not True:
+            check.fail(f"{where}.{key}", "应当写 true")
+        if key == PREF_SENTENCE:
+            if not isinstance(arg, str):
+                check.fail(f"{where}.{key}", "句式应当是字符串")
+            names = [field for _, field, _, _ in string.Formatter().parse(arg) if field is not None]
+            unknown = [field for field in names if field not in inputs]
+            if unknown:
+                check.fail(f"{where}.{key}", f"句式里的占位 {'、'.join(unknown)} 不是模式的输入键")
+        return
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            _check_pattern_refs(check, child, f"{where}.{child_key}", inputs)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _check_pattern_refs(check, child, f"{where}[{index}]", inputs)
 
 
 # ───────────────────────── 系统提示用的任务定义摘要（第四步 4.8 节）─────────────────────────
@@ -944,6 +1239,17 @@ def _check_deliverables(check, deliverables, slot_metas) -> None:
         if form in (FORM_TEXT, FORM_FILE) and meta[SLOT_TYPE] != "文本":
             check.fail(here, f"{form}的来源应当是文本型槽位，「{source}」是{meta[SLOT_TYPE]}")
 
+
+
+def _check_required_slots(check, parsed, slot_metas) -> None:
+    """任务用到的工具在静态工具表里声明了必备槽位的（例如对话理解要回复、上一问、待处理），槽位表里必须有、类型必须对。"""
+    for _, _, _, steps, toolset, _ in parsed:
+        for tool in [step.tool for step in steps] + list(toolset):
+            for slot, kind in (STATIC_TOOLS[tool].required_slots or {}).items():
+                if slot not in slot_metas:
+                    check.fail(f"{KEY_SLOTS}", f"用了工具「{tool}」的任务必须有槽位「{slot}」（{kind}）")
+                if slot_metas[slot][SLOT_TYPE] != kind:
+                    check.fail(f"{KEY_SLOTS}.{slot}", f"工具「{tool}」要求槽位「{slot}」的类型是{kind}，实际是{slot_metas[slot][SLOT_TYPE]}")
 
 
 def _check_initial(check, initial, slots) -> None:
@@ -1079,29 +1385,37 @@ def _parse_group(check, item, here, steps, number) -> int:
 def _parse_slots(check, raw_slots):
     """槽位元数据：返回（槽位名 → 默认值, 话语模板）。
 
-    话语模板的键与 dialogue.py 读的一致：槽位上的「提问」是（槽位名, ()），列表项字段上的是（槽位名, (字段名,)）。
+    话语模板的键与 dialogue.py 读的一致：槽位上的「提问」是（槽位名, ()），列表项字段上的是（槽位名, (字段名,)）；
+    「再问短句」的键是提问的键后面再接「再问短句」，例如（槽位名, (), "再问短句"）。
     类型只做加载校验，不做运行时值检查。
     """
     slots, templates = {}, {}
     for name, meta in raw_slots.items():
         where = f"{KEY_SLOTS}.{name}"
-        _check_slot_meta(check, meta, where, (SLOT_DEFAULT, SLOT_VALUES, SLOT_ITEM, SLOT_QUESTION))
+        _check_slot_meta(check, meta, where, (SLOT_DEFAULT, SLOT_VALUES, SLOT_ITEM, SLOT_QUESTION, SLOT_REASK,
+                                                    SLOT_USER_WRITABLE))
+        if SLOT_USER_WRITABLE in meta and not isinstance(meta[SLOT_USER_WRITABLE], bool):
+            check.fail(f"{where}.{SLOT_USER_WRITABLE}", "应当是布尔值（true 或 false）")
         slots[name] = copy.deepcopy(meta.get(SLOT_DEFAULT))
         if SLOT_QUESTION in meta:
             templates[(name, ())] = meta[SLOT_QUESTION]
+        if SLOT_REASK in meta:
+            templates[(name, (), SLOT_REASK)] = meta[SLOT_REASK]
         if SLOT_ITEM not in meta:
             continue
         if not isinstance(meta[SLOT_ITEM], dict) or not meta[SLOT_ITEM]:
             check.fail(f"{where}.{SLOT_ITEM}", "应当是非空对象（字段名到字段元数据）")
         for field_name, field in meta[SLOT_ITEM].items():
-            _check_slot_meta(check, field, f"{where}.{SLOT_ITEM}.{field_name}", (SLOT_VALUES, SLOT_QUESTION))
+            _check_slot_meta(check, field, f"{where}.{SLOT_ITEM}.{field_name}", (SLOT_VALUES, SLOT_QUESTION, SLOT_REASK))
             if SLOT_QUESTION in field:
                 templates[(name, (field_name,))] = field[SLOT_QUESTION]
+            if SLOT_REASK in field:
+                templates[(name, (field_name,), SLOT_REASK)] = field[SLOT_REASK]
     return slots, templates
 
 
 def _check_slot_meta(check, meta, where, optional) -> None:
-    """一个槽位或列表项字段的元数据：说明与类型必填，类型六选一，枚举型必须有取值，提问是字符串。"""
+    """一个槽位或列表项字段的元数据：说明与类型必填，类型六选一，枚举型必须有取值，提问是字符串，再问短句是非空字符串。"""
     check.dict_with(meta, where, (SLOT_NOTE, SLOT_TYPE), optional)
     if not isinstance(meta[SLOT_NOTE], str) or not meta[SLOT_NOTE].strip():
         check.fail(f"{where}.{SLOT_NOTE}", "应当是一句非空的话，说这个槽位装什么")
@@ -1113,6 +1427,8 @@ def _check_slot_meta(check, meta, where, optional) -> None:
         check.fail(f"{where}.{SLOT_VALUES}", "应当是非空数组（允许的值）")
     if SLOT_QUESTION in meta and not isinstance(meta[SLOT_QUESTION], str):
         check.fail(f"{where}.{SLOT_QUESTION}", "应当是字符串（str.format 句式）")
+    if SLOT_REASK in meta and not (isinstance(meta[SLOT_REASK], str) and meta[SLOT_REASK].strip()):
+        check.fail(f"{where}.{SLOT_REASK}", "应当是非空字符串（再问同一个问题时说的短句）")
 
 
 # DEFINITION 里的键。

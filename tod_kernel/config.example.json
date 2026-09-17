@@ -4,5 +4,6 @@
   "model": "qwen3.8-27b",
   "timeout_s": 120,
   "recording_path": "task_defs/recordings/glossary.json",
-  "print_calls": false
+  "print_calls": false,
+  "confidence_floor": 0.6
 }

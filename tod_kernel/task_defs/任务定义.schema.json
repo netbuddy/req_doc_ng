@@ -46,7 +46,7 @@
       "then": {"required": ["取值"]}
     },
     "槽位元数据": {
-      "description": "说明与类型必填；默认值省略即 null；枚举型必须有取值；项是列表元素的字段表；提问是询问这个槽位时说的话（str.format 句式）。类型只做加载校验，不做运行时值检查。",
+      "description": "说明与类型必填；默认值省略即 null；枚举型必须有取值；项是列表元素的字段表；提问是询问这个槽位时说的话（str.format 句式）；再问短句是再问同一个问题时说的短句。类型只做加载校验，不做运行时值检查。",
       "type": "object",
       "required": ["说明", "类型"],
       "additionalProperties": false,
@@ -56,7 +56,9 @@
         "默认值": true,
         "取值": {"type": "array", "minItems": 1},
         "项": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/项字段"}},
-        "提问": {"type": "string"}
+        "提问": {"type": "string"},
+        "再问短句": {"description": "可选。询问再问同一个问题、要念的值也没变时说的短句；不写时用「回到刚才那一稿：请确认，或提出修改意见。」", "type": "string", "pattern": "\\S"},
+        "使用者可写": {"description": "可选，默认 true。系统写的槽位标 false，不进对话理解的可写路径清单。", "type": "boolean"}
       },
       "allOf": [{"$ref": "#/$defs/枚举必须有取值"}]
     },
@@ -69,7 +71,8 @@
         "说明": {"type": "string", "pattern": "\\S"},
         "类型": {"$ref": "#/$defs/槽位类型"},
         "取值": {"type": "array", "minItems": 1},
-        "提问": {"type": "string"}
+        "提问": {"type": "string"},
+        "再问短句": {"type": "string", "pattern": "\\S"}
       },
       "allOf": [{"$ref": "#/$defs/枚举必须有取值"}]
     },

@@ -11,19 +11,23 @@
 /* 运行有向图与时间轴的令牌，取自原型 v2 与运行有向图原型 */
 --grid:#ececea;--ink2:#52514e;--ink3:#8a8985;--path:#2a78d6;--back:#d03b3b;--good:#0ca30c;--bad:#d03b3b;
 --path-soft:#dce9f9;--back-soft:#f8dcdc;--good-soft:#dff3df;--bad-soft:#f8dcdc;--hi:#fff3c4;--soft:#f0efec;
---sys:#2a78d6;--usr:#0d8f84;--mdl:#d2651a;--sys-soft:#dce9f9;--usr-soft:#d3f3ef;--mdl-soft:#fbe7d6}
+--sys:#2a78d6;--usr:#0d8f84;--mdl:#d2651a;--sys-soft:#dce9f9;--usr-soft:#d3f3ef;--mdl-soft:#fbe7d6;
+/* 插入段紫色一族，取自原型_观测台复杂任务_v3 */
+--ins:#7a2e8f;--ins-soft:#f4e9f8;--ins-ink:#6a2880;--ins-line:#c89bd6}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
 --accent:#8db4f0;--accent-bg:#1d2a3d;--trace:#d8c38e;--trace-bg:#2e2a1f;--hit:#1c2b20;--hit-ink:#8fd1a4;--wait:#f0b46a;--wait-bg:#35281a;
 --ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;
 --grid:#2e2e2c;--ink2:#c3c2b7;--ink3:#8f8e86;--path:#3987e5;--back:#e66767;--good:#0ca30c;--bad:#e66767;
 --path-soft:#1f3556;--back-soft:#4a1f1f;--good-soft:#173a17;--bad-soft:#4a1f1f;--hi:#4a3f12;--soft:#26282c;
---sys:#3987e5;--usr:#2dd4bf;--mdl:#fb923c;--sys-soft:#1f3556;--usr-soft:#134e4a;--mdl-soft:#442712}}
+--sys:#3987e5;--usr:#2dd4bf;--mdl:#fb923c;--sys-soft:#1f3556;--usr-soft:#134e4a;--mdl-soft:#442712;
+--ins:#cc90e8;--ins-soft:#3a2440;--ins-ink:#eccff5;--ins-line:#7a4a88}}
 :root[data-theme="dark"]{--bg:#16171a;--panel:#1f2125;--ink:#e6e6e3;--muted:#9a9ea5;--line:#34373c;
 --accent:#8db4f0;--accent-bg:#1d2a3d;--trace:#d8c38e;--trace-bg:#2e2a1f;--hit:#1c2b20;--hit-ink:#8fd1a4;--wait:#f0b46a;--wait-bg:#35281a;
 --ext:#e0a8f0;--ext-bg:#2f2236;--ext-line:#6f4a7c;--tool:#7fc8c0;--diff:#4a3f10;--diff-ink:#f3dc7a;--same:#26282c;
 --grid:#2e2e2c;--ink2:#c3c2b7;--ink3:#8f8e86;--path:#3987e5;--back:#e66767;--good:#0ca30c;--bad:#e66767;
 --path-soft:#1f3556;--back-soft:#4a1f1f;--good-soft:#173a17;--bad-soft:#4a1f1f;--hi:#4a3f12;--soft:#26282c;
---sys:#3987e5;--usr:#2dd4bf;--mdl:#fb923c;--sys-soft:#1f3556;--usr-soft:#134e4a;--mdl-soft:#442712}
+--sys:#3987e5;--usr:#2dd4bf;--mdl:#fb923c;--sys-soft:#1f3556;--usr-soft:#134e4a;--mdl-soft:#442712;
+--ins:#cc90e8;--ins-soft:#3a2440;--ins-ink:#eccff5;--ins-line:#7a4a88}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif}
 a{color:var(--accent)}
@@ -129,6 +133,26 @@ svg.rp text{font-family:inherit}
 .rp-pt.bad{fill:var(--bad)}
 .rp-pt.failed{fill:var(--panel);stroke:var(--bad);stroke-width:2.5}
 .rp-pt.hi{stroke:var(--ink);stroke-width:2.5}
+/* 插入段（第五步 4.12 节）：主线旁的紫色虚框横带，进出用紫色点线，与重做退回的红色虚线区分 */
+.rp-band.ins{fill:var(--ins-soft);opacity:1;stroke:var(--ins-line);stroke-width:1.4;stroke-dasharray:7 5}
+.rp-bandlbl.ins{fill:var(--ins-ink)}
+.rp-line.ins{stroke:var(--ins);stroke-dasharray:2 5;stroke-linecap:round;stroke-width:2.2}
+.rp-pt.ins{fill:var(--ins)}
+.legend .sw.ins{background:var(--ins-soft);border:1.5px dashed var(--ins)}
+.legend .sw.insline{border:0;border-top:2.5px dotted var(--ins);border-radius:0;height:0;vertical-align:middle}
+.instag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--ins-ink);
+background:var(--ins-soft);border:1px solid var(--ins);border-radius:10px;padding:0 9px}
+.instag .d{width:7px;height:7px;border-radius:2px;background:var(--ins)}
+.iv-card.ins{border-left:4px solid var(--ins)}
+.now-3{display:grid;grid-template-columns:3.2em minmax(0,1fr);gap:4px 8px;font-size:13px}
+.now-3 .k{color:var(--ink3);font-size:12px}
+.now-3 .v{font-weight:600;min-width:0}
+.now-3 .v.off{font-weight:400;color:var(--ink3)}
+.rail-ins{border:1px dashed var(--ins);background:var(--ins-soft);color:var(--ins-ink);border-radius:4px;padding:0 6px;font-size:12px;font-weight:600;display:inline-block}
+.dg-mode{fill:var(--ins-soft);stroke:var(--ins);stroke-width:1.4;stroke-dasharray:6 4}
+.dg-mode-t{fill:var(--ins-ink);font-size:12px;font-weight:600}
+.dg-edge.ins{stroke:var(--ins);stroke-width:2;stroke-dasharray:2 5;stroke-linecap:round}
+.dg-elbl.ins{fill:var(--ins-ink)}
 .rp-cursor{stroke:var(--ink2);stroke-width:1;stroke-dasharray:2 3}
 .sw{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
 .sw.bad{background:var(--bad-soft);border-color:var(--bad)}
@@ -336,10 +360,20 @@ table.kv th{width:7em}
 .cx-seg{margin-bottom:4px}
 .cx-src{display:block;color:var(--ink2);font-size:11px}
 .cx-tx{white-space:pre-wrap}
+/* 第五步 4.4A 节：内容是 JSON 的段（例如输出形状）按缩进显示，默认折叠 */
+.json-fold summary{cursor:pointer;color:var(--ink2);font-size:12px}
+.json-fold pre{margin:6px 0 0;white-space:pre;overflow-x:auto;font-size:12px;line-height:1.5;max-height:420px;overflow-y:auto}
 .mdl-block{border:1px solid var(--mdl);border-radius:6px;padding:8px 10px;margin-top:6px;background:var(--mdl-soft)}
 .mdl-block h4{margin:0 0 6px;font-size:13px}
 .mdl-parsed{border-collapse:collapse;font-size:12px;width:100%}
 .mdl-parsed th,.mdl-parsed td{border:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+.ua-row{display:flex;gap:10px;flex-wrap:wrap}
+.ua-said{flex:1 1 180px;border-left:3px solid var(--usr);padding:4px 8px;background:var(--usr-soft);border-radius:4px;font-size:13px;white-space:pre-wrap}
+.ua-acts{flex:3 1 320px;min-width:0}
+.ua-fn{display:inline-block;white-space:nowrap;font-size:11px;font-weight:600;border:1px solid var(--mdl);border-radius:4px;padding:0 5px;background:var(--panel)}
+.ua-bar{display:inline-block;width:60px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;overflow:hidden}
+.ua-bar i{display:block;height:100%;background:var(--mdl)}
+.ua-landed{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
 .iv-card.role-usr{border-left:4px solid var(--usr)}
 .iv-card.role-mdl{border-left:4px solid var(--mdl)}
 .iv-card.role-sys{border-left:4px solid var(--sys)}
@@ -560,6 +594,8 @@ function parseRuleNote(note) {
   let m = rest.match(/^第 (\d+) 步 ([\s\S]*)$/);
   if (m) return { stage, kind: "step", no: m[1], note: m[2] };
   if (rest === "告知异常") return { stage, kind: "exception" };
+  m = rest.match(/^插入段 · (.+?) 第 (\d+) 步 ([\s\S]*)$/);
+  if (m) return { stage, kind: "insert", mode: m[1], no: m[2], note: m[3] };
   m = rest.match(/^自主 › (.+)$/);
   if (m) return { stage, kind: "toolset", tool: m[1] };
   return null;
@@ -571,6 +607,10 @@ function basisText(basis) {
   if (!r) return `第 ${number} 步：${plain(note)}；本次值 ${brief(hit)}`;
   if (r.kind === "step") return `第 ${r.no} 步：${r.note}；本次值 ${brief(hit)}`;
   if (r.kind === "exception") return exceptionBasisText(r.stage, hit);
+  if (r.kind === "insert") {
+    const rest = hit && typeof hit === "object" ? Object.fromEntries(Object.entries(hit).filter(([k]) => k !== "插入段")) : hit;
+    return `插入段 · 模式「${r.mode}」第 ${r.no} 步：${r.note}${rest && Object.keys(rest).length ? `；本次值 ${brief(rest)}` : ""}`;
+  }
   return `自主：${r.stage} › ${r.tool}。模型的理由：${plain(hit)}`;
 }
 // 告知异常的依据：命中值是异常报告，取未达成目标的文字；游标所在阶段不是报告的阶段，就是该阶段的目标被后续阶段破坏。
@@ -691,6 +731,10 @@ function questionUtterance(r, callId) {
 // 两种形状的第一层都是「阶段」，所以判「走到哪个阶段」的代码共用。
 const CURSOR = "游标", REDO_RESULT = "重做", STEP_CHANGED = "STEP_CHANGED";
 function stepTextOf(payload) { return payload && payload.text ? String(payload.text) : ""; }
+// 第五步 4.12 节起当前步是地址栈 {主线, 插入}；更早的运行文件是单个地址。页面判「走到哪」一律看主线那一层。
+function stepMain(v) { return v && typeof v === "object" && "主线" in v ? v["主线"] : v; }
+function stepInserts(v) { return v && typeof v === "object" && Array.isArray(v["插入"]) ? v["插入"] : []; }
+function mainStepText(text) { const i = String(text || "").indexOf("；插入段"); return i < 0 ? String(text || "") : String(text).slice(0, i); }
 
 function textWidth(text, size) {
   let w = 0;
@@ -727,7 +771,22 @@ function parseDefinition(r) {
     }
     if (!items.length) rows.push({ stage: st, item: null, label: st.name === null ? "（无名阶段）" : st.name });
   }
-  return { stages, byName, byNumber, rows, rowOf, firstRow, structured: Boolean(r.started && r.started.definition) };
+  // 对话模式（插入段）：定义里并进来的模式，这次运行里走到过的才在路径图上占一带，放在全部阶段之后。
+  const used = new Set(r.events.filter(e => e.name === "CALL_PROPOSED" && Array.isArray(e.payload.basis)).map(e => Number(e.payload.basis[0])));
+  const patterns = r.started && r.started.definition ? r.started.definition["对话模式"] : null;
+  const modes = ((patterns && patterns["模式"]) || []).map(raw => {
+    const mode = { name: raw["名字"], inputs: raw["输入"] || [], steps: [] };
+    (raw["步骤"] || []).forEach((s, pos) => mode.steps.push({ number: s["编号"], note: s["说明"], tool: s["工具"], params: s["参数"], pos, mode }));
+    mode.used = mode.steps.some(step => used.has(step.number));
+    for (const step of mode.steps) byNumber.set(step.number, { kind: "mode", mode, step, pos: step.pos });
+    return mode;
+  });
+  const modeFirstRow = new Map();
+  for (const mode of modes) if (mode.used) {
+    modeFirstRow.set(mode, rows.length);
+    for (const step of mode.steps) { rowOf.set(step.number, rows.length); rows.push({ stage: null, mode, item: step, label: `插入段 · ${mode.name} · 第 ${step.pos + 1} 步` }); }
+  }
+  return { stages, byName, byNumber, rows, rowOf, firstRow, modes, modeFirstRow, structured: Boolean(r.started && r.started.definition) };
 }
 function stagesFromDefinition(definition) {
   const exceptionNumbers = definition["告知异常编号"] || {}, toolNumbers = definition["自主工具编号"] || {};
@@ -816,8 +875,9 @@ function buildPath(r) {
   // 任务进行到哪：新文件读「当前步变化」事件（值与那句现成的话都在载荷里），旧文件读保留槽位「游标」。
   const hasStepEvents = r.events.some(e => e.name === STEP_CHANGED);
   let atNow = null, atText = "";
-  for (const e of [...r.before, ...r.startCheck]) if (e.name === STEP_CHANGED) { atNow = e.payload.new; atText = stepTextOf(e.payload); }
+  for (const e of [...r.before, ...r.startCheck]) if (e.name === STEP_CHANGED) { atNow = stepMain(e.payload.new); atText = stepTextOf(e.payload); }
   if (!hasStepEvents) { atNow = data[CURSOR]; atText = ""; }
+  let insertsNow = [];
   const initialCursor = atNow;
   const initialText = atText;
   const toolOf = new Map(), counts = new Map(), loopOfCall = new Map();
@@ -826,13 +886,17 @@ function buildPath(r) {
     const evs = loop.steps.flat();
     const changed = new Set();
     for (const e of evs) if (e.name === "DATA_CHANGED") { data[e.payload.slot] = e.payload.new; changed.add(e.payload.slot); }
-    for (const e of evs) if (e.name === STEP_CHANGED) { atNow = e.payload.new; atText = stepTextOf(e.payload); }
+    for (const e of evs) if (e.name === STEP_CHANGED) {
+      atNow = stepMain(e.payload.new); atText = stepTextOf(e.payload);
+      insertsNow = e.payload.view && Array.isArray(e.payload.view["插入"]) ? e.payload.view["插入"] : stepInserts(e.payload.new);
+    }
     const it = { k: i + 1, no: loop.no, data: JSON.parse(JSON.stringify(data)), changed, cursorBefore: previousCursor,
       lastSeq: evs.length ? evs[evs.length - 1].seq : 0,
       done: evs.some(e => e.name === "CHECK_DONE_RESULT" && e.payload.done),
       defError: evs.some(e => e.name === "TASK_DEFINITION_ERROR"), call: null, row: null };
     it.cursor = hasStepEvents ? atNow : data[CURSOR];
     it.atText = hasStepEvents ? atText : "";
+    it.inserts = hasStepEvents ? insertsNow : [];
     previousCursor = it.cursor;
     const prop = evs.find(e => e.name === "CALL_PROPOSED");
     if (prop) {
@@ -854,6 +918,7 @@ function buildPath(r) {
         }
       }
       it.exception = Boolean(ref && ref.kind === "exception");
+      it.ins = ref && ref.kind === "mode" ? { mode: ref.mode.name, no: ref.pos + 1, total: ref.mode.steps.length } : null;
       it.redo = it.exception && it.call.result === REDO_RESULT;
       it.failed = it.call.status === FAILED;
       loopOfCall.set(prop.call_id, it.k);
@@ -1165,6 +1230,50 @@ function buildDigraph(model) {
     bump(y + 40 + (redos.length ? DG.REDO + 30 : 40));
   });
 
+  // 插入段（第五步 4.12 节）：每个走到过的对话模式在主轨下方画一个紫色虚线框的子图，模式名作标题，
+  // 步骤框带迭代号；一条进边从触发它的那一步下来，一条回边回到主线上那一步（主线位置不动，所以回到原处）。
+  const modeBoxes = [];
+  const iters = model.iters;
+  const modeRows = new Map();   // 模式名 → {mode, sources: Map(源节点 id → 次数), returns: Map(源节点 id → 次数)}
+  let mainSource = null;
+  iters.forEach((it, i) => {
+    const a = it.call;
+    if (!a || !a.ref) return;
+    if (a.ref.kind === "step") { mainSource = `n${a.number}`; return; }
+    if (a.ref.kind !== "mode") return;
+    const mode = a.ref.mode;
+    if (!modeRows.has(mode.name)) modeRows.set(mode.name, { mode, sources: new Map(), returns: new Map() });
+    const row = modeRows.get(mode.name);
+    const prevIt = iters[i - 1], nextIt = iters[i + 1];
+    const prevRef = prevIt && prevIt.call ? prevIt.call.ref : null, nextRef = nextIt && nextIt.call ? nextIt.call.ref : null;
+    const entering = !prevRef || prevRef.kind !== "mode" || prevRef.mode !== mode || prevRef.pos >= a.ref.pos;
+    const leaving = !nextRef || nextRef.kind !== "mode" || nextRef.mode !== mode || nextRef.pos <= a.ref.pos;
+    const src = prevRef && prevRef.kind === "mode" && prevRef.mode !== mode ? `m${prevIt.call.number}` : mainSource;
+    if (entering && src) row.sources.set(src, (row.sources.get(src) || 0) + 1);
+    if (leaving && mainSource) row.returns.set(mainSource, (row.returns.get(mainSource) || 0) + 1);
+  });
+  let modeY = maxY + 80;
+  modeRows.forEach(({ mode, sources, returns }) => {
+    const first = [...sources.keys()].map(id => byId.get(id)).find(Boolean);
+    let nx = first ? Math.max(40, first.x - 40) : 70;
+    const ids = mode.steps.map(step => {
+      const its = (ov.execs.get(step.number) || []).map(e => ({ it: e.it, k: e.k, who: e.who, failed: e.failed }));
+      const w = Math.min(210, Math.max(150, Math.max(textWidth(step.note, 12.5) + 22, textWidth(step.tool, 11) + 74)));
+      const id = `m${step.number}`;
+      put({ id, kind: "step", number: step.number, x: nx + w / 2, y: modeY, w, h: DG.NODE_H, title: step.note, tool: step.tool,
+            who: its.length ? its[0].who : "", its, never: !its.length });
+      nx += w + DG.GAP;
+      return id;
+    });
+    const x0 = byId.get(ids[0]).x - byId.get(ids[0]).w / 2 - DG.CPAD, x1 = nx - DG.GAP + DG.CPAD;
+    modeBoxes.push({ x: x0, y: modeY - DG.NODE_H / 2 - 18, w: x1 - x0, h: DG.NODE_H + 58, title: `插入段 · 模式「${mode.name}」` });
+    ids.forEach((id, i) => { if (i) edges.push({ from: ids[i - 1], to: id, kind: "", label: "" }); });
+    sources.forEach((n, src) => edges.push({ from: src, to: ids[0], kind: "ins", label: `插入 · ${n} 次` }));
+    returns.forEach((n, src) => edges.push({ from: ids[ids.length - 1], to: src, kind: "insback", label: `跑完回到\n主线原处 · ${n} 次` }));
+    bump(modeY + DG.NODE_H / 2 + 40);
+    modeY += DG.NODE_H + 110;
+  });
+
   // 结束旗：完成打绿旗，内核错误或使用者终止打红旗。
   const flagX = Math.max(x - DG.STAGE_GAP + 76, endNode ? endNode.x : 0);
   if (endNode) {
@@ -1184,7 +1293,7 @@ function buildDigraph(model) {
     }
   }
   const width = Math.ceil(Math.max(flagX + 70, ...nodes.map(n => n.x + n.w / 2 + 30)));
-  return { nodes, edges, clusters, width, height: Math.ceil(maxY + 24), model, overlay: ov };
+  return { nodes, edges, clusters, modeBoxes, width, height: Math.ceil(maxY + 24), model, overlay: ov };
 }
 
 // ── 第五步：画出来。布局规则固定：主轨从左到右，回边走阶段框下方，旁路走上方，异常挂主轨下方，
@@ -1200,7 +1309,7 @@ function renderDigraph(g) {
   const byId = new Map(g.nodes.map(n => [n.id, n]));
   const port = (n, side) => side === "r" ? [n.x + n.w / 2, n.y] : side === "l" ? [n.x - n.w / 2, n.y]
     : side === "b" ? [n.x, n.y + n.h / 2] : [n.x, n.y - n.h / 2];
-  const marker = k => ({ back: "dg-a-sys", redo: "dg-a-bad", term: "dg-a-bad", top: "dg-a-good", skip: "dg-a-grey", never: "dg-a-grey" }[k] || "dg-a-ink");
+  const marker = k => ({ back: "dg-a-sys", redo: "dg-a-bad", term: "dg-a-bad", top: "dg-a-good", skip: "dg-a-grey", never: "dg-a-grey", ins: "dg-a-ins", insback: "dg-a-ins" }[k] || "dg-a-ink");
   let s = "", titles = "", elabels = "";   // 边的标签统一在所有边画完之后画，免得后画的边压到先画的标签上
   g.clusters.forEach(c => {
     s += `<rect class="dg-cluster ${c.state}" x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}"/>`;
@@ -1217,11 +1326,21 @@ function renderDigraph(g) {
       + `<text class="dg-sub" x="${c.x + 12}" y="${c.y + 37}"><title>${esc(line2)}</title>${esc(goal ? fit(goal, 11, c.w - 24 - (loop ? textWidth(loop, 11) + 20 : 0)) : "")}`
       + (loop ? `<tspan class="dg-loop">　↻ ${esc(loop)}</tspan>` : "") + `</text>`;
   });
+  (g.modeBoxes || []).forEach(box => {
+    s += `<rect class="dg-mode" x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="10"/>`;
+    titles += `<text class="dg-mode-t" x="${box.x + 12}" y="${box.y + box.h - 10}">${esc(box.title)}</text>`;   // 标题放框底，进边从框顶进来不压字
+  });
   g.edges.forEach(e => {
     const a = byId.get(e.from), b = byId.get(e.to);
     if (!a || !b) return;
     let d, lx, ly, ny = false;   // ny：这条边的标签位置已经定死，不再叠加 e.ly
-    if (e.kind === "back" || e.kind === "redo") {              // 从下方绕回去
+    if (e.kind === "ins") {                                    // 进插入段：从触发那一步的底部落到模式第一步的顶部
+      const [ax, ay] = port(a, "b"), [bx, by] = port(b, "t");
+      d = `M ${ax} ${ay} C ${ax} ${(ay + by) / 2}, ${bx} ${(ay + by) / 2}, ${bx} ${by - 2}`; lx = (ax + bx) / 2 - 50; ly = (ay + by) / 2; ny = true;
+    } else if (e.kind === "insback") {                         // 回主线：从模式最后一步的顶部回到触发那一步的底部（偏右，与进边分开）
+      const [ax, ay] = port(a, "t"), [bx, by] = port(b, "b");
+      d = `M ${ax} ${ay} C ${ax} ${(ay + by) / 2}, ${bx + 30} ${(ay + by) / 2}, ${bx + 30} ${by + 2}`; lx = (ax + bx) / 2 + 40; ly = (ay + by) / 2 + 4; ny = true;
+    } else if (e.kind === "back" || e.kind === "redo") {              // 从下方绕回去
       const [ax, ay] = port(a, "b"), [bx, by] = port(b, "b"), dy = e.depth || 60;
       d = `M ${ax} ${ay} C ${ax} ${ay + dy}, ${bx} ${by + dy}, ${bx} ${by + 2}`; lx = (ax + bx) / 2; ly = ay + dy * 0.78;
     } else if (e.kind === "skip") {                            // 从上方越过被跳的步骤
@@ -1241,13 +1360,14 @@ function renderDigraph(g) {
         : `M ${ax} ${ay} C ${(ax + bx) / 2} ${ay}, ${(ax + bx) / 2} ${by}, ${bx - 2} ${by}`;
       lx = (ax + bx) / 2; ly = Math.max(ay, by) + 46;
     }
-    s += `<path class="dg-edge ${e.kind || ""}" d="${d}" marker-end="url(#${marker(e.kind)})"/>`;
+    const cls = e.kind === "insback" ? "ins" : (e.kind || "");
+    s += `<path class="dg-edge ${cls}" d="${d}" marker-end="url(#${marker(e.kind)})"/>`;
     if (!e.label) return;
     const lines = e.label.split("\n");
     const w = Math.max(...lines.map(t => textWidth(t, 11))) + 12, h = lines.length * 14 + 4;
     const tx = lx + (e.lx || 0), ty = ly + (ny ? 0 : (e.ly || 0));
     elabels += `<g>${e.full ? `<title>${esc(e.full)}</title>` : ""}<rect class="dg-lblbg" x="${tx - w / 2}" y="${ty - h / 2 - 2}" width="${w}" height="${h}" rx="4"/>`
-      + lines.map((t, i) => `<text class="dg-elbl ${e.kind || ""}" x="${tx}" y="${ty - h / 2 + 10 + i * 14}" text-anchor="middle">${esc(t)}</text>`).join("") + `</g>`;
+      + lines.map((t, i) => `<text class="dg-elbl ${cls}" x="${tx}" y="${ty - h / 2 + 10 + i * 14}" text-anchor="middle">${esc(t)}</text>`).join("") + `</g>`;
   });
   s += elabels + titles;
   g.nodes.forEach(n => {
@@ -1294,7 +1414,7 @@ function renderDigraph(g) {
     }
   });
   const defs = `<defs>`
-    + [["dg-a-ink", "var(--ink2)"], ["dg-a-sys", "var(--sys)"], ["dg-a-bad", "var(--bad)"], ["dg-a-good", "var(--good)"], ["dg-a-grey", "var(--ink3)"]]
+    + [["dg-a-ink", "var(--ink2)"], ["dg-a-ins", "var(--ins)"], ["dg-a-sys", "var(--sys)"], ["dg-a-bad", "var(--bad)"], ["dg-a-good", "var(--good)"], ["dg-a-grey", "var(--ink3)"]]
       .map(([id, fill]) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${fill}"/></marker>`).join("")
     + `</defs>`;
   return `<svg class="dg" id="dg-svg" width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}" role="img" aria-label="运行有向图">${defs}${s}</svg>`;
@@ -1307,7 +1427,8 @@ function digraphHTML(model) {
     <div class="legend"><span><i class="dot sys"></i>系统自己做</span><span><i class="dot usr"></i>问了使用者</span><span><i class="dot mdl"></i>工具内调了模型</span>
       <span style="color:var(--sys)">━ 走完一次回到判断（回边）</span><span style="color:var(--ink3)">┄ 跳过的旁路</span>
       <span style="color:var(--good)">━ 判断为是，出循环</span><span style="color:var(--bad)">┄ 重做退回 ／ ━ 终止</span><span style="color:var(--ink3)">┄ 没到过</span>
-      <span><i class="dot" style="background:var(--panel);border:2.5px solid var(--bad)"></i>这次工具调用已失败</span></div>
+      <span><i class="dot" style="background:var(--panel);border:2.5px solid var(--bad)"></i>这次工具调用已失败</span>
+      <span style="color:var(--ins)">┈ 插入段的进边与回边（紫色虚线框是模式子图）</span></div>
     <div class="scroll">${renderDigraph(g)}</div></section>`;
 }
 
@@ -1332,8 +1453,11 @@ function pathChartHTML(model) {
   const banded = def.structured;
   const COL = 88, ROW = banded ? 40 : 44, T = banded ? 42 : 30, B = 36, R = 40;
   const bandLabel = st => st.auto ? `✦ ${st.name} · ${st.tools.length} 个可选工具` : `${st.name} · ${st.steps.length} 步`;
-  const rowLabel = row => !banded ? row.label : (!row.item ? "（没有步骤）" : (row.stage.auto ? row.item.tool : `第 ${row.item.number} 步 ${fit(row.item.note, 12, 130)}`));
-  const BL = banded ? Math.max(...def.stages.map(st => textWidth(bandLabel(st), 12))) + 24 : 0;
+  const rowLabel = row => !banded ? row.label : (!row.item ? "（没有步骤）" : (row.mode ? `第 ${row.item.pos + 1} 步 ${fit(row.item.note, 12, 130)}`
+    : (row.stage.auto ? row.item.tool : `第 ${row.item.number} 步 ${fit(row.item.note, 12, 130)}`)));
+  const modeLabel = mode => `插入段 · ${mode.name} · ${mode.steps.length} 步`;
+  const usedModes = (def.modes || []).filter(mode => mode.used);
+  const BL = banded ? Math.max(...def.stages.map(st => textWidth(bandLabel(st), 12)), ...usedModes.map(m => textWidth(modeLabel(m), 12))) + 24 : 0;
   const L = BL + Math.max(90, ...rows.map(row => textWidth(rowLabel(row), 12))) + (banded ? 34 : 24);
   const W = L + N * COL + R, H = T + rows.length * ROW + B;
   const x = k => L + (k - 0.5) * COL, y = i => T + i * ROW + ROW / 2;
@@ -1347,6 +1471,11 @@ function pathChartHTML(model) {
       svg += `<rect class="${index % 2 ? "rp-band2" : "rp-band"}" x="4" y="${T + i0 * ROW + 2}" width="${L + N * COL + 4}" height="${n * ROW - 4}" rx="4"/>`
         + `<text class="rp-bandlbl" x="12" y="${T + i0 * ROW + (n * ROW) / 2 + 4}">${esc(bandLabel(st))}</text>`;
     });
+    for (const mode of usedModes) {
+      const i0 = def.modeFirstRow.get(mode), n = mode.steps.length;
+      svg += `<rect class="rp-band ins" x="4" y="${T + i0 * ROW + 2}" width="${L + N * COL + 4}" height="${n * ROW - 4}" rx="6"/>`
+        + `<text class="rp-bandlbl ins" x="12" y="${T + i0 * ROW + (n * ROW) / 2 + 4}">${esc(modeLabel(mode))}</text>`;
+    }
   } else {
     for (const st of def.stages) if (st.auto) {
       const i0 = def.firstRow.get(st);
@@ -1357,7 +1486,7 @@ function pathChartHTML(model) {
   rows.forEach((row, i) => {
     const never = banded && row.item && !model.counts.get(row.item.number);
     svg += `<line class="rp-grid" x1="${L - 8}" x2="${W - R}" y1="${y(i)}" y2="${y(i)}"/>`
-      + `<text class="rp-rowlbl${never ? " never" : ""}" x="${L - (banded ? 22 : 12)}" y="${y(i) + 4}" text-anchor="end"><title>${esc(banded && row.item && !row.stage.auto ? `第 ${row.item.number} 步 ${row.item.note}` : rowLabel(row))}</title>${esc(rowLabel(row))}</text>`;
+      + `<text class="rp-rowlbl${never ? " never" : ""}" x="${L - (banded ? 22 : 12)}" y="${y(i) + 4}" text-anchor="end"><title>${esc(banded && row.item && row.mode ? `插入段 · ${row.mode.name} 第 ${row.item.pos + 1} 步 ${row.item.note}` : banded && row.item && !row.stage.auto ? `第 ${row.item.number} 步 ${row.item.note}` : rowLabel(row))}</title>${esc(rowLabel(row))}</text>`;
     if (never) svg += `<circle class="rp-never" cx="${L - 12}" cy="${y(i)}" r="4"><title>这一步在这次运行里没有执行过</title></circle>`;
   });
   for (let k = 1; k <= N; k++) {
@@ -1368,7 +1497,8 @@ function pathChartHTML(model) {
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
     const back = y(b.row) < y(a.row) && (a.redo || b.redo);
-    svg += `<line class="rp-line${back ? " back" : ""}" x1="${x(a.k)}" y1="${y(a.row)}" x2="${x(b.k)}" y2="${y(b.row)}"/>`;
+    const ins = Boolean(a.ins || b.ins);   // 进出插入段与插入段内部：紫色点线
+    svg += `<line class="rp-line${back ? " back" : ins ? " ins" : ""}" x1="${x(a.k)}" y1="${y(a.row)}" x2="${x(b.k)}" y2="${y(b.row)}"/>`;
   }
   if (pts.length) {
     const last = pts[pts.length - 1];
@@ -1387,7 +1517,7 @@ function pathChartHTML(model) {
       svg += `<g class="rp-ptg" data-k="${it.k}"><title>${esc(tip)}</title><rect class="rp-pt bad" x="${cx - 6}" y="${cy - 6}" width="12" height="12" transform="rotate(45 ${cx} ${cy})"/>`
         + `<text class="rp-small rp-bad" x="${cx}" y="${cy - 12}" text-anchor="middle">✕ ${esc(fit(outcome, 11, 70))}</text></g>`;
     } else {
-      const role = it.role ? ` ${it.role}` : "";
+      const role = it.ins ? " ins" : (it.role ? ` ${it.role}` : "");
       svg += `<g class="rp-ptg" data-k="${it.k}"><title>${esc(tip)}</title><circle class="rp-pt${it.failed ? " failed" : role}" cx="${cx}" cy="${cy}" r="6"/></g>`;
     }
   }
@@ -1397,11 +1527,11 @@ function pathChartHTML(model) {
       <input id="tl-slider" type="range" min="1" max="${N}" value="${N}" aria-label="迭代">
       <button id="tl-next">下一次迭代 ▶</button><span class="tl-val" id="tl-label"></span></div>`;
   return `<section id="path-chart"><h2>时间轴与路径图</h2>
-    <p class="hint">拖到第 k 次迭代：这张图上第 k 个点、运行有向图上第 k 个迭代号圆点与协同记录里那张卡一起高亮，右栏「此刻的状态」显示那次迭代结束时的当前步、工具调用、阶段目标与槽位值（都从事件重建），变过的槽位标黄。横轴是迭代，纵轴是定义里的位置（自上而下按文件顺序${def.structured ? "，按阶段分带，带内每一步一行" : ""}）。正常运行是一条向下的阶梯；同一高度连续几个点是这段循环在重复；向上的红色虚线是「重做」退回；红色菱形是告知异常那一次迭代，画在它报的阶段那一行。悬停或点击选中一次迭代，其余几处一起高亮。</p>
+    <p class="hint">拖到第 k 次迭代：这张图上第 k 个点、运行有向图上第 k 个迭代号圆点与协同记录里那张卡一起高亮，右栏「此刻的状态」显示那次迭代结束时的当前步、工具调用、阶段目标与槽位值（都从事件重建），变过的槽位标黄。横轴是迭代，纵轴是定义里的位置（自上而下按文件顺序${def.structured ? "，按阶段分带，带内每一步一行" : ""}）。正常运行是一条向下的阶梯；同一高度连续几个点是这段循环在重复；向上的红色虚线是「重做」退回；红色菱形是告知异常那一次迭代，画在它报的阶段那一行。紫色虚框那一带是插入段：使用者岔开主线（提问、含糊、推迟、把握不够）时插进来的对话模式，跑完回到主线原处。悬停或点击选中一次迭代，其余几处一起高亮。</p>
     ${timeline}
     <div class="legend"><span><i class="sw" style="background:var(--sys)"></i>只有系统</span>
       <span><i class="sw" style="background:var(--usr)"></i>问了使用者</span>
-      <span><i class="sw" style="background:var(--mdl)"></i>工具内调了模型</span><span><i class="sw bad"></i>✕ 告知异常（旁注使用者的选择）</span><span><i class="sw back"></i>↶ 重做退回（虚线）</span><span><i class="sw" style="border:2.5px solid var(--bad);border-radius:50%"></i>工具调用已失败</span>${def.structured ? `<span><i class="sw" style="border:1.5px solid var(--ink3);border-radius:50%;background:transparent"></i>没执行过的步骤</span>` : ""}</div>
+      <span><i class="sw" style="background:var(--mdl)"></i>工具内调了模型</span><span><i class="sw bad"></i>✕ 告知异常（旁注使用者的选择）</span><span><i class="sw back"></i>↶ 重做退回（虚线）</span><span><i class="sw" style="border:2.5px solid var(--bad);border-radius:50%"></i>工具调用已失败</span>${def.structured ? `<span><i class="sw" style="border:1.5px solid var(--ink3);border-radius:50%;background:transparent"></i>没执行过的步骤</span>` : ""}${usedModes.length ? `<span><i class="sw ins"></i>插入段那一带</span><span><i class="sw insline"></i>进出插入段（紫色点线）</span>` : ""}</div>
     <div class="scroll"><svg class="rp" id="path-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="路径图" data-l="${L}" data-col="${COL}">${svg}</svg></div></section>`;
 }
 
@@ -1410,7 +1540,8 @@ function nowPanelHTML(model) {
   // 此刻的状态：拖时间轴、点有向图或卡片都联动到这里。挪到协同记录右边（第四步 4.9 节）。
   if (!model.iters.length) return "";
   return `<aside class="stream-right">
-    <div class="now-card"><h3>当前步</h3><div class="big" id="tl-cursor"></div><div class="muted" id="tl-cursor-sub"></div></div>
+    <div class="now-card"><h3>当前步</h3><div class="now-3"><span class="k">主线</span><span class="v" id="tl-cursor"></span>
+      <span class="k">插入</span><span class="v" id="tl-insert"></span></div><div class="muted" id="tl-cursor-sub"></div></div>
     <div class="now-card"><h3>这次迭代的工具调用</h3><div id="tl-call"></div></div>
     <div class="now-card"><h3>阶段目标</h3><ul class="goals" id="tl-goals"></ul></div>
     <div class="now-card"><h3>槽位 <span class="muted">标签＝谁填的</span></h3><div class="scroll"><table class="now-kv" id="tl-slots"></table></div></div>
@@ -1436,10 +1567,29 @@ function goalsHTML(model, it) {
     return `<li class="${holds ? "ok" : ""}"><b>${holds ? "✓" : "○"} ${esc(st.name)}</b> <span class="muted">${esc(predicatesText(goal) || "没有目标")}</span></li>`;
   }).join("");
 }
+// 右栏「插入」那一行：这次迭代结束时插入段做到哪；不在插入段内时写明，并说上一次插入段在第几次迭代结束。
+function insertNowHTML(model, it) {
+  const list = it.inserts || [];
+  const cell = document.getElementById("tl-insert");
+  if (!list.length) {
+    if (cell) cell.className = "v off";
+    const before = model.iters.slice(0, it.k).filter(x => x.ins);
+    const lastIns = before.length ? before[before.length - 1] : null;
+    return "不在插入段内" + (lastIns && lastIns.k !== it.k ? `<br><span class="muted" style="font-size:12px">上一次插入段在第 ${lastIns.no} 次迭代结束</span>` : "");
+  }
+  if (cell) cell.className = "v";
+  const top = list[list.length - 1];
+  const done = top["步骤"] ? `做完第 ${top["步骤"]} 步「${esc(top["说明"] || "")}」（共 ${top["共"]} 步）` : `还没做完任何一步（共 ${top["共"]} 步）`;
+  return `<span class="rail-ins">模式「${esc(top["模式"])}」</span> ${done}`
+    + (list.length > 1 ? `<br><span class="muted" style="font-size:12px">后面还排着 ${list.length - 1} 段</span>` : "");
+}
 function cursorNote(model, it) {
   if (it.redo) return "本次迭代使用者选「重做本阶段」，当前步退回该阶段起点";
   if (it.done) return "结果检查为真，任务完成";
   if (it.failed) return "工具调用已失败，当前步不动";
+  const insBefore = model.iters[it.k - 2] ? (model.iters[it.k - 2].inserts || []).length : 0, insAfter = (it.inserts || []).length;
+  if (!insBefore && insAfter) return "对话理解的结果要路由：压入插入段，主线位置不动";
+  if (insBefore && !insAfter) return "插入段跑完，回到主线原处";
   const before = it.cursorBefore, after = it.cursor, byName = model.def.byName;
   if (before && after && byName.has(before["阶段"]) && byName.has(after["阶段"])) {
     const i0 = byName.get(before["阶段"]).index, i1 = byName.get(after["阶段"]).index;
@@ -1474,7 +1624,8 @@ function selectIteration(model, k) {
   });
   // 卡片
   document.getElementById("tl-cursor").textContent =
-    it.atText || positionText(positionOf(model.def, it.cursor));
+    mainStepText(it.atText) || positionText(positionOf(model.def, it.cursor));
+  document.getElementById("tl-insert").innerHTML = insertNowHTML(model, it);
   document.getElementById("tl-cursor-sub").textContent = cursorNote(model, it);
   const a = it.call;
   document.getElementById("tl-call").innerHTML = a
@@ -1604,6 +1755,22 @@ function updateCompareButton() {
 // ───────────── 视图：这次任务的系统提示与上下文变化（第四步 4.9 节）─────────────
 // 两块的数据都来自「在工具里调模型」那些工具调用的返回值：调用记录。旧运行文件里没有这些键，两块就不画。
 
+// 段的正文是一份 JSON（对象或数组）时，按两格缩进折叠显示；别的原样显示，short 给了就截断到这么多字。
+function segBodyHTML(text, short) {
+  const raw = String(text === null || text === undefined ? "" : text);
+  const head = raw.trim().charAt(0);
+  if (head === "{" || head === "[") {
+    try {
+      const value = JSON.parse(raw);
+      if (value && typeof value === "object") {
+        const size = Array.isArray(value) ? `数组，${value.length} 项` : `对象，${Object.keys(value).length} 个键`;
+        return `<details class="json-fold"><summary>JSON（${size}，${raw.length} 字）· 点开看缩进后的全文</summary>`
+          + `<pre>${esc(JSON.stringify(value, null, 2))}</pre></details>`;
+      }
+    } catch (e) { /* 不是合法 JSON，按文字显示 */ }
+  }
+  return esc(short ? cut(raw, short) : raw);
+}
 function cut(text, n) {
   const value = String(text === null || text === undefined ? "" : text);
   return value.length > n ? value.slice(0, n) + "…" : value;
@@ -1642,7 +1809,7 @@ function modelBlocksHTML(record, changed) {
   const segs = (record.segments || []).map(seg =>
     `<div class="seg ${SEG_ROLE[seg.type] || "def"}${changed && changed.has(seg.type) ? " changed" : ""}">`
     + `<span class="st">${esc(seg.type)}</span><span class="src">${esc(seg.source)}</span>`
-    + `<div class="tx">${esc(seg.text)}</div></div>`).join("");
+    + `<div class="tx">${segBodyHTML(seg.text)}</div></div>`).join("");
   const prompt = `<div class="mdl-block"><h4>提示词构成 <span class="muted">系统提示是任务级的一份，任务期间不变（见上面「这次任务的系统提示」）；下面是这次调用的用户内容，由上下文包按段组装。左边色条＝内容从哪来，黄＝比上一次调用变了；这里是逐字原文，不截断</span></h4>`
     + `<div class="segs">${segs}</div></div>`;
   const writes = record.writes || {};
@@ -1656,11 +1823,46 @@ function modelBlocksHTML(record, changed) {
     rows = `<tr><td>（文本）</td><td>${esc(plain(parsed === undefined || parsed === null ? record.response : parsed))}</td>`
       + `<td>${slot ? `槽位「${esc(slot)}」` : "本次不写"}</td></tr>`;
   }
+  if (Array.isArray(record.acts)) return prompt + understandBlockHTML(record);
   const back = `<div class="mdl-block"><h4>模型返回 <span class="muted">原文折叠在下面；解析结果的每一项标出写到了哪个槽位</span></h4>`
     + `<details><summary>模型回的原文（${esc(record.shape || "")}，${esc(record.elapsed_ms)} 毫秒，模型 ${esc(record.model || "")}）</summary>`
     + `<div class="tx" style="white-space:pre-wrap">${esc(record.response || "")}</div></details>`
     + `<table class="mdl-parsed"><thead><tr><th>项</th><th>值</th><th>写到哪</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   return prompt + back;
+}
+// 第五步：对话理解的卡。左边使用者原话，右边规范化后的行为列表逐项（功能、内容、把握、修订、规范化），下面落了什么。
+// 样式随第六步的高保真原型定，本步沿用模型卡的样式。
+let ROUTE_MODES = {};   // 功能 → 模式名，打开一次运行时取自「任务开始」事件里并进来的路由表
+function routeModesOf(r) {
+  const patterns = r.started && r.started.definition ? r.started.definition["对话模式"] : null;
+  return Object.fromEntries(((patterns && patterns["路由表"]) || []).map(row => [row["功能"], row["模式"]]));
+}
+function understandBlockHTML(record) {
+  const rows = record.acts.map((act, i) => {
+    const conf = typeof act["把握"] === "number" ? act["把握"] : 0;
+    const rev = act["规范化修订"] ? `${esc(act["规范化修订"]["原文"])} → ${esc(act["规范化修订"]["修订后"])}` : `<span class="muted">—</span>`;
+    const norm = (act["规范化"] || []).length ? `<div class="muted">${esc(act["规范化"].join("；"))}</div>` : "";
+    return `<tr><td>${i + 1}</td><td><span class="ua-fn">${esc(act["功能"])}</span>${act["回应上一问"] ? `<div class="muted">回应上一问</div>` : ""}</td>`
+      + `<td>${esc(plain(act["内容"]))}${norm}</td>`
+      + `<td><span class="ua-bar"><i style="width:${Math.round(conf * 100)}%"></i></span> ${esc(conf)}</td><td>${rev}</td>`
+      + `<td>${esc(act["落成"] || "")}</td></tr>`;
+  }).join("");
+  const dropped = (record.dropped || []).length
+    ? `<div class="muted">规范化删掉的项：${esc(record.dropped.map(d => `${d["项"]["功能"]}（${d["规范化"]}）`).join("、"))}</div>` : "";
+  const problem = record.problem ? `<div class="muted">模型输出不可用（${esc(record.problem)}），按没听懂处理</div>` : "";
+  const landed = record.acts.map(act => `<span class="pill usr">${esc(act["功能"])}：${esc(act["落成"] || "")}</span>`).join("");
+  // 第五步 4.12 节：要路由的行为由任务定义压成插入段；插入段里不嵌套，改为本帧再问或帧替换。
+  const modeOf = ROUTE_MODES;
+  const routes = (record.routes || []).map(r => `${r["功能"]} → 路由到模式『${modeOf[r["功能"]] || "？"}』`);
+  const routeLine = routes.length ? `<div class="ua-landed">去向：${routes.map(t => `<span class="rail-ins">${esc(t)}</span>`).join("")}<span class="muted">按话里的顺序排进插入段，主线位置不动</span></div>`
+    : record.reask_in_frame ? `<div class="ua-landed">去向：<span class="rail-ins">插入段里仍含糊 → 本帧内以选择类再问</span></div>`
+    : record.replace_frame ? `<div class="ua-landed">去向：<span class="rail-ins">${esc(record.replace_frame["功能"])} → 这一段换成模式『${esc(modeOf[record.replace_frame["功能"]] || "？")}』</span></div>` : "";
+  return `<div class="mdl-block"><h4>对话理解 <span class="muted">左边是使用者原话，右边是规范化后的行为列表；模型回的原文折叠在下面</span></h4>`
+    + `<details><summary>模型回的原文（${esc(record.shape || "")}，${esc(record.elapsed_ms)} 毫秒，模型 ${esc(record.model || "")}）</summary>`
+    + `<div class="tx" style="white-space:pre-wrap">${esc(record.response || "")}</div></details>`
+    + `<div class="ua-row"><div class="ua-said">${esc(record.reply || "")}</div><div class="ua-acts scroll">`
+    + `<table class="mdl-parsed"><thead><tr><th>#</th><th>功能</th><th>内容</th><th>把握</th><th>规范化修订</th><th>落成</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `${dropped}${problem}</div></div><div class="ua-landed">落了什么：${landed}</div>${routeLine}</div>`;
 }
 function systemPromptHTML(r) {
   const calls = modelCallsOf(r);
@@ -1690,12 +1892,15 @@ function contextChangeHTML(r) {
       const changed = previous !== null && joined !== previous;
       previous = joined;
       const body = segs.length
-        ? segs.map(seg => `<div class="cx-seg"><span class="cx-src">${esc(seg.source)}</span><span class="cx-tx">${esc(cut(seg.text, 120))}</span></div>`).join("")
+        ? segs.map(seg => `<div class="cx-seg"><span class="cx-src">${esc(seg.source)}</span><span class="cx-tx">${segBodyHTML(seg.text, 120)}</span></div>`).join("")
         : `<span class="muted">—</span>`;
       return `<td class="${changed ? "cx-hit" : ""}">${body}</td>`;
     }).join("");
     return `<tr><th>${esc(type)}</th>${cells}</tr>`;
   }).join("");
+  const actCells = calls.map(c => Array.isArray(c.record.acts)
+    ? `<td>${c.record.acts.map(act => `<div class="cx-seg"><span class="cx-src">${esc(act["功能"])}</span><span class="cx-tx">${esc(cut(act["落成"] || "", 60))}</span></div>`).join("")}</td>`
+    : `<td><span class="muted">—</span></td>`).join("");
   const writeCells = calls.map(c => {
     const writes = c.record.writes || {};
     const keys = Object.keys(writes);
@@ -1704,8 +1909,8 @@ function contextChangeHTML(r) {
       : `<span class="muted">没写槽位</span>`;
     return `<td>${body}<div class="cx-seg"><span class="cx-src">模型返回</span><span class="cx-tx">${esc(cut(c.record.response, 80))}</span></div></td>`;
   }).join("");
-  return `<section id="ctxchange" class="cx"><h2>上下文变化 <span class="muted">一列一次模型调用；行是用户内容的段类型，格子是那一次装进去的内容（本表为显示截断，模型看到的是全文，见下面每张卡）；黄格＝比上一次调用变了；末行是模型写回了什么</span></h2>
-    <div class="scroll"><table><thead><tr><th>段</th>${head}</tr></thead><tbody>${rows}<tr><th>模型写回</th>${writeCells}</tr></tbody></table></div></section>`;
+  return `<section id="ctxchange" class="cx"><h2>上下文变化 <span class="muted">一列一次模型调用；行是用户内容的段类型，格子是那一次装进去的内容（本表文字截断显示、JSON 折叠显示，模型看到的是全文，见下面每张卡）；黄格＝比上一次调用变了；末行是模型写回了什么</span></h2>
+    <div class="scroll"><table><thead><tr><th>段</th>${head}</tr></thead><tbody>${rows}<tr><th>行为列表</th>${actCells}</tr><tr><th>模型写回</th>${writeCells}</tr></tbody></table></div></section>`;
 }
 
 // ───────────── 视图：运行详情 ─────────────
@@ -1716,6 +1921,7 @@ async function renderRun(file) {
   try { events = await fetchJSON(`api/runs/${encodeURIComponent(file)}`); }
   catch (err) { document.getElementById("filters-slot").innerHTML = ""; app.innerHTML = `<section><p class="error">读取运行失败：${esc(err.message)}</p></section>`; return; }
   const r = buildRecord(file, events);
+  ROUTE_MODES = routeModesOf(r);
   r.path = buildPath(r);
   markRoles(r, r.path);
   markModelChanges(r);
@@ -1791,7 +1997,8 @@ function writerLabels(r, upToSeq) {
     // 工具表上登记过「这一槽位的内容来自谁」就照它写：判读回复写进确认释义的是使用者的裁定，
     // 模型只是把它从那句回复里认出来。没登记的按类别与有没有调模型推。
     const spec = toolSpecOf(r, tool);
-    const declared = spec && spec.writer_roles ? spec.writer_roles[e.payload.slot] : null;
+    // 键「*」指其余槽位：对话理解写进哪个槽位由数据决定，写进去的都是使用者的话。
+    const declared = spec && spec.writer_roles ? (spec.writer_roles[e.payload.slot] || spec.writer_roles["*"]) : null;
     labels.set(e.payload.slot, declared || (byModel ? "模型" : (WRITER_LABEL[toolCategoryOf(r, tool)] || "")));
   }
   return labels;
@@ -2138,6 +2345,11 @@ function executeHTML(r, it, events) {
   }
   const bubbles = questions.map(q => {
     const qno = q.payload.seq;
+    if (q.payload.kind === "notice") {   // 告知：系统说一句，不等回答，没有使用者那一栏
+      const hostTake = named1(events, "MESSAGE_TAKEN", e => e.payload.box === "outbox" && e.payload.seq === qno);
+      return `<div class="iv-msg"><div class="who">系统 → 使用者</div><div><div class="bub">${esc(utteranceOf(q.payload.content) || plain(q.payload.content))}${fnHTML(q)}</div>`
+        + `<div class="meta">发件箱 · 告知 #${esc(qno)} · 不等回答${hostTake ? ` · 宿主取走${fnHTML(hostTake)}` : ""}</div></div></div>`;
+    }
     const waiting = statuses.find(e => e.payload.new_status === WAITING);
     const hostTake = named1(events, "MESSAGE_TAKEN", e => e.payload.box === "outbox" && e.payload.seq === qno);
     const answer = named1(events, "MESSAGE_PUT", e => e.payload.box === "inbox" && e.payload.in_reply_to === qno);
@@ -2154,7 +2366,9 @@ function executeHTML(r, it, events) {
   }).join("");
   let after = "";
   if (final && final.payload.new_status === SUCCEEDED) {
-    after = tool === EXCEPTION_TOOL_NAME
+    after = questions.every(q => q.payload.kind === "notice")
+      ? `${esc(final.payload.note)}${fnHTML(final)}。`
+      : tool === EXCEPTION_TOOL_NAME
       ? `使用者的选择：${esc(plain(final.payload.result))}（${esc(final.payload.note)}）${fnHTML(final)}。`
       : `回答理解：原样作为值写入 ${esc(targetText(params && params.target))}${fnHTML(final)}。`;
   } else if (final) {
@@ -2233,6 +2447,9 @@ function iterationCardHTML(r, loop, index) {
     where = at["阶段"] !== undefined && at["阶段"] !== ref.stage.name ? `当前步在『${esc(at["阶段"])}』末尾 · 报告『${esc(ref.stage.name)}』阶段` : `报告『${esc(ref.stage.name)}』阶段`;
   } else if (ref && ref.kind === "step") {
     where = `${ref.stage.name === null ? "" : `阶段『${esc(ref.stage.name)}』· `}第 ${ref.step.number} 步「${esc(ref.step.note)}」`;
+  } else if (ref && ref.kind === "mode") {
+    const main = it.cursor && it.cursor["阶段"] !== undefined ? it.cursor["阶段"] : null;
+    where = `${main ? `阶段『${esc(main)}』· ` : ""}主线位置不动`;
   } else if (defError) where = "任务定义错误";
   const waitEv = a ? named1(all, "MAILBOX_WAIT", e => e.payload.box === "inbox" && e.payload.phase === "end" && e.call_id === a.aid) : null;
   let res;
@@ -2256,8 +2473,9 @@ function iterationCardHTML(r, loop, index) {
     ivRowHTML(r, "⑤ 完成了吗", checkHTML(r, it, byKey.check, next), byKey.check),
   ].join("");
   const role = iterationRole(r, it, all);
-  return `<article class="iv-card role-${role}${bad ? " bad" : ""}" data-k="${index + 1}" data-role="${role}">
-    <div class="iv-hd"><span class="no">第 ${esc(loop.no)} 次迭代${fnHTML(start)}</span>${where ? `<span class="where">${where}</span>` : ""}
+  const insTag = it.ins ? `<span class="instag"><i class="d"></i>插入段 · 模式「${esc(it.ins.mode)}」第 ${it.ins.no} 步</span>` : "";
+  return `<article class="iv-card role-${role}${bad ? " bad" : ""}${it.ins ? " ins" : ""}" data-k="${index + 1}" data-role="${role}">
+    <div class="iv-hd"><span class="no">第 ${esc(loop.no)} 次迭代${fnHTML(start)}</span>${insTag}${where ? `<span class="where">${where}</span>` : ""}
       ${a ? `<span class="act">工具调用 ${esc(a.aid)} · ${esc(callText(a.tool, r.calls.get(a.aid).proposed.payload.params))}</span>` : ""}
       <span class="res ${res.cls}">${esc(res.text)}</span><span class="ms">${duration} ms</span></div>
     <div class="iv-steps">${steps}</div>
